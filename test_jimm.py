@@ -76,17 +76,24 @@ def check_all_models_forward(mode="representative"):
 
 def check_train_step():
     from jimm.train import train_step, make_optimizer, cross_entropy
+    mesh = jax.sharding.Mesh(jax.devices(), ('data',))
+    P = jax.sharding.PartitionSpec
+    data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
+    label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
+
     m = create_model("resnet18", num_classes=5)
     m.train()
     opt = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
-    images = jnp.array(np.random.randn(4, 224, 224, 3), jnp.float32)
-    labels = jnp.array([0, 1, 2, 3], jnp.int32)
+    raw_images = np.random.randn(4, 224, 224, 3).astype(np.float32)
+    raw_labels = np.array([0, 1, 2, 3], np.int32)
+    images = jax.make_array_from_process_local_data(data_sharding, raw_images)
+    labels = jax.make_array_from_process_local_data(label_sharding, raw_labels)
     loss1, acc1 = train_step(m, opt, images, labels, 0.1)
     loss2, _ = train_step(m, opt, images, labels, 0.1)
     assert jnp.isfinite(loss1) and jnp.isfinite(loss2), (loss1, loss2)
     l = cross_entropy(jnp.array([[10.0, 0.0]]), jnp.array([0]), 0.1)
     assert 0 < float(l) < 1.0
-    print(f"train_step OK, loss {float(loss1):.3f} -> {float(loss2):.3f}")
+    print(f"train_step (SPMD Mesh) OK, loss {float(loss1):.3f} -> {float(loss2):.3f}")
 
 
 def check_data_and_ckpt():

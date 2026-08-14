@@ -1,11 +1,13 @@
 """grain-based data pipeline. Mirrors timm.data.create_loader / create_dataset.
 
 Yields dicts {'image': float32 NHWC batch, 'label': int32 batch}.
+Supports automatic multi-host / multi-process sharding via JAX process indices.
 """
 import io
 import os
 
 import grain.python as grain
+import jax
 import numpy as np
 from PIL import Image
 
@@ -87,14 +89,32 @@ class Loader:
 
 
 def create_loader(root, batch_size, img_size=224, is_training=False, crop_pct=0.875,
-                  mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=4, seed=0, shuffle=None):
-    """grain DataLoader over an ImageFolder split. Infinite stream when training."""
+                  mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=4, seed=0, shuffle=None,
+                  shard_options=None):
+    """grain DataLoader over an ImageFolder split with automatic multi-host sharding.
+
+    Args:
+        batch_size: Process-local batch size (each host feeds `batch_size` samples).
+    """
     source, transform = create_dataset(root, img_size=img_size, is_training=is_training,
                                        crop_pct=crop_pct, mean=mean, std=std)
     shuffle = is_training if shuffle is None else shuffle
-    sampler = grain.IndexSampler(num_records=len(source), shuffle=shuffle, seed=seed,
+    
+    # Auto-shard across JAX distributed processes if not explicitly provided
+    if shard_options is None:
+        shard_options = grain.ShardOptions(
+            shard_index=jax.process_index(),
+            shard_count=jax.process_count(),
+            drop_remainder=is_training
+        )
+
+    sampler = grain.IndexSampler(num_records=len(source), shard_options=shard_options,
+                                 shuffle=shuffle, seed=seed,
                                  num_epochs=None if is_training else 1)
     loader = grain.DataLoader(data_source=source, sampler=sampler,
                               operations=[transform, grain.Batch(batch_size, drop_remainder=is_training)],
                               worker_count=num_workers)
-    return Loader(loader, len(source), batch_size, is_training)
+    
+    # Calculate process-local record count
+    local_records = len(source) // jax.process_count()
+    return Loader(loader, local_records, batch_size, is_training)

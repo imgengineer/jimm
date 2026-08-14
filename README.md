@@ -123,9 +123,13 @@ print(batch["label"].shape)  # (128,) int32
 
 ---
 
-### 3. Training Loop with Optax & JIT
+### 3. Distributed Training with SPMD & Optax
 
-Train any model using `jimm.train`:
+`jimm.train` natively supports single-GPU, single-node multi-GPU, and multi-node multi-GPU training with JAX SPMD Data Mesh and Grain process sharding.
+
+#### Single-Device or Single-Node Multi-GPU
+
+JAX automatically detects all available GPUs on the node and partitions data across them:
 
 ```bash
 python -m jimm.train \
@@ -138,23 +142,63 @@ python -m jimm.train \
     --output ./checkpoints
 ```
 
-Or programmatically:
+#### Multi-Node Multi-GPU (e.g. 2 Nodes, 8 GPUs each)
+
+On Master Node (Rank 0, IP `192.168.1.100`):
+
+```bash
+python -m jimm.train \
+    --model convnext_tiny \
+    --data-dir /path/to/imagenet \
+    --dist-coordinator-address 192.168.1.100:12345 \
+    --dist-num-processes 2 \
+    --dist-process-id 0 \
+    --batch-size 128
+```
+
+On Worker Node (Rank 1):
+
+```bash
+python -m jimm.train \
+    --model convnext_tiny \
+    --data-dir /path/to/imagenet \
+    --dist-coordinator-address 192.168.1.100:12345 \
+    --dist-num-processes 2 \
+    --dist-process-id 1 \
+    --batch-size 128
+```
+
+Or via standard SLURM / MPI cluster managers (JAX auto-detects `SLURM_JOB_ID` / `JAX_COORDINATOR_ADDRESS`):
+
+```bash
+srun -N 4 --ntasks-per-node=1 python -m jimm.train --model resnet50 --data-dir /path/to/imagenet
+```
+
+#### Programmatic Distributed Training
 
 ```python
+import jax
+import jax.numpy as jnp
 import optax
 from flax import nnx
 import jimm
-from jimm.train import make_optimizer, train_step, eval_step
+from jimm.train import make_optimizer, train_step
+
+# Setup 1D Data-Parallel Device Mesh
+mesh = jax.sharding.Mesh(jax.devices(), ('data',))
+P = jax.sharding.PartitionSpec
+data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
+label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
 
 model = jimm.create_model("resnet50", num_classes=10, rngs=nnx.Rngs(0))
 model.train()
+optimizer = make_optimizer(model, lr=1e-3, weight_decay=0.05, epochs=90, steps_per_epoch=1000)
 
-optimizer = make_optimizer(
-    model, lr=1e-3, weight_decay=0.05, epochs=90, steps_per_epoch=1000
-)
+# Feed process-local batch slices
+images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
+labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
 
-# In-place JIT compiled step
-loss, acc = train_step(model, optimizer, batch["image"], batch["label"], smoothing=0.1)
+loss, acc = train_step(model, optimizer, images, labels, smoothing=0.1)
 ```
 
 ---

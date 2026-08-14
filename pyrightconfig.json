@@ -1,0 +1,10 @@
+{
+  "pythonVersion": "3.13",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "pythonPath": ".venv/bin/python",
+      "extraPaths": [".venv/lib/python3.13/site-packages"]
+    }
+  ]
+}

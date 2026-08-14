@@ -1,0 +1,96 @@
+"""Shared layers, NHWC convention (mirrors timm.models.layers)."""
+import jax
+import jax.numpy as jnp
+from flax import nnx
+
+__all__ = ["DropPath", "PatchEmbed", "Mlp", "SqueezeExcite", "ConvBNAct", "global_pool_nhwc", "hswish", "relu6"]
+
+
+class DropPath(nnx.Module):
+    """Stochastic depth, per-sample (broadcasts over NHWC spatial+channel dims)."""
+
+    def __init__(self, rate: float = 0.0):
+        self.rate = rate
+        self.drop = nnx.Dropout(rate, broadcast_dims=(1, 2, 3)) if rate > 0 else None
+
+    def __call__(self, x):
+        return x if self.drop is None else self.drop(x)
+
+
+class PatchEmbed(nnx.Module):
+    """Conv patch embedding, returns (B, H', W', embed_dim)."""
+
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, *, rngs):
+        self.img_size, self.patch_size = img_size, patch_size
+        self.grid_size = (img_size // patch_size, img_size // patch_size)
+        self.num_patches = self.grid_size[0] * self.grid_size[1]
+        self.proj = nnx.Conv(in_chans, embed_dim, kernel_size=(patch_size, patch_size),
+                             strides=(patch_size, patch_size), rngs=rngs)
+
+    def __call__(self, x):
+        return self.proj(x)
+
+
+class Mlp(nnx.Module):
+    def __init__(self, dim, hidden_dim=None, drop=0.0, *, rngs):
+        hidden_dim = hidden_dim or dim
+        self.fc1 = nnx.Linear(dim, hidden_dim, rngs=rngs)
+        self.fc2 = nnx.Linear(hidden_dim, dim, rngs=rngs)
+        self.drop = nnx.Dropout(drop)
+
+    def __call__(self, x):
+        return self.drop(self.fc2(self.drop(nnx.gelu(self.fc1(x)))))
+
+
+def hswish(x):
+    return x * jax.nn.hard_sigmoid(x)
+
+
+def relu6(x):
+    return jnp.minimum(jnp.maximum(x, 0), 6)
+
+
+_ACTS = {"relu": nnx.relu, "relu6": relu6, "hswish": hswish, "silu": jax.nn.silu,
+         "gelu": nnx.gelu, "sigmoid": jax.nn.sigmoid, "identity": None}
+
+
+class ConvBNAct(nnx.Module):
+    """Conv -> optional BN -> optional activation, the universal CNN building block."""
+
+    def __init__(self, in_chs, out_chs, kernel: int | tuple[int, int] = 3, stride=1, groups=1,
+                 act="relu", use_bn=True, dilation=1, padding="SAME", *, rngs):
+        k = (kernel, kernel) if isinstance(kernel, int) else tuple(kernel)
+        self.conv = nnx.Conv(in_chs, out_chs, k, strides=(stride, stride),
+                             padding=padding, use_bias=not use_bn,
+                             feature_group_count=groups, kernel_dilation=(dilation, dilation), rngs=rngs)
+        self.bn = nnx.BatchNorm(out_chs, rngs=rngs) if use_bn else None
+        self.act = _ACTS[act]
+
+    def __call__(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        return x if self.act is None else self.act(x)
+
+
+class SqueezeExcite(nnx.Module):
+    """SE block on NHWC features."""
+
+    def __init__(self, chs, rd_ratio=0.25, *, rngs):
+        rd = max(int(chs * rd_ratio), 1)
+        self.fc1 = nnx.Linear(chs, rd, rngs=rngs)
+        self.fc2 = nnx.Linear(rd, chs, rngs=rngs)
+
+    def __call__(self, x):
+        s = jnp.mean(x, axis=(1, 2), keepdims=True)
+        s = jax.nn.sigmoid(self.fc2(nnx.relu(self.fc1(s))))
+        return x * s
+
+
+def global_pool_nhwc(x, pool_type="avg"):
+    """(B,H,W,C) -> (B,C). pool_type: 'avg' | 'max' | '' (flatten handled by caller)."""
+    if pool_type == "avg":
+        return jnp.mean(x, axis=(1, 2))
+    if pool_type == "max":
+        return jnp.max(x, axis=(1, 2))
+    raise ValueError(f"unsupported pool {pool_type!r}")

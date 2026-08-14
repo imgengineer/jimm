@@ -53,7 +53,7 @@ class MViTBlock(nnx.Module):
         self.attn = PooledAttention(dim, num_heads, pool_stride, grid, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x, H, W):
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
@@ -83,7 +83,7 @@ class MViTv2(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
         self.norm = nnx.LayerNorm(dims[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(dims[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

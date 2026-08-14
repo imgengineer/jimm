@@ -105,7 +105,7 @@ class InceptionV3(ClassifierMixin, nnx.Module):
         self.mixed_7b = InceptionE(1280, rngs=rngs)
         self.mixed_7c = InceptionE(2048, rngs=rngs)
         self.num_features = 2048
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(2048, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

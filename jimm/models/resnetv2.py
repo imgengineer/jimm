@@ -45,7 +45,7 @@ class ResNetV2(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
         self.norm = nnx.BatchNorm(self.num_features, rngs=rngs)  # final pre-act norm
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

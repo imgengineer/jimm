@@ -17,7 +17,7 @@ class MaxViTMBConv(nnx.Module):
         self.se = SqueezeExcite(mid, 0.25, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.shortcut = nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride), rngs=rngs) \
             if (stride != 1 or in_chs != out_chs) else None
 
@@ -64,7 +64,7 @@ class MaxViTBlock(nnx.Module):
         self.ws = window_size
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = MaxViTAttention(dim, num_heads, window_size, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, dim * 4, rngs=rngs)
 
@@ -122,7 +122,7 @@ class MaxViT(ClassifierMixin, nnx.Module):
             k += d
         self.stages = nnx.List(stages)
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

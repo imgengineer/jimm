@@ -55,7 +55,7 @@ class Outlooker(nnx.Module):
         self.attn = OutlookAttention(dim, num_heads, kernel_size, padding, stride, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -71,7 +71,7 @@ class TransformerBlock(nnx.Module):
         self.scale = self.head_dim ** -0.5
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         B, N, C = x.shape
@@ -108,7 +108,7 @@ class ClassBlock(nnx.Module):
         self.attn = ClassAttention(dim, num_heads, rngs=rngs)
         self.norm3 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, cls, x):
         cls = cls + self.drop_path(self.attn(self.norm1(cls), self.norm2(x)))
@@ -164,7 +164,7 @@ class VOLO(ClassifierMixin, nnx.Module):
             for i in range(layers[-1])])
 
         self.norm = nnx.LayerNorm(embed_dims[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

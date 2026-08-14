@@ -12,7 +12,7 @@ class MBConv(nnx.Module):
     def __init__(self, in_chs, out_chs, kernel, stride, expand, drop_path=0.0, *, rngs):
         mid = in_chs * expand
         self.use_residual = stride == 1 and in_chs == out_chs
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.expand = ConvBN(in_chs, mid, rngs=rngs) if expand != 1 else None
         self.dw = nnx.Conv(mid, mid, (kernel, kernel), strides=(stride, stride), use_bias=False,
                            feature_group_count=mid, rngs=rngs)
@@ -80,7 +80,7 @@ class EfficientNet(ClassifierMixin, nnx.Module):
         self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
         self.bn_head = nnx.BatchNorm(head, rngs=rngs)
         self.num_features = head
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

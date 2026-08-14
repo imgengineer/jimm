@@ -22,7 +22,7 @@ class SpatialTransformerBlock(nnx.Module):
         self.spatial = SpatialAttention(dim, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.spatial(self.norm1(x)))
@@ -34,7 +34,7 @@ class TransformerBlock(nnx.Module):
         self.attn = Attention(dim, num_heads, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         B, H, W, C = x.shape
@@ -76,7 +76,7 @@ class CSATv2(ClassifierMixin, nnx.Module):
         ])
 
         self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

@@ -31,7 +31,7 @@ class XCABlock(nnx.Module):
         self.xca = XCA(dim, num_heads, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.gamma1 = nnx.Param(init_values * jnp.ones(dim))
         self.gamma2 = nnx.Param(init_values * jnp.ones(dim))
 

@@ -25,7 +25,7 @@ class BasicBlock(nnx.Module):
         self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
         self.se = SqueezeExcite(out_chs, rngs=rngs) if se else None
         self.shortcut = Downsample(in_chs, out_chs, stride, rngs=rngs) if (stride != 1 or in_chs != out_chs) else None
-        self.drop_path = DropPath(drop_path_rate)
+        self.drop_path = DropPath(drop_path_rate, rngs=rngs)
 
     def __call__(self, x):
         y = nnx.relu(self.bn1(self.conv1(x)))
@@ -51,7 +51,7 @@ class Bottleneck(nnx.Module):
         self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
         self.se = SqueezeExcite(out_chs, rngs=rngs) if se else None
         self.shortcut = Downsample(in_chs, out_chs, stride, rngs=rngs) if (stride != 1 or in_chs != out_chs) else None
-        self.drop_path = DropPath(drop_path_rate)
+        self.drop_path = DropPath(drop_path_rate, rngs=rngs)
 
     def __call__(self, x):
         y = nnx.relu(self.bn1(self.conv1(x)))
@@ -84,7 +84,7 @@ class ResNet(ClassifierMixin, nnx.Module):
                 k += 1
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

@@ -74,7 +74,7 @@ class RegNet(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
         self.num_features = widths[-1]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(widths[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

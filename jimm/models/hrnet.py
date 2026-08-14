@@ -124,7 +124,7 @@ class HRNet(ClassifierMixin, nnx.Module):
         self.downs = nnx.List([ConvBNAct(4 * widths[i], 4 * widths[i + 1], 3, 2,
                                          act="identity", rngs=rngs) for i in range(3)])
         self.num_features = 4 * widths[-1]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

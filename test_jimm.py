@@ -154,14 +154,16 @@ def check_data_and_ckpt():
         m.eval()
         out_before = m(batch["image"])
         path = save_checkpoint(f"{root}/ckpt", m, epoch=3)
-        # corrupt then restore
-        nnx.replace_by_pure_dict(nnx.state(m), jax.tree.map(
-            lambda a: np.zeros_like(a), nnx.state(m).to_pure_dict()))
+        # corrupt weights with zeros (must actually change outputs), then restore
+        nnx.update(m, jax.tree.map(lambda a: np.zeros_like(a), nnx.state(m).to_pure_dict()))
+        out_zero = m(batch["image"])
+        assert not np.allclose(np.asarray(out_zero), np.asarray(out_before), rtol=1e-3, atol=1e-3), \
+            "zeroing weights did not change outputs — state write is broken"
         epoch = load_checkpoint(path, m)
         assert epoch == 3
         np.testing.assert_allclose(np.asarray(m(batch["image"])), np.asarray(out_before),
                                    rtol=1e-4, atol=1e-4)
-        print("checkpoint OK, roundtrip restores exact outputs")
+        print("checkpoint OK, corruption verified + roundtrip restores exact outputs")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

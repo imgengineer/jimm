@@ -33,7 +33,7 @@ class SwinV2CrBlock(nnx.Module):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
         attn_mask = None
         if shift > 0:
@@ -116,7 +116,7 @@ class SwinTransformerV2Cr(ClassifierMixin, nnx.Module):
                                     downsample=i < len(depths) - 1, rngs=rngs)
             for i in range(len(depths))])
         self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

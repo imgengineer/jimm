@@ -16,7 +16,7 @@ class RepViTBlock(nnx.Module):
         self.bn1 = nnx.BatchNorm(hidden, rngs=rngs)
         self.pw2 = nnx.Conv(hidden, dim, (1, 1), rngs=rngs)
         self.bn2 = nnx.BatchNorm(dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.bn_dw(self.dw(x))
@@ -52,7 +52,7 @@ class RepViT(ClassifierMixin, nnx.Module):
                 k += 1
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

@@ -57,7 +57,7 @@ class MobileNetV3(ClassifierMixin, nnx.Module):
         self.bn_head = nnx.BatchNorm(head_chs, rngs=rngs)
         self.num_features = head_mid
         self.fc1 = nnx.Linear(head_chs, head_mid, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head_mid, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

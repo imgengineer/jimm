@@ -14,7 +14,7 @@ class StarBlock(nnx.Module):
         self.f2 = nnx.Conv(dim, dim * mlp_ratio, (1, 1), rngs=rngs)
         self.g = nnx.Conv(dim * mlp_ratio, dim, (1, 1), use_bias=False, rngs=rngs)
         self.bn = nnx.BatchNorm(dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         y = self.bn_dw(self.dw(x))
@@ -43,7 +43,7 @@ class StarNet(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
             chs = c
         self.stages = nnx.List(stages)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

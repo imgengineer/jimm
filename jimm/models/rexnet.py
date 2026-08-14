@@ -58,7 +58,7 @@ class ReXNet(ClassifierMixin, nnx.Module):
         self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
         self.bn_head = nnx.BatchNorm(head, rngs=rngs)
         self.num_features = head
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

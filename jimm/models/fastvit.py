@@ -15,7 +15,7 @@ class RepMixerBlock(nnx.Module):
         self.mlp_bn1 = nnx.BatchNorm(int(dim * mlp_ratio), rngs=rngs)
         self.mlp2 = nnx.Conv(int(dim * mlp_ratio), dim, (1, 1), rngs=rngs)
         self.mlp_bn2 = nnx.BatchNorm(dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         y = x + self.bn(self.dw(x))  # RepMixer: add before act
@@ -34,7 +34,7 @@ class AttnStage(nnx.Module):
                 nnx.LayerNorm(dim, rngs=rngs),
                 nnx.Linear(dim, dim * 2, rngs=rngs),
                 nnx.Linear(dim * 2, dim, rngs=rngs),
-                DropPath(drop_path)]))
+                DropPath(drop_path, rngs=rngs)]))
         self.blocks = nnx.List(blocks)
 
     def __call__(self, x):
@@ -74,7 +74,7 @@ class FastViT(ClassifierMixin, nnx.Module):
                            nnx.Conv(channels[i], channels[i + 1], (1, 1), use_bias=False, rngs=rngs),
                            nnx.BatchNorm(channels[i + 1], rngs=rngs))
             for i in range(3)])
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

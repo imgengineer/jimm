@@ -11,7 +11,7 @@ class CoaTBlock(nnx.Module):
         self.attn = Attention(dim, num_heads, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * 4), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -39,7 +39,7 @@ class CoaT(ClassifierMixin, nnx.Module):
         self.patches = nnx.List(patches)
         self.stages = nnx.List(stages)
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

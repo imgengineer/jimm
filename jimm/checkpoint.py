@@ -31,7 +31,7 @@ def load_checkpoint(path, model, optimizer=None):
     item = _item(model, optimizer, 0, None)  # live structure as restore target
     item.pop("extra", None)
     restored = _checkpointer.restore(path, item)
-    nnx.replace_by_pure_dict(nnx.state(model), restored["model"])
+    nnx.update(model, restored["model"])
     if optimizer is not None and "optimizer" in restored:
-        nnx.replace_by_pure_dict(nnx.state(optimizer), restored["optimizer"])
+        nnx.update(optimizer, restored["optimizer"])
     return restored["epoch"]

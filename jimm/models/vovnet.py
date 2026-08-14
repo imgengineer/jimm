@@ -61,7 +61,7 @@ class VoVNet(ClassifierMixin, nnx.Module):
             VoVNetStage(128 if i == 0 else stages_cfg[i - 1][1], mid, out, blocks, lpb, ese, rngs=rngs)
             for i, (mid, out, blocks, lpb) in enumerate(stages_cfg)])
         self.num_features = stages_cfg[-1][1]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

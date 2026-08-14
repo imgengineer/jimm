@@ -12,7 +12,7 @@ class ConvEncoder(nnx.Module):
         self.dw = ConvBNAct(dim, dim, 3, groups=dim, act="identity", rngs=rngs)
         self.pw1 = ConvBNAct(dim, dim * 2, 1, act="gelu", use_bn=False, rngs=rngs)
         self.pw2 = ConvBNAct(dim * 2, dim, 1, act="identity", use_bn=False, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         return x + self.drop_path(self.pw2(self.pw1(self.dw(x))))
@@ -41,7 +41,7 @@ class SwiftFormerBlock(nnx.Module):
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.fc1 = nnx.Linear(dim, dim * 2, rngs=rngs)
         self.fc2 = nnx.Linear(dim * 2, dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         B, H, W, C = x.shape
@@ -75,7 +75,7 @@ class SwiftFormer(ClassifierMixin, nnx.Module):
         self.stages = nnx.List(stages)
         self.downsamples = nnx.List([
             ConvBNAct(channels[i], channels[i + 1], 3, 2, rngs=rngs) for i in range(3)])
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

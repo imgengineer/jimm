@@ -19,7 +19,7 @@ class TNTBlock(nnx.Module):
         self.norm_in2 = nnx.LayerNorm(inner_dim, rngs=rngs)
         self.inner_mlp = Mlp(inner_dim, inner_dim * 4, rngs=rngs)
         self.proj = nnx.Linear(inner_dim, dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, tokens, inner, grid):
         # outer (token) attention on cls+patch tokens
@@ -56,7 +56,7 @@ class TNT(ClassifierMixin, nnx.Module):
         self.blocks = nnx.List([TNTBlock(embed_dim, num_heads, inner_dim, inner_heads,
                                          dpr[i], rngs=rngs) for i in range(depth)])
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

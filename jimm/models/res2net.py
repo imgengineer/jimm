@@ -23,7 +23,7 @@ class Res2NetBottleneck(nnx.Module):
         self.conv3 = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
         self.shortcut = Downsample(in_chs, out_chs, stride, rngs=rngs) if (stride != 1 or in_chs != out_chs) else None
-        self.drop_path = DropPath(drop_path_rate)
+        self.drop_path = DropPath(drop_path_rate, rngs=rngs)
 
     def __call__(self, x):
         y = nnx.relu(self.bn1(self.conv1(x)))
@@ -65,7 +65,7 @@ class Res2Net(ClassifierMixin, nnx.Module):
                 k += 1
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

@@ -16,7 +16,7 @@ class ConvFormerBlock(nnx.Module):
         self.fc2 = nnx.Linear(int(dim * mlp_ratio), dim, rngs=rngs)
         self.scale1 = nnx.Param(layer_scale * jnp.ones(dim))
         self.scale2 = nnx.Param(layer_scale * jnp.ones(dim))
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.scale1.value * self.dw(x))
@@ -31,7 +31,7 @@ class AttnFormerBlock(nnx.Module):
         self.fc2 = nnx.Linear(int(dim * mlp_ratio), dim, rngs=rngs)
         self.scale1 = nnx.Param(layer_scale * jnp.ones(dim))
         self.scale2 = nnx.Param(layer_scale * jnp.ones(dim))
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.scale1.value * self.attn(self.norm1(x)))
@@ -61,7 +61,7 @@ class MetaFormer(ClassifierMixin, nnx.Module):
         self.downsamples = nnx.List([
             nnx.Conv(channels[i], channels[i + 1], (3, 3), strides=(2, 2), rngs=rngs)
             for i in range(3)])
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

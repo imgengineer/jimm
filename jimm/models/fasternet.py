@@ -22,7 +22,7 @@ class FasterNetBlock(nnx.Module):
         self.pconv = PartialConv(dim, dim // 4, rngs=rngs)
         self.fc1 = nnx.Linear(dim, dim * expand, rngs=rngs)
         self.fc2 = nnx.Linear(dim * expand, dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         y = self.pconv(x)
@@ -54,7 +54,7 @@ class FasterNet(ClassifierMixin, nnx.Module):
                            nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2),
                                     use_bias=False, rngs=rngs))
             for i in range(3)])
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

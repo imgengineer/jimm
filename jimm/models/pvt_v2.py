@@ -54,7 +54,7 @@ class PVTBlock(nnx.Module):
     def __init__(self, dim, num_heads, sr_ratio, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = LinearAttention(dim, num_heads, sr_ratio, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = PVTMlp(dim, int(dim * mlp_ratio), rngs=rngs)
 
@@ -98,7 +98,7 @@ class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
         self.patches = nnx.List(patches)
         self.stages = nnx.List(stages)
         self.norm = nnx.LayerNorm(embed_dims[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dims[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

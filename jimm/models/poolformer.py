@@ -9,7 +9,7 @@ class PoolFormerBlock(nnx.Module):
     def __init__(self, dim, pool_size=3, mlp_ratio=4.0, drop_path=0.0,
                  layer_scale_init=1e-5, *, rngs):
         self.pool_size = pool_size
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm = nnx.GroupNorm(dim, num_groups=1, rngs=rngs)
         self.mlp_fc1 = nnx.Linear(dim, int(dim * mlp_ratio), rngs=rngs)
         self.mlp_fc2 = nnx.Linear(int(dim * mlp_ratio), dim, rngs=rngs)
@@ -47,7 +47,7 @@ class PoolFormer(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.patches = nnx.List(patches)
         self.stages = nnx.List(stages)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

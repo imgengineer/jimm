@@ -35,7 +35,7 @@ class SamBlock(nnx.Module):
         self.attn = SamAttention(dim, num_heads, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         B, H, W, C = x.shape

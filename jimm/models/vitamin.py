@@ -44,7 +44,7 @@ class VitBlock(nnx.Module):
         self.attn = Attention(dim, num_heads, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = GeGluMlp(dim, int(dim * mlp_ratio * 2 / 3), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -78,7 +78,7 @@ class ViTAMIN(ClassifierMixin, nnx.Module):
         self.vit_stage3 = nnx.List([VitBlock(channels[3], num_heads[1], rngs=rngs) for _ in range(vit_depths[1])])
 
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

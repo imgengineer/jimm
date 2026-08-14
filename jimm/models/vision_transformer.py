@@ -12,7 +12,7 @@ class Attention(nnx.Module):
         self.scale = self.head_dim ** -0.5
         self.qkv = nnx.Linear(dim, dim * 3, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
-        self.drop = nnx.Dropout(drop)
+        self.drop = nnx.Dropout(drop, rngs=rngs)
 
     def __call__(self, x):
         B, N, C = x.shape
@@ -27,7 +27,7 @@ class Block(nnx.Module):
                  drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = Attention(dim, num_heads, qkv_bias, drop, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
 
@@ -49,12 +49,12 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
         n = self.patch_embed.num_patches
         self.cls_token = nnx.Param(jnp.zeros((1, 1, embed_dim)))
         self.pos_embed = nnx.Param(jnp.zeros((1, n + 1, embed_dim)))
-        self.pos_drop = nnx.Dropout(drop_rate)
+        self.pos_drop = nnx.Dropout(drop_rate, rngs=rngs)
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
         self.blocks = nnx.List([Block(embed_dim, num_heads, mlp_ratio, qkv_bias,
                                       drop_rate, dpr[i], rngs=rngs) for i in range(depth)])
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

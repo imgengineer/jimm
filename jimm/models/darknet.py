@@ -41,7 +41,7 @@ class CSPDarkNet(ClassifierMixin, nnx.Module):
         self.stages = nnx.List([CSPStage(32 if i == 0 else channels[i - 1], c, n, rngs=rngs)
                                 for i, (c, n) in enumerate(zip(channels, blocks))])
         self.num_features = channels[-1]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
@@ -76,7 +76,7 @@ class DarkNet53(ClassifierMixin, nnx.Module):
             chs = out
         self.stages = nnx.List(stages)
         self.num_features = 1024
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(1024, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

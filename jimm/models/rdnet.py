@@ -16,7 +16,7 @@ class RDBlock(nnx.Module):
         self.mixs = nnx.List([nnx.Linear(dim + i * growth, growth, rngs=rngs) for i in range(layers)])
         self.norm = nnx.LayerNorm(dim + layers * growth, rngs=rngs)
         self.out_proj = nnx.Linear(dim + layers * growth, dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         feats = x
@@ -47,7 +47,7 @@ class RDNet(ClassifierMixin, nnx.Module):
                            nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
             for i in range(3)])
         self.head_norm = nnx.LayerNorm(channels[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

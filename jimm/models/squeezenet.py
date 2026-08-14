@@ -39,7 +39,7 @@ class SqueezeNet(ClassifierMixin, nnx.Module):
                 blocks.append(Fire(in_chs, sq, ex, rngs=rngs))
         self.features = nnx.List(blocks)
         self.num_features = 512
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(512, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

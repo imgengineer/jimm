@@ -53,7 +53,7 @@ class DaViTBlock(nnx.Module):
         self.channel = ChannelAttention(dim, num_heads, window_size, rngs=rngs)
         self.norm3 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * 4), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.spatial(self.norm1(x)))
@@ -81,7 +81,7 @@ class DaViT(ClassifierMixin, nnx.Module):
                            nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
             for i in range(3)])
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

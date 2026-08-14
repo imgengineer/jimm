@@ -22,7 +22,7 @@ class WindowAttention(nnx.Module):
         self.scale = self.head_dim ** -0.5
         self.qkv = nnx.Linear(dim, dim * 3, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
-        self.drop = nnx.Dropout(drop)
+        self.drop = nnx.Dropout(drop, rngs=rngs)
         n = (2 * window_size - 1) ** 2
         self.rel_bias_table = nnx.Param(jnp.zeros((n, num_heads)))
         # relative position index, fixed for a given window size
@@ -56,7 +56,7 @@ class SwinBlock(nnx.Module):
         self.ws, self.shift = window_size, shift
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = self.attn_cls(dim, window_size, num_heads, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
         attn_mask = None
@@ -141,7 +141,7 @@ class SwinTransformer(ClassifierMixin, nnx.Module):
                       downsample=i < len(depths) - 1, block_cls=block_cls, rngs=rngs)
             for i in range(len(depths))])
         self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

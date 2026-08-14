@@ -115,7 +115,7 @@ class InceptionResNetV2(ClassifierMixin, nnx.Module):
         self.block8 = Block8(no_relu=True, rngs=rngs)
         self.conv2d_7b = ConvBNAct(2080, 1536, 1, rngs=rngs)
         self.num_features = 1536
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(1536, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

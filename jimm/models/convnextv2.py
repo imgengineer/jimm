@@ -24,7 +24,7 @@ class ConvNeXtV2Block(nnx.Module):
         self.pw1 = nnx.Linear(dim, 4 * dim, rngs=rngs)
         self.grn = GRN(4 * dim)
         self.pw2 = nnx.Linear(4 * dim, dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         y = self.dwconv(x)
@@ -55,7 +55,7 @@ class ConvNeXtV2(ClassifierMixin, nnx.Module):
             for i in range(3)])
         self.num_features = dims[-1]
         self.head_norm = nnx.LayerNorm(dims[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(dims[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

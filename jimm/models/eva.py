@@ -31,7 +31,7 @@ class EvaBlock(nnx.Module):
         self.mlp_fc1 = nnx.Linear(dim, int(dim * mlp_ratio * 2 / 3), rngs=rngs)
         self.mlp_fc2 = nnx.Linear(int(dim * mlp_ratio * 2 / 3), dim, rngs=rngs)
         self.mlp_gate = nnx.Linear(dim, int(dim * mlp_ratio * 2 / 3), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.gamma1 = nnx.Param(init_values * jnp.ones(dim)) if init_values > 0 else None
         self.gamma2 = nnx.Param(init_values * jnp.ones(dim)) if init_values > 0 else None
 
@@ -64,7 +64,7 @@ class Eva(ClassifierMixin, nnx.Module):
         self.blocks = nnx.List([EvaBlock(embed_dim, num_heads, mlp_ratio, dpr[i],
                                          init_values, rngs=rngs) for i in range(depth)])
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

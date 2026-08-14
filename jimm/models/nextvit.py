@@ -13,7 +13,7 @@ class ConvBlock(nnx.Module):
         self.conv1 = ConvBNAct(in_chs, mid, 1, act="hswish", rngs=rngs)
         self.dw = ConvBNAct(mid, mid, 3, stride, groups=mid, act="hswish", rngs=rngs)
         self.pw = ConvBNAct(mid, out_chs, 1, act="identity", rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.shortcut = ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs) \
             if (stride != 1 or in_chs != out_chs) else None
 
@@ -29,7 +29,7 @@ class TransformerBlock(nnx.Module):
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.fc1 = nnx.Linear(dim, int(dim * mlp_ratio), rngs=rngs)
         self.fc2 = nnx.Linear(int(dim * mlp_ratio), dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -59,7 +59,7 @@ class NextViT(ClassifierMixin, nnx.Module):
                 blocks.append(TransformerBlock(c, 8, 2.0, drop_path_rate, rngs=rngs))
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

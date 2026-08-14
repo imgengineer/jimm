@@ -54,7 +54,7 @@ class Xception(ClassifierMixin, nnx.Module):
         self.conv3 = SeparableConv(1024, 1536, rngs=rngs)
         self.conv4 = SeparableConv(1536, 2048, rngs=rngs)
         self.num_features = 2048
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(2048, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

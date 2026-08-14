@@ -100,7 +100,7 @@ class DLA(ClassifierMixin, nnx.Module):
         self.level5 = DlaTree(levels[5], block, channels[4], channels[5], 2,
                               root_shortcut=root_shortcut, rngs=rngs)
         self.num_features = channels[5]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[5], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

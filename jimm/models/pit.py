@@ -10,7 +10,7 @@ class PiTBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop=0.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = Attention(dim, num_heads, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
 

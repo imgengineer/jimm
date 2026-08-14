@@ -15,7 +15,7 @@ class ConvBlock(nnx.Module):
         self.bn1 = nnx.BatchNorm(dim * mlp_ratio, rngs=rngs)
         self.fc2 = nnx.Conv(dim * mlp_ratio, dim, (1, 1), rngs=rngs)
         self.bn2 = nnx.BatchNorm(dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         y = self.bn0(self.dw(x))
@@ -29,7 +29,7 @@ class AttnBlock(nnx.Module):
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp_fc1 = nnx.Linear(dim, dim * mlp_ratio, rngs=rngs)
         self.mlp_fc2 = nnx.Linear(dim * mlp_ratio, dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -66,7 +66,7 @@ class EfficientFormer(ClassifierMixin, nnx.Module):
                                     use_bias=False, rngs=rngs),
                            nnx.BatchNorm(channels[i + 1], rngs=rngs))
             for i in range(3)])
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

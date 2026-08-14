@@ -33,7 +33,7 @@ class VGG(ClassifierMixin, nnx.Module):
         self.num_features = 4096
         self.pre_fc = nnx.Linear(512 * 7 * 7, 4096, rngs=rngs)  # assumes 224 input (5 maxpools)
         self.fc2 = nnx.Linear(4096, 4096, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(4096, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

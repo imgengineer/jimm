@@ -44,7 +44,7 @@ class VisionTransformerHybrid(ClassifierMixin, nnx.Module):
         self.blocks = nnx.List([_HybridBlock(embed_dim, num_heads, mlp_ratio, dpr[i], rngs=rngs)
                                 for i in range(depth)])
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
@@ -67,7 +67,7 @@ class _HybridBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio, drop_path, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = Attention(dim, num_heads, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
 

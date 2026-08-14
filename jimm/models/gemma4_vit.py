@@ -51,7 +51,7 @@ class Gemma4Block(nnx.Module):
         self.attn = Gemma4Attention(dim, num_heads, rngs=rngs)
         self.norm2 = RMSNorm(dim, rngs=rngs)
         self.mlp = Gemma4GatedMlp(dim, hidden_dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -78,7 +78,7 @@ class Gemma4Vit(ClassifierMixin, nnx.Module):
             for i in range(depth)])
 
         self.norm = RMSNorm(embed_dim, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

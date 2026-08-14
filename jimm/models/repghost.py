@@ -74,7 +74,7 @@ class RepGhostNet(ClassifierMixin, nnx.Module):
         head = max(int(960 * width_mult), 8)
         self.conv_head = ConvBNAct(chs, head, 1, rngs=rngs)
         self.num_features = head
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

@@ -8,14 +8,20 @@ __all__ = ["DropPath", "PatchEmbed", "Mlp", "SqueezeExcite", "ConvBNAct", "Class
 
 
 class DropPath(nnx.Module):
-    """Stochastic depth, per-sample (broadcasts over NHWC spatial+channel dims)."""
+    """Stochastic depth with a per-sample keep mask (dimension-agnostic: works for
+    NHWC conv maps and BNC token sequences). deterministic is toggled by model.train()/eval()."""
 
-    def __init__(self, rate: float = 0.0):
+    def __init__(self, rate: float = 0.0, *, rngs):
         self.rate = rate
-        self.drop = nnx.Dropout(rate, broadcast_dims=(1, 2, 3)) if rate > 0 else None
+        self.rngs = rngs["dropout"].fork() if rate > 0 else None
+        self.deterministic = False
 
     def __call__(self, x):
-        return x if self.drop is None else self.drop(x)
+        if self.rngs is None or self.deterministic:
+            return x
+        keep = 1.0 - self.rate
+        mask = jax.random.bernoulli(self.rngs(), keep, (x.shape[0],))
+        return x * mask.reshape((x.shape[0],) + (1,) * (x.ndim - 1)) / keep
 
 
 class PatchEmbed(nnx.Module):
@@ -37,7 +43,7 @@ class Mlp(nnx.Module):
         hidden_dim = hidden_dim or dim
         self.fc1 = nnx.Linear(dim, hidden_dim, rngs=rngs)
         self.fc2 = nnx.Linear(hidden_dim, dim, rngs=rngs)
-        self.drop = nnx.Dropout(drop)
+        self.drop = nnx.Dropout(drop, rngs=rngs)
 
     def __call__(self, x):
         return self.drop(self.fc2(self.drop(nnx.gelu(self.fc1(x)))))

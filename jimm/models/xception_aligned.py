@@ -24,7 +24,7 @@ class XceptionAligned(ClassifierMixin, nnx.Module):
         self.conv3 = SeparableConv(widths[4], widths[5], rngs=rngs)
         self.conv4 = SeparableConv(widths[5], widths[6], rngs=rngs)
         self.num_features = widths[6]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(widths[6], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

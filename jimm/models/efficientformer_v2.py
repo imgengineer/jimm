@@ -42,7 +42,7 @@ class Attention2d(nnx.Module):
 class EfficientFormerV2Block(nnx.Module):
     def __init__(self, dim, mlp_ratio=4.0, is_vit=False, drop_path=0.0, *, rngs):
         self.is_vit = is_vit
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         if is_vit:
             self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
             self.attn = Attention2d(dim, rngs=rngs)
@@ -98,7 +98,7 @@ class EfficientFormerV2(ClassifierMixin, nnx.Module):
         ])
 
         self.norm = nnx.BatchNorm(self.num_features, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

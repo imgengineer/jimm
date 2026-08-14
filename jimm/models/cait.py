@@ -11,7 +11,7 @@ class LayerScaleBlock(nnx.Module):
                  init_values=1e-5, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = Attention(dim, num_heads, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
         self.gamma1 = nnx.Param(init_values * jnp.ones(dim))
@@ -35,7 +35,7 @@ class ClassAttentionBlock(nnx.Module):
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
         self.gamma1 = nnx.Param(init_values * jnp.ones(dim))
         self.gamma2 = nnx.Param(init_values * jnp.ones(dim))
 

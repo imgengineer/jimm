@@ -11,7 +11,7 @@ class MixerBlock(nnx.Module):
         self.token_mlp = Mlp(num_tokens, tokens_mlp, drop, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.channel_mlp = Mlp(dim, channels_mlp, drop, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         y = self.norm1(x).transpose(0, 2, 1)
@@ -35,7 +35,7 @@ class MlpMixer(ClassifierMixin, nnx.Module):
             MixerBlock(n, embed_dim, int(n * mlp_ratio[0]), int(embed_dim * mlp_ratio[1]),
                        drop_rate, dpr[i], rngs=rngs) for i in range(num_blocks)])
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

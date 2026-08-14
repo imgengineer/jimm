@@ -13,7 +13,7 @@ class NestBlock(nnx.Module):
         self.attn = Attention(dim, num_heads, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * 4), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         B, H, W, C = x.shape
@@ -45,7 +45,7 @@ class Nest(ClassifierMixin, nnx.Module):
                            nnx.Conv(channels[i], channels[i + 1], (1, 1), rngs=rngs))
             for i in range(3)])
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

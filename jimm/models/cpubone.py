@@ -58,7 +58,7 @@ class CPUBone(ClassifierMixin, nnx.Module):
         self.stages = nnx.List(stages)
 
         self.head_conv = ConvBNAct(chs, head_widths[0], 1, act="silu", rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head_widths[0], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

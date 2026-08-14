@@ -14,7 +14,7 @@ class MViTTransformerBlock(nnx.Module):
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.fc1 = nnx.Linear(dim, int(dim * mlp_ratio), rngs=rngs)
         self.fc2 = nnx.Linear(int(dim * mlp_ratio), dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -63,7 +63,7 @@ class MobileViT(ClassifierMixin, nnx.Module):
         self.tf3 = MobileViTStage(tf_dims[2], tf_dims[2], tf_depths[2], 2, 4, rngs=rngs)
         self.conv_head = ConvBNAct(tf_dims[2], 4 * tf_dims[2], 1, act="silu", rngs=rngs)
         self.num_features = 4 * tf_dims[2]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

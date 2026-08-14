@@ -38,7 +38,7 @@ class RelPosBlock(nnx.Module):
         self.attn = RelPosAttention(dim, num_heads, grid, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
@@ -61,7 +61,7 @@ class VisionTransformerRelPos(ClassifierMixin, nnx.Module):
         self.blocks = nnx.List([RelPosBlock(embed_dim, num_heads, grid, mlp_ratio,
                                             dpr[i], rngs=rngs) for i in range(depth)])
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

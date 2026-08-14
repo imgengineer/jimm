@@ -50,7 +50,7 @@ class HGNet(ClassifierMixin, nnx.Module):
             chs = out
         self.stages = nnx.List(stages)
         self.num_features = cfg[-1][1]
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

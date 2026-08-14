@@ -49,7 +49,7 @@ class DenseNet(ClassifierMixin, nnx.Module):
         self.stages = nnx.List(stages)
         self.norm5 = nnx.BatchNorm(chs, rngs=rngs)
         self.num_features = chs
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(chs, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

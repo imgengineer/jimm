@@ -63,7 +63,7 @@ class AttnBlock(nnx.Module):
         self.attn = RelPosAttention(dim, num_heads, grid_size, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, dim * 4, rngs=rngs)
-        self.drop_path = DropPath(drop_path)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, t):
         t = t + self.drop_path(self.attn(self.norm1(t)))
@@ -121,7 +121,7 @@ class CoAtNet(ClassifierMixin, nnx.Module):
                                          (cur_grid, cur_grid), drop_path_rate, rngs=rngs))
             chs = out
         self.attn_stages = nnx.List(attn_stages)
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

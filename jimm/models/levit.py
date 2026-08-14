@@ -76,7 +76,7 @@ class LeViT(ClassifierMixin, nnx.Module):
         self.subsamples = nnx.List([
             SubsampleStage(embed_dims[i], embed_dims[i + 1], num_heads[i + 1], key_dim, rngs=rngs)
             for i in range(len(embed_dims) - 1)])
-        self.head_drop = nnx.Dropout(drop_rate)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dims[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

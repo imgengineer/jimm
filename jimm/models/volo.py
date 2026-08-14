@@ -3,9 +3,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, global_pool_nhwc
+from ..layers import DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class OutlookAttention(nnx.Module):
     """Outlook attention: fine-grained local attention via sliding window."""
@@ -49,7 +48,6 @@ class OutlookAttention(nnx.Module):
         out = out.reshape(B, H, W, C)
         return self.proj(out)
 
-
 class Outlooker(nnx.Module):
     def __init__(self, dim, num_heads=6, kernel_size=3, padding=1, stride=1,
                  mlp_ratio=3.0, drop_path=0.0, *, rngs):
@@ -62,7 +60,6 @@ class Outlooker(nnx.Module):
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
-
 
 class TransformerBlock(nnx.Module):
     def __init__(self, dim, num_heads=12, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -85,7 +82,6 @@ class TransformerBlock(nnx.Module):
         x = x + self.drop_path(self.proj(out))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-
 class ClassAttention(nnx.Module):
     def __init__(self, dim, num_heads=12, *, rngs):
         self.num_heads = num_heads
@@ -105,7 +101,6 @@ class ClassAttention(nnx.Module):
         out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, 1, C)
         return self.proj(out)
 
-
 class ClassBlock(nnx.Module):
     def __init__(self, dim, num_heads=12, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -118,7 +113,6 @@ class ClassBlock(nnx.Module):
     def __call__(self, cls, x):
         cls = cls + self.drop_path(self.attn(self.norm1(cls), self.norm2(x)))
         return cls + self.drop_path(self.mlp(self.norm3(cls)))
-
 
 class PatchEmbedStem(nnx.Module):
     def __init__(self, in_chans=3, stem_dim=64, embed_dim=192, *, rngs):
@@ -134,8 +128,8 @@ class PatchEmbedStem(nnx.Module):
         x = nnx.relu(self.bn2(self.conv2(x)))
         return nnx.relu(self.bn3(self.conv3(x)))
 
-
-class VOLO(nnx.Module):
+class VOLO(ClassifierMixin, nnx.Module):
+    _default_global_pool = "token"
     default_cfg: dict = {}
 
     def __init__(self, layers=(4, 4, 8, 2), embed_dims=(192, 384, 384, 384),
@@ -192,18 +186,8 @@ class VOLO(nnx.Module):
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="token"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "volo_d1_224": dict(layers=(4, 4, 8, 2), embed_dims=(192, 384, 384, 384), num_heads=(6, 12, 12, 12), mlp_ratio=3, stem_hidden_dim=64),
@@ -212,7 +196,6 @@ _CFGS = {
     "volo_d4_224": dict(layers=(8, 8, 16, 4), embed_dims=(384, 768, 768, 768), num_heads=(12, 16, 16, 16), mlp_ratio=3, stem_hidden_dim=64),
     "volo_d5_224": dict(layers=(12, 12, 20, 4), embed_dims=(384, 768, 768, 768), num_heads=(12, 16, 16, 16), mlp_ratio=4, stem_hidden_dim=128),
 }
-
 
 def _make(name):
     cfg = _CFGS[name]
@@ -223,7 +206,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

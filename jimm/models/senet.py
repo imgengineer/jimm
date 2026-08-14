@@ -1,9 +1,8 @@
 """SENet-154 in flax nnx, NHWC. Mirrors timm.models.senet (deep stem + SE bottlenecks, groups=32)."""
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class SENetBottleneck(nnx.Module):
     expansion = 2  # senet154 uses expansion 2 with groups
@@ -23,8 +22,7 @@ class SENetBottleneck(nnx.Module):
         sc = x if self.short_conv is None else self.short_conv(x)
         return nnx.relu(y + sc)
 
-
-class SENet154(nnx.Module):
+class SENet154(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, layers=(3, 8, 36, 3), num_classes=1000, in_chans=3,
@@ -57,23 +55,8 @@ class SENet154(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def senet154(**kwargs):

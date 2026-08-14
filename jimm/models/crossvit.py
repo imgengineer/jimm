@@ -2,10 +2,9 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed
+from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
-
 
 class CrossAttention(nnx.Module):
     """cls token of one branch attends to tokens of the other branch."""
@@ -27,7 +26,6 @@ class CrossAttention(nnx.Module):
         out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, 1, -1)
         return self.proj(out)
 
-
 class ViTBlock(nnx.Module):
     def __init__(self, dim, num_heads, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -40,8 +38,8 @@ class ViTBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-
-class CrossViT(nnx.Module):
+class CrossViT(ClassifierMixin, nnx.Module):
+    _default_global_pool = ""
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="",
@@ -94,24 +92,13 @@ class CrossViT(nnx.Module):
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool=""):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "crossvit_tiny_224": ((384, 768), (12, 16), (2, 2), (6, 12)),
     "crossvit_small_224": ((480, 960), (12, 16), (2, 2), (6, 12)),
 }
-
 
 def _make(name):
     embed_dims, patch_sizes, depths, heads = _CFGS[name]
@@ -123,7 +110,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

@@ -2,13 +2,11 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import global_pool_nhwc
+from ..layers import ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 def relu6(x):
     return jnp.minimum(jnp.maximum(x, 0), 6)
-
 
 class ConvBN(nnx.Module):
     """1x1 conv + BN (expansion layer)."""
@@ -19,7 +17,6 @@ class ConvBN(nnx.Module):
 
     def __call__(self, x):
         return self.bn(self.conv(x))
-
 
 class InvertedResidual(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand_ratio, *, rngs):
@@ -38,12 +35,10 @@ class InvertedResidual(nnx.Module):
         y = self.bn2(self.pw(y))
         return x + y if self.use_residual else y
 
-
 def round_chs(c, mult):
     return max(8, int(c * mult + 4) // 8 * 8)
 
-
-class MobileNetV2(nnx.Module):
+class MobileNetV2(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     # (expand, out_chs, repeats, stride)
@@ -76,39 +71,21 @@ class MobileNetV2(nnx.Module):
             x = blk(x)
         return relu6(self.bn_head(self.conv_head(x)))
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _mbv2(width_mult, **kwargs):
     model = MobileNetV2(width_mult, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def mobilenetv2_050(**kwargs):
     return _mbv2(0.5, **kwargs)
 
-
 @register_model
 def mobilenetv2_100(**kwargs):
     return _mbv2(1.0, **kwargs)
-
 
 @register_model
 def mobilenetv2_140(**kwargs):

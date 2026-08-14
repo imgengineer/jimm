@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class GhostModule(nnx.Module):
     """Cheap half conv + 5x5 depthwise on half, concatenated."""
@@ -21,7 +20,6 @@ class GhostModule(nnx.Module):
         x1 = nnx.relu(self.bn1(self.conv1(x)))
         x2 = nnx.relu(self.bn2(self.dw(x1)))
         return jnp.concatenate([x1, x2], axis=-1)[..., : self.out_chs]
-
 
 class GhostBottleneck(nnx.Module):
     def __init__(self, in_chs, mid_chs, out_chs, kernel, stride, se, *, rngs):
@@ -45,7 +43,6 @@ class GhostBottleneck(nnx.Module):
             return y + self.sc_pw(self.sc_dw(x))
         return y + x
 
-
 # (kernel, exp, out, se, stride, repeats)
 GHOSTNET_CFG = [
     (3, 16, 16, 0, 1, 1),
@@ -58,8 +55,7 @@ GHOSTNET_CFG = [
     (5, 960, 160, 0, 1, 1), (5, 960, 160, 1, 1, 1), (5, 960, 160, 0, 1, 1), (5, 960, 160, 1, 1, 1),
 ]
 
-
-class GhostNet(nnx.Module):
+class GhostNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, width_mult=1.0, num_classes=1000, in_chans=3, global_pool="avg",
@@ -95,34 +91,21 @@ class GhostNet(nnx.Module):
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _ghostnet(width_mult, **kwargs):
     model = GhostNet(width_mult, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def ghostnet_050(**kwargs):
     return _ghostnet(0.5, **kwargs)
 
-
 @register_model
 def ghostnet_100(**kwargs):
     return _ghostnet(1.0, **kwargs)
-
 
 @register_model
 def ghostnet_130(**kwargs):

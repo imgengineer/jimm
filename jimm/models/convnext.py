@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc
+from ..layers import DropPath, global_pool_nhwc, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class ConvNeXtBlock(nnx.Module):
     def __init__(self, dim, drop_path=0.0, layer_scale_init=1e-6, *, rngs):
@@ -23,8 +22,7 @@ class ConvNeXtBlock(nnx.Module):
             y = self.gamma.value * y
         return x + self.drop_path(y)
 
-
-class ConvNeXt(nnx.Module):
+class ConvNeXt(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, depths, dims, num_classes=1000, in_chans=3, global_pool="avg",
@@ -69,44 +67,29 @@ class ConvNeXt(nnx.Module):
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _convnext(depths, dims, **kwargs):
     model = ConvNeXt(depths, dims, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def convnext_atto(**kwargs):
     return _convnext([2, 2, 6, 2], [40, 80, 160, 320], **kwargs)
-
 
 @register_model
 def convnext_tiny(**kwargs):
     return _convnext([3, 3, 9, 3], [96, 192, 384, 768], **kwargs)
 
-
 @register_model
 def convnext_small(**kwargs):
     return _convnext([3, 3, 27, 3], [96, 192, 384, 768], **kwargs)
 
-
 @register_model
 def convnext_base(**kwargs):
     return _convnext([3, 3, 27, 3], [128, 256, 512, 1024], **kwargs)
-
 
 @register_model
 def convnext_large(**kwargs):

@@ -2,10 +2,9 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc
+from ..layers import DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
 from .resnet import Downsample
-
 
 class Res2NetBottleneck(nnx.Module):
     expansion = 4
@@ -44,8 +43,7 @@ class Res2NetBottleneck(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return nnx.relu(y + self.drop_path(sc))
 
-
-class Res2Net(nnx.Module):
+class Res2Net(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, layers, scale=4, base_width=26, num_classes=1000, in_chans=3,
@@ -77,39 +75,21 @@ class Res2Net(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _res2net(layers, scale, base_width, **kwargs):
     model = Res2Net(layers, scale, base_width, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def res2net50_26w_4s(**kwargs):
     return _res2net([3, 4, 6, 3], 4, 26, **kwargs)
 
-
 @register_model
 def res2net50_14w_8s(**kwargs):
     return _res2net([3, 4, 6, 3], 8, 14, **kwargs)
-
 
 @register_model
 def res2net101_26w_4s(**kwargs):

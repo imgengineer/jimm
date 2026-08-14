@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, SqueezeExcite, global_pool_nhwc
+from ..layers import DropPath, Mlp, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class MBConvBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand=4, *, rngs):
@@ -27,7 +26,6 @@ class MBConvBlock(nnx.Module):
         y = self.bn3(self.pw(y))
         sc = x if self.shortcut is None else self.shortcut(x)
         return y + sc
-
 
 class RelPosAttention(nnx.Module):
     """Window-free global attention with 2D relative position bias (coatnet)."""
@@ -59,7 +57,6 @@ class RelPosAttention(nnx.Module):
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
 
-
 class AttnBlock(nnx.Module):
     def __init__(self, dim, num_heads, grid_size, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -71,7 +68,6 @@ class AttnBlock(nnx.Module):
     def __call__(self, t):
         t = t + self.drop_path(self.attn(self.norm1(t)))
         return t + self.drop_path(self.mlp(self.norm2(t)))
-
 
 class AttnStage(nnx.Module):
     def __init__(self, in_chs, out_chs, depth, num_heads, grid_size, drop_path=0.0, *, rngs):
@@ -91,8 +87,7 @@ class AttnStage(nnx.Module):
             t = blk(t)
         return t.reshape(B, H, W, C)
 
-
-class CoAtNet(nnx.Module):
+class CoAtNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(96, 192, 384, 768), blocks=(2, 2, 3, 5, 2),
@@ -139,30 +134,14 @@ class CoAtNet(nnx.Module):
             x = stage(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # channels (s0..s4), blocks
     "coatnet_0_rw_224": ((96, 192, 384, 768), (2, 2, 3, 5, 2)),
     "coatnet_1_rw_224": ((96, 192, 384, 768), (2, 2, 6, 14, 2)),
     "coatnet_2_rw_224": ((128, 256, 512, 1024), (2, 2, 6, 14, 2)),
 }
-
 
 def _make(name):
     channels, blocks = _CFGS[name]
@@ -173,7 +152,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

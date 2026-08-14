@@ -1,10 +1,8 @@
 """PVT v2 in flax nnx, NHWC. Mirrors timm.models.pvt_v2 (overlap patch embed + linear SRA)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc
+from ..layers import DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class LinearAttention(nnx.Module):
     """Spatial-reduction attention with avgpool->linear reduction (sr=1 for last stage)."""
@@ -37,7 +35,6 @@ class LinearAttention(nnx.Module):
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
 
-
 class PVTMlp(nnx.Module):
     """MLP with 3x3 depthwise conv between fc1 and fc2 (PVT v2)."""
 
@@ -53,7 +50,6 @@ class PVTMlp(nnx.Module):
         x = nnx.gelu(x)
         return self.fc2(x)
 
-
 class PVTBlock(nnx.Module):
     def __init__(self, dim, num_heads, sr_ratio, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -66,7 +62,6 @@ class PVTBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         return x + self.drop_path(self.mlp(self.norm2(x), H, W))
 
-
 class OverlapPatchEmbed(nnx.Module):
     def __init__(self, patch, stride, in_chs, dim, *, rngs):
         self.proj = nnx.Conv(in_chs, dim, (patch, patch), strides=(stride, stride), rngs=rngs)
@@ -77,8 +72,8 @@ class OverlapPatchEmbed(nnx.Module):
         B, H, W, C = x.shape
         return self.norm(x.reshape(B, H * W, C)), H, W
 
-
-class PyramidVisionTransformerV2(nnx.Module):
+class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
@@ -115,23 +110,8 @@ class PyramidVisionTransformerV2(nnx.Module):
         B, H, W, C = x.shape
         return self.norm(x.reshape(B, H * W, C)).reshape(B, H, W, C)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.head(x) if self.head is not None else x
-
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # embed_dims, depths, num_heads, mlp_ratios
     "pvt_v2_b0": ((32, 64, 160, 256), (2, 2, 2, 2), (1, 2, 5, 8), (8, 8, 4, 4)),
@@ -141,7 +121,6 @@ _CFGS = {  # embed_dims, depths, num_heads, mlp_ratios
     "pvt_v2_b4": ((64, 128, 320, 512), (3, 8, 27, 3), (1, 2, 5, 8), (8, 8, 4, 4)),
     "pvt_v2_b5": ((64, 128, 320, 512), (3, 6, 40, 3), (1, 2, 5, 8), (4, 4, 4, 4)),
 }
-
 
 def _make(name):
     embed_dims, depths, heads, mlps = _CFGS[name]
@@ -153,7 +132,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

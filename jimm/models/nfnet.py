@@ -3,9 +3,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import SqueezeExcite, global_pool_nhwc
+from ..layers import SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class ScaledStdConv(nnx.Module):
     """Weight-standardized conv (NFNet): w' = (w - mean) / sqrt(var * fan_in), NHWC."""
@@ -26,7 +25,6 @@ class ScaledStdConv(nnx.Module):
             x, w, (self.stride, self.stride), "SAME",
             dimension_numbers=("NHWC", "HWIO", "NHWC"),
             feature_group_count=self.groups) + self.bias.value
-
 
 class NFBlock(nnx.Module):
     """NFNet bottleneck block: residual scaled by beta, activation gamma scaled."""
@@ -55,8 +53,7 @@ class NFBlock(nnx.Module):
             x = self.short_conv(x)
         return (y + x) * self.beta
 
-
-class NFNet(nnx.Module):
+class NFNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(256, 512, 1536, 1536), depths=(1, 2, 6, 3), alpha=0.2,
@@ -89,23 +86,8 @@ class NFNet(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # channels, depths, alpha
     "nfnet_f0": ((256, 512, 1536, 1536), (1, 2, 6, 3), 0.2),
@@ -113,7 +95,6 @@ _CFGS = {  # channels, depths, alpha
     "nfnet_f2": ((256, 512, 1536, 1536), (3, 6, 18, 9), 0.2),
     "nfnet_f3": ((256, 512, 1536, 1536), (4, 8, 24, 12), 0.2),
 }
-
 
 def _make(name):
     channels, depths, alpha = _CFGS[name]
@@ -124,7 +105,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

@@ -1,11 +1,9 @@
 """EfficientFormer (v1) in flax nnx. Mirrors timm.models.efficientformer."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, PatchEmbed, global_pool_nhwc
+from ..layers import DropPath, PatchEmbed, ClassifierMixin
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
-
 
 class ConvBlock(nnx.Module):
     """dw 3x3 + two 1x1 (pointwise MLP), with BN, residual."""
@@ -24,7 +22,6 @@ class ConvBlock(nnx.Module):
         y = self.bn2(self.fc2(self.bn1(self.fc1(y))))
         return x + self.drop_path(y)
 
-
 class AttnBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -38,8 +35,7 @@ class AttnBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp_fc2(nnx.gelu(self.mlp_fc1(self.norm2(x)))))
 
-
-class EfficientFormer(nnx.Module):
+class EfficientFormer(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(48, 96, 224, 448), depths=(3, 2, 6, 4),
@@ -88,30 +84,14 @@ class EfficientFormer(nnx.Module):
                     x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # channels, depths, num_attn_blocks
     "efficientformer_l1": ((48, 96, 224, 448), (3, 2, 6, 4), (0, 0, 2, 2)),
     "efficientformer_l3": ((64, 128, 320, 512), (4, 4, 12, 6), (0, 0, 4, 4)),
     "efficientformer_l7": ((96, 192, 384, 768), (6, 6, 18, 8), (0, 0, 6, 6)),
 }
-
 
 def _make(name):
     channels, depths, na = _CFGS[name]
@@ -122,7 +102,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

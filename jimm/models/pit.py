@@ -2,10 +2,9 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp
+from ..layers import DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
-
 
 class PiTBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop=0.0, drop_path=0.0, *, rngs):
@@ -18,7 +17,6 @@ class PiTBlock(nnx.Module):
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
-
 
 class PoolingLayer(nnx.Module):
     """Depthwise conv 3x3 stride 2 on tokens (cls token stays), then dim projection."""
@@ -39,8 +37,9 @@ class PoolingLayer(nnx.Module):
         cls = self.cls_fc(self.norm1(cls))
         return jnp.concatenate([cls, self.norm2(tokens)], axis=1), t.shape[1], t.shape[2]
 
-
-class PiT(nnx.Module):
+class PiT(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
+    _default_global_pool = ""
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
@@ -84,39 +83,25 @@ class PiT(nnx.Module):
         x = x[:, 0] if self.global_pool == "" else jnp.mean(x[:, 1:], axis=1)
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool=""):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _pit(embed_dim, depth, num_heads, **kwargs):
     model = PiT(embed_dim=embed_dim, depth=depth, num_heads=num_heads, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def pit_ti_224(**kwargs):
     return _pit(256, (2, 6, 4), 4, **kwargs)
-
 
 @register_model
 def pit_xs_224(**kwargs):
     return _pit(384, (2, 6, 4), 6, **kwargs)
 
-
 @register_model
 def pit_s_224(**kwargs):
     return _pit(384, (2, 9, 4), 6, **kwargs)
-
 
 @register_model
 def pit_b_224(**kwargs):

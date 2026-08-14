@@ -1,9 +1,8 @@
 """Pre-activation ResNet (ResNetV2) in flax nnx, NHWC. Mirrors timm.models.resnetv2."""
 from flax import nnx
 
-from ..layers import global_pool_nhwc
+from ..layers import ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class PreActBottleneck(nnx.Module):
     expansion = 4
@@ -27,8 +26,7 @@ class PreActBottleneck(nnx.Module):
         y = self.conv3(nnx.relu(self.bn3(y)))
         return y + sc
 
-
-class ResNetV2(nnx.Module):
+class ResNetV2(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, layers, num_classes=1000, in_chans=3, global_pool="avg",
@@ -57,39 +55,21 @@ class ResNetV2(nnx.Module):
                 x = blk(x)
         return nnx.relu(self.norm(x))  # final pre-activation
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _resnetv2(layers, **kwargs):
     model = ResNetV2(layers, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def resnetv2_50(**kwargs):
     return _resnetv2([3, 4, 6, 3], **kwargs)
 
-
 @register_model
 def resnetv2_101(**kwargs):
     return _resnetv2([3, 4, 23, 3], **kwargs)
-
 
 @register_model
 def resnetv2_152(**kwargs):

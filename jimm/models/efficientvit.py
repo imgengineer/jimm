@@ -1,10 +1,8 @@
 """EfficientViT (MSRA) in flax nnx, NHWC. Mirrors timm.models.efficientvit_msra (MBConv + lightweight attn)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class EViTMBConv(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand=4, se=False, *, rngs):
@@ -24,7 +22,6 @@ class EViTMBConv(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return y + sc
 
-
 class EViTAttention(nnx.Module):
     """Lightweight attention: single-head, ReLU-based (EfficientViT)."""
 
@@ -41,7 +38,6 @@ class EViTAttention(nnx.Module):
         x = (attn @ v)
         return self.proj(x)
 
-
 class EViTBlock(nnx.Module):
     def __init__(self, dim, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -54,8 +50,7 @@ class EViTBlock(nnx.Module):
         x = x + self.attn(self.norm1(x))
         return x + self.fc2(nnx.gelu(self.fc1(self.norm2(x))))
 
-
-class EfficientViT(nnx.Module):
+class EfficientViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(64, 128, 192, 256), depths=(1, 2, 3, 4), attn_depths=(0, 0, 1, 2),
@@ -91,30 +86,14 @@ class EfficientViT(nnx.Module):
                     x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # channels, depths, attn_depths
     "efficientvit_b0": ((32, 64, 128, 256), (1, 2, 2, 2), (0, 0, 0, 1)),
     "efficientvit_b1": ((64, 128, 192, 256), (1, 2, 3, 4), (0, 0, 1, 2)),
     "efficientvit_b2": ((96, 192, 384, 512), (1, 3, 4, 4), (0, 0, 1, 2)),
 }
-
 
 def _make(name):
     channels, depths, ad = _CFGS[name]
@@ -125,7 +104,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

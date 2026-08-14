@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, global_pool_nhwc
+from ..layers import ConvBNAct, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class DlaBasic(nnx.Module):
     def __init__(self, in_chs, out_chs, stride=1, *, rngs):
@@ -15,7 +14,6 @@ class DlaBasic(nnx.Module):
         sc = x if shortcut is None else shortcut
         y = self.conv2(self.conv1(x))
         return nnx.relu(y + sc)
-
 
 class DlaBottleneck(nnx.Module):
     expansion = 2
@@ -34,7 +32,6 @@ class DlaBottleneck(nnx.Module):
         y = self.conv3(self.conv2(self.conv1(x)))
         return nnx.relu(y + shortcut)
 
-
 class DlaRoot(nnx.Module):
     def __init__(self, in_chs, out_chs, shortcut=False, *, rngs):
         self.conv = ConvBNAct(in_chs, out_chs, 1, act="identity", rngs=rngs)
@@ -45,7 +42,6 @@ class DlaRoot(nnx.Module):
         if self.shortcut:
             y = y + x_children[0]
         return nnx.relu(y)
-
 
 class DlaTree(nnx.Module):
     def __init__(self, levels, block, in_chs, out_chs, stride=1, root_dim=0,
@@ -86,8 +82,7 @@ class DlaTree(nnx.Module):
         children.append(x1)
         return self.tree2(x1, children=children)
 
-
-class DLA(nnx.Module):
+class DLA(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, levels, channels, block, root_shortcut=False, num_classes=1000,
@@ -112,45 +107,26 @@ class DLA(nnx.Module):
         x = self.level1(self.level0(self.base_layer(x)))
         return self.level5(self.level4(self.level3(self.level2(x))))
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _dla(levels, channels, block, root_shortcut=False, **kwargs):
     model = DLA(levels, channels, block, root_shortcut, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def dla34(**kwargs):
     return _dla([1, 1, 1, 2, 2, 1], [16, 32, 64, 128, 256, 512], DlaBasic, **kwargs)
-
 
 @register_model
 def dla60(**kwargs):
     return _dla([1, 1, 1, 2, 3, 1], [16, 32, 128, 256, 512, 1024], DlaBottleneck, **kwargs)
 
-
 @register_model
 def dla102(**kwargs):
     return _dla([1, 1, 1, 3, 4, 1], [16, 32, 128, 256, 512, 1024], DlaBottleneck,
                 root_shortcut=True, **kwargs)
-
 
 @register_model
 def dla169(**kwargs):

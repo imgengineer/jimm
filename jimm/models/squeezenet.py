@@ -1,9 +1,8 @@
 """SqueezeNet in flax nnx, NHWC. Mirrors timm.models.squeezenet."""
 from flax import nnx
 
-from ..layers import global_pool_nhwc
+from ..layers import ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class Fire(nnx.Module):
     def __init__(self, in_chs, squeeze, expand, *, rngs):
@@ -16,8 +15,7 @@ class Fire(nnx.Module):
         import jax.numpy as jnp
         return jnp.concatenate([nnx.relu(self.expand1x1(x)), nnx.relu(self.expand3x3(x))], axis=-1)
 
-
-class SqueezeNet(nnx.Module):
+class SqueezeNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, version="1_0", num_classes=1000, in_chans=3, global_pool="avg",
@@ -50,30 +48,14 @@ class SqueezeNet(nnx.Module):
             x = nnx.max_pool(x, (3, 3), strides=(2, 2), padding="SAME") if b == "M" else b(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def squeezenet1_0(**kwargs):
     model = SqueezeNet("1_0", **kwargs)
     model.default_cfg = _cfg()
     return model
-
 
 @register_model
 def squeezenet1_1(**kwargs):

@@ -1,10 +1,8 @@
 """SelecSLS in flax nnx, NHWC. Mirrors timm.models.selecsls (dual 3x3+1x1 selective blocks)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, global_pool_nhwc
+from ..layers import ConvBNAct, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class SelecSLSBlock(nnx.Module):
     """conv1x1 -> conv3x3 -> conv1x1 with residual; selective downsample variants."""
@@ -22,8 +20,7 @@ class SelecSLSBlock(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return nnx.relu(y + sc)
 
-
-class SelecSLS(nnx.Module):
+class SelecSLS(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(64, 128, 288, 544), depths=(2, 3, 7, 3), num_classes=1000,
@@ -52,29 +49,13 @@ class SelecSLS(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "selecsls42": ((64, 128, 288, 544), (2, 3, 7, 3)),
     "selecsls60": ((64, 128, 288, 544), (3, 4, 10, 4)),
 }
-
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -85,7 +66,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

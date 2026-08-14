@@ -1,10 +1,8 @@
 """ByobNet (BYO-Build-a-Network) in flax nnx, NHWC. Mirrors timm.models.byobnet."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class ByobBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand=1.0, se=True, groups=1, *, rngs):
@@ -24,15 +22,13 @@ class ByobBlock(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return y + sc
 
-
 _CFGS = {  # widths, depths, expand, strides
     "byobnet_s": ((24, 56, 160, 304, 608), (2, 3, 7, 2, 1), 1.0, (1, 2, 2, 2, 2)),
     "byobnet_m": ((32, 72, 192, 384, 768), (2, 3, 8, 3, 1), 1.0, (1, 2, 2, 2, 2)),
     "byobnet_l": ((40, 88, 232, 464, 928), (2, 3, 9, 3, 1), 1.0, (1, 2, 2, 2, 2)),
 }
 
-
-class ByobNet(nnx.Module):
+class ByobNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, widths, depths, expand, strides, num_classes=1000, in_chans=3,
@@ -61,23 +57,8 @@ class ByobNet(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _make(name):
     widths, depths, expand, strides = _CFGS[name]
@@ -88,7 +69,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

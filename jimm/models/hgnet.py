@@ -1,10 +1,8 @@
 """HGNet in flax nnx, NHWC. Mirrors timm.models.hgnet (hierarchical grouped dw conv blocks)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class HGBlock(nnx.Module):
     """stack of dw convs with increasing kernel + 1x1 expand/project, residual."""
@@ -31,15 +29,13 @@ class HGBlock(nnx.Module):
         sc = self.sc(x) if self.use_sc else x
         return nnx.relu(y + sc)
 
-
 _CFGS = {  # (mid, out, layers, stride, se) per stage
     "hgnet_tiny": [(48, 48, 6, 2, 0), (128, 96, 6, 2, 0), (512, 192, 6, 2, 1), (1024, 384, 6, 2, 1)],
     "hgnet_small": [(96, 96, 6, 2, 0), (256, 192, 6, 2, 0), (768, 384, 6, 2, 1), (1536, 768, 6, 2, 1)],
     "hgnet_base": [(160, 192, 7, 2, 0), (352, 256, 7, 2, 0), (1024, 512, 7, 2, 1), (2048, 1024, 7, 2, 1)],
 }
 
-
-class HGNet(nnx.Module):
+class HGNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, cfg, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
@@ -64,23 +60,8 @@ class HGNet(nnx.Module):
             x = stage(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _make(name):
     cfg = _CFGS[name]
@@ -91,7 +72,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

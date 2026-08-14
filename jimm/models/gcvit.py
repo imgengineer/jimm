@@ -2,11 +2,10 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, global_pool_nhwc
+from ..layers import DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
 from .swin_transformer import window_partition, window_reverse
 from .vision_transformer import Attention as _Attn
-
 
 class GlobalQuery(nnx.Module):
     """Small CNN producing a global context vector for the stage (pooled to one token)."""
@@ -18,7 +17,6 @@ class GlobalQuery(nnx.Module):
     def __call__(self, x):
         y = self.proj(self.pool(x))
         return jnp.mean(y, axis=(1, 2), keepdims=True)  # (B,1,1,C)
-
 
 class GCBlock(nnx.Module):
     """Window attention with a global context vector injected into the tokens."""
@@ -40,8 +38,7 @@ class GCBlock(nnx.Module):
         t = t + self.drop_path(self.mlp(self.norm2(t)))
         return window_reverse(t, self.ws, H, W, B)
 
-
-class GCViT(nnx.Module):
+class GCViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
@@ -74,30 +71,14 @@ class GCViT(nnx.Module):
                 x = blk(x)
         return self.norm(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "gcvit_tiny": ((96, 192, 384, 768), (2, 2, 6, 2), (3, 6, 12, 24)),
     "gcvit_small": ((96, 192, 384, 768), (2, 2, 18, 2), (3, 6, 12, 24)),
     "gcvit_base": ((128, 256, 512, 1024), (2, 2, 18, 2), (4, 8, 16, 32)),
 }
-
 
 def _make(name):
     channels, depths, heads = _CFGS[name]
@@ -108,7 +89,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

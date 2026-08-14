@@ -2,13 +2,11 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, global_pool_nhwc
+from ..layers import ConvBNAct, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 def _pool3(x):
     return nnx.max_pool(x, (3, 3), strides=(2, 2), padding="VALID")
-
 
 class InceptionA(nnx.Module):
     def __init__(self, in_chs, *, rngs):
@@ -24,7 +22,6 @@ class InceptionA(nnx.Module):
         b4 = self.b4(nnx.avg_pool(x, (3, 3), strides=(1, 1), padding="SAME"))
         return jnp.concatenate([self.b1(x), b2, b3, b4], axis=-1)
 
-
 class ReductionA(nnx.Module):  # 35 -> 17 (or 71 -> 35)
     def __init__(self, in_chs, k, l, m, n, *, rngs):
         self.b1 = ConvBNAct(in_chs, n, 3, 2, padding="VALID", rngs=rngs)
@@ -34,7 +31,6 @@ class ReductionA(nnx.Module):  # 35 -> 17 (or 71 -> 35)
     def __call__(self, x):
         b2 = self.b2[2](self.b2[1](self.b2[0](x)))
         return jnp.concatenate([self.b1(x), b2, _pool3(x)], axis=-1)
-
 
 class InceptionB(nnx.Module):
     def __init__(self, in_chs, *, rngs):
@@ -52,7 +48,6 @@ class InceptionB(nnx.Module):
         b4 = self.b4(nnx.avg_pool(x, (3, 3), strides=(1, 1), padding="SAME"))
         return jnp.concatenate([self.b1(x), b2, b3, b4], axis=-1)
 
-
 class ReductionB(nnx.Module):  # 17 -> 8
     def __init__(self, in_chs, *, rngs):
         self.b1 = nnx.List([ConvBNAct(in_chs, 192, 1, rngs=rngs),
@@ -65,7 +60,6 @@ class ReductionB(nnx.Module):  # 17 -> 8
         b1 = self.b1[1](self.b1[0](x))
         b2 = self.b2[3](self.b2[2](self.b2[1](self.b2[0](x))))
         return jnp.concatenate([b1, b2, _pool3(x)], axis=-1)
-
 
 class InceptionC(nnx.Module):
     def __init__(self, in_chs, *, rngs):
@@ -88,8 +82,7 @@ class InceptionC(nnx.Module):
         b4 = self.b4(nnx.avg_pool(x, (3, 3), strides=(1, 1), padding="SAME"))
         return jnp.concatenate([self.b1(x), b2a, b2b, b3a, b3b, b4], axis=-1)
 
-
-class InceptionV4(nnx.Module):
+class InceptionV4(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
@@ -135,23 +128,8 @@ class InceptionV4(nnx.Module):
             x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def inception_v4(**kwargs):

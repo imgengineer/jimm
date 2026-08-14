@@ -1,10 +1,8 @@
 """EfficientFormer-V2 in flax nnx, NHWC. Mirrors timm.models.efficientformer_v2."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc
+from ..layers import DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class ConvMlp(nnx.Module):
     """Conv MLP with depthwise 3x3 in between."""
@@ -21,7 +19,6 @@ class ConvMlp(nnx.Module):
         x = nnx.relu(self.bn1(self.fc1(x)))
         x = nnx.relu(self.bn2(self.dw(x)))
         return self.bn3(self.fc2(x))
-
 
 class Attention2d(nnx.Module):
     def __init__(self, dim, key_dim=16, num_heads=8, *, rngs):
@@ -41,7 +38,6 @@ class Attention2d(nnx.Module):
         attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
         out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, -1)
         return self.proj(out)
-
 
 class EfficientFormerV2Block(nnx.Module):
     def __init__(self, dim, mlp_ratio=4.0, is_vit=False, drop_path=0.0, *, rngs):
@@ -66,8 +62,7 @@ class EfficientFormerV2Block(nnx.Module):
         else:
             return x + self.drop_path(self.mlp(x))
 
-
-class EfficientFormerV2(nnx.Module):
+class EfficientFormerV2(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, depths=(2, 2, 6, 2), embed_dims=(32, 48, 96, 176), num_vit=2,
@@ -116,23 +111,8 @@ class EfficientFormerV2(nnx.Module):
                 x = blk(x)
         return self.norm(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "efficientformerv2_s0": dict(depths=(2, 2, 6, 2), embed_dims=(32, 48, 96, 176), num_vit=2),
@@ -140,7 +120,6 @@ _CFGS = {
     "efficientformerv2_s2": dict(depths=(3, 3, 15, 3), embed_dims=(36, 64, 144, 288), num_vit=4),
     "efficientformerv2_l": dict(depths=(5, 5, 15, 5), embed_dims=(48, 96, 192, 384), num_vit=6),
 }
-
 
 def _make(name):
     cfg = _CFGS[name]
@@ -151,7 +130,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

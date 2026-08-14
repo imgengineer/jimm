@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, global_pool_nhwc
+from ..layers import ConvBNAct, DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class ConvEncoder(nnx.Module):
     """dw 3x3 + two 1x1 pointwise, residual."""
@@ -17,7 +16,6 @@ class ConvEncoder(nnx.Module):
 
     def __call__(self, x):
         return x + self.drop_path(self.pw2(self.pw1(self.dw(x))))
-
 
 class SwiftAttention(nnx.Module):
     """Additive attention: query->score weights context vector."""
@@ -36,7 +34,6 @@ class SwiftAttention(nnx.Module):
         ctx = jnp.broadcast_to(ctx, (B, N, C))
         return self.proj(self.q(x) * ctx)
 
-
 class SwiftFormerBlock(nnx.Module):
     def __init__(self, dim, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -53,8 +50,7 @@ class SwiftFormerBlock(nnx.Module):
         t = t + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm2(t)))))
         return t.reshape(B, H, W, C)
 
-
-class SwiftFormer(nnx.Module):
+class SwiftFormer(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(48, 56, 112, 224), depths=(3, 3, 9, 3), swift_from=2,
@@ -92,30 +88,14 @@ class SwiftFormer(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "swiftformer_xs": ((48, 56, 112, 224), (3, 3, 9, 3)),
     "swiftformer_s": ((48, 64, 168, 224), (3, 3, 9, 3)),
     "swiftformer_l1": ((48, 96, 192, 384), (3, 4, 12, 4)),
 }
-
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -126,7 +106,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

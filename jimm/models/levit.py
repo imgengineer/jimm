@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import global_pool_nhwc, hswish
+from ..layers import hswish, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class LevitAttention(nnx.Module):
     def __init__(self, dim, num_heads, key_dim=16, *, rngs):
@@ -27,7 +26,6 @@ class LevitAttention(nnx.Module):
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, -1)
         return self.proj(x)
 
-
 class LevitBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=2.0, key_dim=16, *, rngs):
         self.attn = LevitAttention(dim, num_heads, key_dim, rngs=rngs)
@@ -37,7 +35,6 @@ class LevitBlock(nnx.Module):
     def __call__(self, x):
         x = x + self.attn(x)
         return x + self.mlp_fc2(hswish(self.mlp_fc1(x)))
-
 
 class SubsampleStage(nnx.Module):
     """Attention-based stride-2 subsampling between LeViT stages."""
@@ -56,8 +53,8 @@ class SubsampleStage(nnx.Module):
         t = self.proj(t.reshape(B, -1, t.shape[-1]))
         return t, H2, W2
 
-
-class LeViT(nnx.Module):
+class LeViT(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
@@ -94,30 +91,14 @@ class LeViT(nnx.Module):
                 x, H, W = self.subsamples[i](x, H, W)
         return x.reshape(B, H, W, -1)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.head(x) if self.head is not None else x
-
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # embed_dims, depths, num_heads
     "levit_128s": ((128, 256, 384), (2, 3, 4), (4, 8, 12)),
     "levit_192": ((192, 288, 384), (3, 3, 4), (4, 8, 12)),
     "levit_256": ((256, 384, 512), (4, 4, 4), (8, 12, 16)),
 }
-
 
 def _make(name):
     embed_dims, depths, heads = _CFGS[name]
@@ -128,7 +109,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

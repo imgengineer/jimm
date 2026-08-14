@@ -1,7 +1,7 @@
 """VGG in flax nnx, NHWC. Mirrors timm.models.vgg (head: 7x7 pool -> MLP classifier)."""
-import jax.numpy as jnp
 from flax import nnx
 
+from ..layers import ClassifierMixin
 from ..registry import register_model, _cfg
 
 
@@ -17,7 +17,7 @@ class ConvBlock(nnx.Module):
         return nnx.relu(x)
 
 
-class VGG(nnx.Module):
+class VGG(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, cfg, use_bn=True, num_classes=1000, in_chans=3, drop_rate=0.0, *, rngs):
@@ -48,15 +48,6 @@ class VGG(nnx.Module):
         x = nnx.relu(self.fc2(x))
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes = num_classes
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))

@@ -1,11 +1,9 @@
 """FastViT in flax nnx, NHWC. Mirrors timm.models.fastvit (RepMixer + attention stages)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc
+from ..layers import DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
-
 
 class RepMixerBlock(nnx.Module):
     """dw 7x7 residual token mixer + pointwise MLP."""
@@ -24,7 +22,6 @@ class RepMixerBlock(nnx.Module):
         y = nnx.relu(y)
         y = self.mlp_bn2(self.mlp2(self.mlp_bn1(self.mlp1(y))))
         return x + self.drop_path(y)
-
 
 class AttnStage(nnx.Module):
     def __init__(self, dim, num_heads, depth, drop_path=0.0, *, rngs):
@@ -48,8 +45,7 @@ class AttnStage(nnx.Module):
             t = t + dp(fc2(nnx.gelu(fc1(norm2(t)))))
         return t.reshape(B, H, W, C)
 
-
-class FastViT(nnx.Module):
+class FastViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(48, 96, 192, 384), depths=(2, 2, 6, 2), attn_depths=(0, 0, 0, 2),
@@ -91,30 +87,14 @@ class FastViT(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "fastvit_t8": ((48, 96, 192, 384), (2, 2, 4, 2), (0, 0, 0, 1)),
     "fastvit_t12": ((64, 128, 256, 512), (2, 2, 6, 2), (0, 0, 0, 1)),
     "fastvit_s12": ((64, 128, 256, 512), (2, 2, 8, 2), (0, 0, 1, 1)),
 }
-
 
 def _make(name):
     channels, depths, ad = _CFGS[name]
@@ -125,7 +105,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

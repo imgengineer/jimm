@@ -1,11 +1,9 @@
 """CSATv2 in flax nnx, NHWC. Mirrors timm.models.csatv2 (Cascaded Spatial Attention Transformer)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, Mlp, global_pool_nhwc
+from ..layers import ConvBNAct, DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
-
 
 class SpatialAttention(nnx.Module):
     """Spatial attention using 7x7 depthwise convolution + gating."""
@@ -18,7 +16,6 @@ class SpatialAttention(nnx.Module):
     def __call__(self, x):
         return self.proj(nnx.relu(self.bn(self.dw(x))))
 
-
 class SpatialTransformerBlock(nnx.Module):
     def __init__(self, dim, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -30,7 +27,6 @@ class SpatialTransformerBlock(nnx.Module):
     def __call__(self, x):
         x = x + self.drop_path(self.spatial(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
-
 
 class TransformerBlock(nnx.Module):
     def __init__(self, dim, num_heads=8, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -47,8 +43,7 @@ class TransformerBlock(nnx.Module):
         t = t + self.drop_path(self.mlp(self.norm2(t)))
         return t.reshape(B, H, W, C)
 
-
-class CSATv2(nnx.Module):
+class CSATv2(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, dims=(48, 96, 224, 448), depths=(3, 3, 9, 3), num_classes=1000,
@@ -94,30 +89,14 @@ class CSATv2(nnx.Module):
                 x = blk(x)
         return self.norm(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def csatv2(**kwargs):
     model = CSATv2(dims=(48, 96, 224, 448), depths=(3, 3, 9, 3), **kwargs)
     model.default_cfg = _cfg()
     return model
-
 
 @register_model
 def csatv2_21m(**kwargs):

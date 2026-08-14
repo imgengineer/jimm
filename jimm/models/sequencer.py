@@ -1,10 +1,8 @@
 """Sequencer2D in flax nnx. Mirrors timm.models.sequencer (LSTM-free sequence mixing via Linear)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc
+from ..layers import DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class SequencerBlock(nnx.Module):
     """channel MLP + spatial mixing via Linear over the H and W token dims."""
@@ -29,8 +27,7 @@ class SequencerBlock(nnx.Module):
         y = self.w_mix(y.transpose(0, 1, 3, 2)).transpose(0, 1, 3, 2)
         return x + self.drop_path(y)
 
-
-class Sequencer2D(nnx.Module):
+class Sequencer2D(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(192, 384, 768), depths=(7, 7, 7), img_size=224,
@@ -65,29 +62,13 @@ class Sequencer2D(nnx.Module):
                 x = blk(x)
         return self.norm(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "sequencer2d_s": ((192, 384, 768), (7, 7, 7)),
     "sequencer2d_m": ((256, 512, 1024), (7, 7, 7)),
 }
-
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -98,7 +79,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

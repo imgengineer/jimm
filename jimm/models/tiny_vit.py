@@ -1,12 +1,10 @@
 """TinyViT in flax nnx, NHWC. Mirrors timm.models.tiny_vit (MBConv + window attention)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, Mlp, global_pool_nhwc
+from ..layers import ConvBNAct, DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
 from .mobilenetv2 import InvertedResidual
 from .swin_transformer import WindowAttention, window_partition, window_reverse
-
 
 class TinyViTWindowBlock(nnx.Module):
     def __init__(self, dim, num_heads, window_size, drop_path=0.0, *, rngs):
@@ -24,8 +22,7 @@ class TinyViTWindowBlock(nnx.Module):
         t = t + self.drop_path(self.mlp(self.norm2(t)))
         return window_reverse(t, self.ws, H, W, B)
 
-
-class TinyViT(nnx.Module):
+class TinyViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(96, 192, 384, 576), depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 18),
@@ -64,30 +61,14 @@ class TinyViT(nnx.Module):
                 x = blk(x)
         return self.norm(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "tiny_vit_5m_224": ((64, 128, 256, 320), (2, 2, 4, 2), (2, 4, 8, 10)),
     "tiny_vit_11m_224": ((64, 128, 256, 448), (2, 2, 6, 2), (2, 4, 8, 14)),
     "tiny_vit_21m_224": ((96, 192, 384, 576), (2, 2, 6, 2), (3, 6, 12, 18)),
 }
-
 
 def _make(name):
     channels, depths, heads = _CFGS[name]
@@ -98,7 +79,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

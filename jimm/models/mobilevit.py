@@ -2,11 +2,10 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, global_pool_nhwc
+from ..layers import ConvBNAct, DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
 from .mobilenetv2 import InvertedResidual
 from .vision_transformer import Attention
-
 
 class MViTTransformerBlock(nnx.Module):
     def __init__(self, dim, num_heads=4, mlp_ratio=2.0, drop_path=0.0, *, rngs):
@@ -20,7 +19,6 @@ class MViTTransformerBlock(nnx.Module):
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm2(x)))))
-
 
 class MobileViTStage(nnx.Module):
     """conv to dim -> unfold patches -> transformer -> fold back -> fuse."""
@@ -45,8 +43,7 @@ class MobileViTStage(nnx.Module):
         y = self.conv_out(y)
         return self.fuse(jnp.concatenate([x, y], axis=-1))
 
-
-class MobileViT(nnx.Module):
+class MobileViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(32, 64, 96), tf_dims=(144, 192, 240), tf_depths=(2, 4, 3),
@@ -80,30 +77,14 @@ class MobileViT(nnx.Module):
         x = self.tf3(self.mv2_5(x))
         return self.conv_head(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "mobilevit_xxs": ((32, 64, 80), (96, 120, 144), (2, 4, 3)),
     "mobilevit_xs": ((48, 96, 120), (144, 160, 192), (2, 4, 3)),
     "mobilevit_s": ((64, 128, 160), (192, 256, 320), (2, 6, 4)),
 }
-
 
 def _make(name):
     channels, tf_dims, tf_depths = _CFGS[name]
@@ -114,7 +95,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

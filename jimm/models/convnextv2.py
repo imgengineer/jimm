@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc
+from ..layers import DropPath, global_pool_nhwc, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class GRN(nnx.Module):
     """Global Response Normalization (ConvNeXt V2)."""
@@ -17,7 +16,6 @@ class GRN(nnx.Module):
         gx = jnp.linalg.norm(x, ord=2, axis=(1, 2), keepdims=True)  # (B,1,1,C)
         nx = gx / (jnp.mean(gx, axis=-1, keepdims=True) + 1e-6)
         return self.gamma.value * (x * nx) + self.beta.value + x
-
 
 class ConvNeXtV2Block(nnx.Module):
     def __init__(self, dim, drop_path=0.0, *, rngs):
@@ -34,8 +32,7 @@ class ConvNeXtV2Block(nnx.Module):
         y = self.pw2(self.grn(nnx.gelu(self.pw1(y))))
         return x + self.drop_path(y)
 
-
-class ConvNeXtV2(nnx.Module):
+class ConvNeXtV2(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, depths, dims, num_classes=1000, in_chans=3, global_pool="avg",
@@ -76,18 +73,8 @@ class ConvNeXtV2(nnx.Module):
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _VARIANTS = {  # depths, dims
     "convnextv2_atto": ([2, 2, 6, 2], [40, 80, 160, 320]),
@@ -101,7 +88,6 @@ _VARIANTS = {  # depths, dims
     "convnextv2_huge": ([3, 3, 27, 3], [352, 704, 1408, 2816]),
 }
 
-
 def _make(name):
     depths, dims = _VARIANTS[name]
 
@@ -111,7 +97,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _VARIANTS:
     register_model(_make(_name))

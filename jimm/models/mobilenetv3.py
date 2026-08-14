@@ -1,13 +1,11 @@
 """MobileNetV3 in flax nnx, NHWC. Mirrors timm.models.mobilenetv3 / torchvision."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import SqueezeExcite, global_pool_nhwc, hswish
+from ..layers import SqueezeExcite, global_pool_nhwc, hswish, ClassifierMixin
 from ..registry import register_model, _cfg
 from .mobilenetv2 import ConvBN, relu6
 
 _ACT = {"relu": relu6, "hswish": hswish}
-
 
 class InvertedResidualV3(nnx.Module):
     def __init__(self, in_chs, out_chs, kernel, stride, expand, se, act, *, rngs):
@@ -30,7 +28,6 @@ class InvertedResidualV3(nnx.Module):
         y = self.bn2(self.pw(y))
         return x + y if self.use_residual else y
 
-
 # (kernel, expand, in, out, se, act, stride)
 LARGE_CFG = [
     (3, 1, 16, 16, 0, "relu", 1), (3, 4, 16, 24, 0, "relu", 2), (3, 3, 24, 24, 0, "relu", 1),
@@ -46,8 +43,7 @@ SMALL_CFG = [
     (5, 6, 48, 96, 1, "hswish", 2), (5, 6, 96, 96, 1, "hswish", 1), (5, 6, 96, 96, 1, "hswish", 1),
 ]
 
-
-class MobileNetV3(nnx.Module):
+class MobileNetV3(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, cfg, head_chs, head_mid, num_classes=1000, in_chans=3,
@@ -76,25 +72,14 @@ class MobileNetV3(nnx.Module):
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def mobilenetv3_large_100(**kwargs):
     model = MobileNetV3(LARGE_CFG, 960, 1280, **kwargs)
     model.default_cfg = _cfg()
     return model
-
 
 @register_model
 def mobilenetv3_small_100(**kwargs):

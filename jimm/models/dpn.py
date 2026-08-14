@@ -7,9 +7,8 @@ output = residual (bw ch) concat dense (2*inc + inc per block, accumulating).
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, global_pool_nhwc
+from ..layers import ConvBNAct, global_pool_nhwc, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class DualPathBlock(nnx.Module):
     def __init__(self, in_chs, r, bw, inc, groups, key_stride, has_proj, b, *, rngs):
@@ -45,8 +44,7 @@ class DualPathBlock(nnx.Module):
         dense = jnp.concatenate([x_s2, out2], axis=-1)
         return jnp.concatenate([resid, dense], axis=-1)
 
-
-class DPN(nnx.Module):
+class DPN(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, k_sec, inc_sec, k_r, groups, small=False, num_init_features=64,
@@ -85,18 +83,8 @@ class DPN(nnx.Module):
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # k_sec, inc_sec, k_r, groups, small, num_init_features, b
     "dpn68": ((3, 4, 12, 3), (16, 32, 32, 64), 128, 32, True, 10, False),
@@ -107,7 +95,6 @@ _CFGS = {  # k_sec, inc_sec, k_r, groups, small, num_init_features, b
     "dpn131": ((4, 8, 28, 3), (16, 32, 32, 128), 160, 40, False, 128, False),
 }
 
-
 def _make(name):
     k_sec, inc_sec, k_r, groups, small, nif, b = _CFGS[name]
 
@@ -117,7 +104,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

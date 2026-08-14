@@ -71,14 +71,15 @@ def cross_entropy(logits, labels, smoothing=0.0):
     return optax.softmax_cross_entropy(logits, one_hot).mean()
 
 
-def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch):
+def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0.0):
     total = epochs * steps_per_epoch
     schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0, peak_value=lr,
         warmup_steps=min(5 * steps_per_epoch, 10000, max(total // 10, 1)),
         decay_steps=total, end_value=lr * 1e-2)
-    tx = optax.adamw(schedule, weight_decay=weight_decay)
-    return nnx.Optimizer(model, tx, wrt=nnx.Param)
+    tx = optax.clip_by_global_norm(clip_grad) if clip_grad > 0 else optax.identity()
+    return nnx.Optimizer(model, optax.chain(tx, optax.adamw(schedule, weight_decay=weight_decay)),
+                         wrt=nnx.Param)
 
 
 @nnx.jit
@@ -112,6 +113,8 @@ def main(argv=None):
     p.add_argument("--smoothing", type=float, default=0.1)
     p.add_argument("--drop-path", type=float, default=0.0)
     p.add_argument("--workers", type=int, default=8, help="data loader worker count per host")
+    p.add_argument("--clip-grad", type=float, default=1.0,
+                   help="global-norm gradient clipping (0 = disabled)")
     p.add_argument("--steps-per-epoch", type=int, default=None,
                    help="cap train steps per epoch (default: full epoch)")
     p.add_argument("--output", default="./output", help="output directory for checkpoints")
@@ -150,25 +153,29 @@ def main(argv=None):
     data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
     label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
 
-    # 3. Instantiate model and optimizer
+    # 3. Instantiate model and data pipeline (loader first: step count drives the LR schedule)
     model = create_model(args.model, num_classes=args.num_classes,
                          drop_path_rate=args.drop_path, rngs=nnx.Rngs(0))
     model.train()
 
-    steps_per_epoch = args.steps_per_epoch or 1000
-    optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs, steps_per_epoch)
+    if args.batch_size % len(local_devices) != 0:
+        raise ValueError(
+            f"batch_size {args.batch_size} must be divisible by local device count "
+            f"{len(local_devices)} for SPMD data sharding (each device gets "
+            f"batch_size / num_devices examples)")
+
+    train_loader = create_loader(f"{args.data_dir}/train", args.batch_size,
+                                 img_size=args.img_size, is_training=True,
+                                 num_workers=args.workers, seed=rank)
+    steps_per_epoch = args.steps_per_epoch or max(1, len(train_loader))
+
+    optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs,
+                               steps_per_epoch, clip_grad=args.clip_grad)
 
     # Apply FSDP sharding if enabled
     if args.fsdp:
         fsdp_shard_model(model, mesh)
         fsdp_shard_model(optimizer, mesh)
-
-    # 4. Data pipeline with automatic process sharding
-    train_loader = create_loader(f"{args.data_dir}/train", args.batch_size,
-                                 img_size=args.img_size, is_training=True,
-                                 num_workers=args.workers, seed=rank)
-
-    steps_per_epoch = args.steps_per_epoch or max(1, len(train_loader))
 
     val_loader = None
     if os.path.isdir(f"{args.data_dir}/val"):

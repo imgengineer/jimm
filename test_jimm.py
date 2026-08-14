@@ -66,8 +66,11 @@ def check_all_models_forward(mode="representative"):
         x = jnp.zeros((1, size, size, 3), jnp.float32)
         m.eval()
         logits = m(x)
-        assert logits.shape == (1, 7), (name, logits.shape)
         assert bool(jnp.isfinite(logits).all()), f"NaN in {name}"
+        if m.get_classifier() is None:  # encoder-only models (e.g. vit_sam): feature maps in, features out
+            assert logits.shape[-1] == m.num_features, (name, logits.shape)
+            continue
+        assert logits.shape == (1, 7), (name, logits.shape)
         m.reset_classifier(0)
         feats = m(x)
         assert feats.shape[-1] == m.num_features, (name, feats.shape, m.num_features)

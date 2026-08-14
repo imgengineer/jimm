@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, global_pool_nhwc
+from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class PooledAttention(nnx.Module):
     """Attention with pooled K/V (spatial stride) + 2D relative position bias."""
@@ -48,7 +47,6 @@ class PooledAttention(nnx.Module):
                          strides=(self.pool_stride, self.pool_stride), padding="SAME")
         return t.reshape(B, -1, h, d).transpose(0, 2, 1, 3)
 
-
 class MViTBlock(nnx.Module):
     def __init__(self, dim, num_heads, pool_stride, grid, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -61,8 +59,8 @@ class MViTBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-
-class MViTv2(nnx.Module):
+class MViTv2(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
@@ -106,30 +104,14 @@ class MViTv2(nnx.Module):
                 x = blk(x, H, W)
         return self.norm(x).reshape(B, H, W, -1)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.head(x) if self.head is not None else x
-
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # embed_dim, depths, num_heads, pool_strides
     "mvitv2_tiny": (96, (1, 2, 5, 2), (1, 2, 4, 8), (1, 2, 2, 2)),
     "mvitv2_small": (96, (2, 4, 11, 2), (1, 2, 4, 8), (1, 2, 2, 2)),
     "mvitv2_base": (96, (2, 6, 18, 2), (1, 2, 4, 8), (1, 2, 2, 2)),
 }
-
 
 def _make(name):
     embed_dim, depths, heads, ps = _CFGS[name]
@@ -140,7 +122,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

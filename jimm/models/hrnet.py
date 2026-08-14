@@ -3,12 +3,10 @@
 Classifier head: per-branch 4x channel increase + progressive downsample-merge (official scheme).
 """
 import jax
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, global_pool_nhwc
+from ..layers import ConvBNAct, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class HRBottleneck(nnx.Module):
     expansion = 4
@@ -26,7 +24,6 @@ class HRBottleneck(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return nnx.relu(y + sc)
 
-
 class HRBasicBlock(nnx.Module):
     def __init__(self, chs, *, rngs):
         self.conv1 = ConvBNAct(chs, chs, 3, rngs=rngs)
@@ -34,7 +31,6 @@ class HRBasicBlock(nnx.Module):
 
     def __call__(self, x):
         return nnx.relu(self.conv2(self.conv1(x)) + x)
-
 
 class FuseLayer(nnx.Module):
     """Multi-resolution fusion: from each input branch to each output branch.
@@ -94,14 +90,12 @@ class FuseLayer(nnx.Module):
         b, h, w, c = x.shape
         return jax.image.resize(x, (b, h * factor, w * factor, c), "nearest")
 
-
 def _run_branch(branch, x):
     for blk in branch:
         x = blk(x)
     return x
 
-
-class HRNet(nnx.Module):
+class HRNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, widths, s1_blocks=4, s2_blocks=4, s3_modules=4, s4_modules=3, bpm=4,
@@ -155,23 +149,8 @@ class HRNet(nnx.Module):
         y = self.downs[2](y) + self.incre[3](xs[3])
         return nnx.relu(y)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # widths, s1_blocks, s2_blocks, s3_modules, s4_modules, blocks_per_module
     "hrnet_w18_small": ([16, 32, 64, 128], 2, 2, 3, 2, 2),
@@ -179,7 +158,6 @@ _CFGS = {  # widths, s1_blocks, s2_blocks, s3_modules, s4_modules, blocks_per_mo
     "hrnet_w32": ([32, 64, 128, 256], 4, 4, 4, 3, 4),
     "hrnet_w48": ([48, 96, 192, 384], 4, 4, 4, 3, 4),
 }
-
 
 def _make(name):
     widths, s1, s2, m3, m4, bpm = _CFGS[name]
@@ -190,7 +168,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

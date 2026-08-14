@@ -2,13 +2,11 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, global_pool_nhwc
+from ..layers import ConvBNAct, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 def _pool3_s2(x):
     return nnx.max_pool(x, (3, 3), strides=(2, 2), padding="SAME")
-
 
 class SepConv(nnx.Module):
     """depthwise k + pointwise 1x1, with BN+relu around (nasnet separable conv)."""
@@ -24,7 +22,6 @@ class SepConv(nnx.Module):
         x = self.bn2(self.pw(self.bn1(self.dw(x))))
         return x
 
-
 class CellStem1(nnx.Module):
     """Reduction cell applied after stem (from prev_prev 128 + prev 256 -> out 256)."""
 
@@ -35,7 +32,6 @@ class CellStem1(nnx.Module):
 
     def __call__(self, x0, x1):
         return self.c0(x0), self.c1(x1)
-
 
 # ponytail: NASNet cells below are a single-input structural approximation of the
 # NASNet-A cell wiring (which is dual-state with factorized reductions). Upgrade to the
@@ -60,7 +56,6 @@ class NormalCell(nnx.Module):
         b5 = self.ops[4](b2)
         return jnp.concatenate([b3, b4, b5, x, b1], axis=-1)
 
-
 class ReductionCell(nnx.Module):
     def __init__(self, in_chs, out_chs, *, rngs):
         self.c = ConvBNAct(in_chs, out_chs, 1, rngs=rngs)
@@ -75,8 +70,7 @@ class ReductionCell(nnx.Module):
         b2 = self.op2(x) + _pool3_s2(x)
         return jnp.concatenate([b1, b2], axis=-1)
 
-
-class NASNetA(nnx.Module):
+class NASNetA(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,
@@ -110,30 +104,14 @@ class NASNetA(nnx.Module):
             x = cell(x)
         return nnx.relu(self.norm(x))
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def nasnetalarge(**kwargs):
     model = NASNetA(**kwargs)
     model.default_cfg = _cfg(input_size=(3, 331, 331), crop_pct=0.911)
     return model
-
 
 @register_model
 def pnasnetalarge(**kwargs):

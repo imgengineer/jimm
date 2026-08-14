@@ -3,9 +3,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, PatchEmbed, global_pool_nhwc
+from ..layers import DropPath, PatchEmbed, global_pool_nhwc, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class RMSNorm(nnx.Module):
     def __init__(self, dim, eps=1e-6, *, rngs):
@@ -15,7 +14,6 @@ class RMSNorm(nnx.Module):
     def __call__(self, x):
         var = jnp.mean(x ** 2, axis=-1, keepdims=True)
         return x * jax.lax.rsqrt(var + self.eps) * self.scale.value
-
 
 class Gemma4GatedMlp(nnx.Module):
     """SwiGLU gated MLP."""
@@ -27,7 +25,6 @@ class Gemma4GatedMlp(nnx.Module):
 
     def __call__(self, x):
         return self.down_proj(nnx.silu(self.gate_proj(x)) * self.up_proj(x))
-
 
 class Gemma4Attention(nnx.Module):
     def __init__(self, dim, num_heads=16, *, rngs):
@@ -48,7 +45,6 @@ class Gemma4Attention(nnx.Module):
         out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(out)
 
-
 class Gemma4Block(nnx.Module):
     def __init__(self, dim, num_heads, hidden_dim, drop_path=0.0, *, rngs):
         self.norm1 = RMSNorm(dim, rngs=rngs)
@@ -61,8 +57,8 @@ class Gemma4Block(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-
-class Gemma4Vit(nnx.Module):
+class Gemma4Vit(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
     default_cfg: dict = {}
 
     def __init__(self, img_size: int = 224, patch_size: int = 14, in_chans: int = 3, num_classes: int = 1000,
@@ -98,18 +94,8 @@ class Gemma4Vit(nnx.Module):
         x = self.head_drop(x)
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {  # embed_dim, depth, num_heads, mlp_ratio, num_classes
     "gemma4_vit_167m": (768, 12, 16, 4.0, 1000),
@@ -117,7 +103,6 @@ _CFGS = {  # embed_dim, depth, num_heads, mlp_ratio, num_classes
     "gemma4_vit_570m": (1152, 27, 16, 4.0, 1000),
     "gemma4_vit_570m_enc": (1152, 27, 16, 4.0, 0),
 }
-
 
 def _make(name):
     embed_dim, depth, num_heads, mlp_ratio, num_classes = _CFGS[name]
@@ -135,7 +120,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

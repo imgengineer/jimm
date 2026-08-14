@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed
+from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class EvaAttention(nnx.Module):
     def __init__(self, dim, num_heads, qkv_bias=True, *, rngs):
@@ -21,7 +20,6 @@ class EvaAttention(nnx.Module):
         attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
-
 
 class EvaBlock(nnx.Module):
     """Pre-norm block with LayerScale + SwiGLU MLP (EVA)."""
@@ -48,8 +46,9 @@ class EvaBlock(nnx.Module):
             y = self.gamma2.value * y
         return x + self.drop_path(y)
 
-
-class Eva(nnx.Module):
+class Eva(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
+    _default_global_pool = ""
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
@@ -82,34 +81,21 @@ class Eva(nnx.Module):
         x = self.head_drop(x)
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool=""):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _eva(embed_dim, depth, num_heads, **kwargs):
     model = Eva(embed_dim=embed_dim, depth=depth, num_heads=num_heads, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def eva_small_patch16_224(**kwargs):
     return _eva(384, 12, 6, **kwargs)
 
-
 @register_model
 def eva_base_patch16_224(**kwargs):
     return _eva(768, 12, 12, **kwargs)
-
 
 @register_model
 def eva_large_patch16_224(**kwargs):

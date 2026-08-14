@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class OSABlock(nnx.Module):
     """One-Shot Aggregation: dense conv chain, concat all, final 1x1."""
@@ -21,7 +20,6 @@ class OSABlock(nnx.Module):
         for conv in self.convs:
             feats.append(conv(feats[-1]))
         return self.concat_conv(jnp.concatenate(feats, axis=-1))
-
 
 class VoVNetStage(nnx.Module):
     def __init__(self, in_chs, mid_chs, out_chs, blocks, layers_per_block, ese, *, rngs):
@@ -41,7 +39,6 @@ class VoVNetStage(nnx.Module):
             x = self.ese(x)
         return x
 
-
 # (mid, out, blocks, layers_per_block) per stage, 4 stages
 _CFGS = {
     "vovnet39a":  ([(128, 256, 1, 5), (160, 512, 2, 5), (192, 768, 3, 5), (224, 1024, 2, 5)], False),
@@ -50,8 +47,7 @@ _CFGS = {
     "ese_vovnet39b": ([(128, 256, 1, 5), (160, 512, 2, 5), (192, 768, 3, 5), (224, 1024, 2, 5)], True),
 }
 
-
-class VoVNet(nnx.Module):
+class VoVNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, stages_cfg, ese, num_classes=1000, in_chans=3, global_pool="avg",
@@ -75,23 +71,8 @@ class VoVNet(nnx.Module):
             x = stage(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _make(name):
     stages_cfg, ese = _CFGS[name]
@@ -102,7 +83,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

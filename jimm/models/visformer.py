@@ -2,10 +2,9 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, Mlp
+from ..layers import ConvBNAct, DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
-
 
 class VisBlock(nnx.Module):
     """Transformer block with BatchNorm (visformer style) on token dim."""
@@ -21,8 +20,8 @@ class VisBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-
-class Visformer(nnx.Module):
+class Visformer(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
@@ -55,25 +54,14 @@ class Visformer(nnx.Module):
         x = jnp.mean(x, axis=1)
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def visformer_tiny(**kwargs):
     model = Visformer(embed_dim=192, depth=12, num_heads=3, **kwargs)
     model.default_cfg = _cfg()
     return model
-
 
 @register_model
 def visformer_small(**kwargs):

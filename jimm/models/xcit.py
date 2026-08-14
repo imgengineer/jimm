@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed
+from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class XCA(nnx.Module):
     """Cross-Covariance Attention: attention over channels instead of tokens."""
@@ -26,7 +25,6 @@ class XCA(nnx.Module):
         x = (attn @ v.transpose(0, 1, 3, 2)).transpose(0, 3, 1, 2).reshape(B, N, C)
         return self.proj(x)
 
-
 class XCABlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop_path=0.0, init_values=1e-5, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -40,7 +38,6 @@ class XCABlock(nnx.Module):
     def __call__(self, x):
         x = x + self.drop_path(self.gamma1.value * self.xca(self.norm1(x)))
         return x + self.drop_path(self.gamma2.value * self.mlp(self.norm2(x)))
-
 
 class LPI(nnx.Module):
     """Local Patch Interaction: two 3x3 depthwise convs with residuals on 2D grid."""
@@ -56,8 +53,9 @@ class LPI(nnx.Module):
         t = t + self.dw2(t)
         return t.reshape(B, H * W, -1)
 
-
-class XCiT(nnx.Module):
+class XCiT(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
+    _default_global_pool = ""
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
@@ -94,34 +92,21 @@ class XCiT(nnx.Module):
         x = x[:, 0] if self.global_pool == "" else jnp.mean(x[:, 1:], axis=1)
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool=""):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _xcit(embed_dim, depth, num_heads, **kwargs):
     model = XCiT(embed_dim=embed_dim, depth=depth, num_heads=num_heads, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def xcit_tiny_12_p16_224(**kwargs):
     return _xcit(192, 12, 4, **kwargs)
 
-
 @register_model
 def xcit_small_12_p16_224(**kwargs):
     return _xcit(384, 12, 8, **kwargs)
-
 
 @register_model
 def xcit_medium_24_p16_224(**kwargs):

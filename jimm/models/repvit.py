@@ -1,10 +1,8 @@
 """RepViT in flax nnx, NHWC. Mirrors timm.models.repvit (reparam-style dw blocks + SE)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, SqueezeExcite, global_pool_nhwc
+from ..layers import DropPath, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class RepViTBlock(nnx.Module):
     """token mixer: dw 3x3 (+1x1 fusion at train merged); channel MLP with SE."""
@@ -28,8 +26,7 @@ class RepViTBlock(nnx.Module):
         y = self.bn2(self.pw2(y))
         return x + self.drop_path(y)
 
-
-class RepViT(nnx.Module):
+class RepViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(48, 96, 192, 384), depths=(2, 2, 14, 2), se_from=2,
@@ -66,23 +63,8 @@ class RepViT(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 class RepViTDown(nnx.Module):
     """stride-2 transition: dw 3x3 s2 + 1x1 to out, plus residual pool+conv."""
@@ -100,13 +82,11 @@ class RepViTDown(nnx.Module):
         y = self.bn1(self.pw(self.bn_dw(self.dw(x))))
         return y + self.res_bn(self.res_pw(x))
 
-
 _CFGS = {
     "repvit_m0_9": ((48, 96, 192, 384), (2, 2, 14, 2), 2),
     "repvit_m1_1": ((56, 112, 224, 448), (2, 2, 14, 2), 2),
     "repvit_m1_5": ((64, 128, 256, 512), (2, 2, 14, 2), 2),
 }
-
 
 def _make(name):
     channels, depths, se_from = _CFGS[name]
@@ -117,7 +97,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

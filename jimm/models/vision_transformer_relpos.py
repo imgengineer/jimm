@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed
+from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class RelPosAttention(nnx.Module):
     def __init__(self, dim, num_heads, grid, qkv_bias=True, *, rngs):
@@ -33,7 +32,6 @@ class RelPosAttention(nnx.Module):
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
 
-
 class RelPosBlock(nnx.Module):
     def __init__(self, dim, num_heads, grid, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -46,8 +44,9 @@ class RelPosBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-
-class VisionTransformerRelPos(nnx.Module):
+class VisionTransformerRelPos(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
+    _default_global_pool = ""
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
@@ -78,25 +77,14 @@ class VisionTransformerRelPos(nnx.Module):
         x = self.head_drop(x)
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool=""):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def vit_relpos_base_patch16_224(**kwargs):
     model = VisionTransformerRelPos(**kwargs)
     model.default_cfg = _cfg()
     return model
-
 
 @register_model
 def vit_relpos_small_patch16_224(**kwargs):

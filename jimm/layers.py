@@ -3,7 +3,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-__all__ = ["DropPath", "PatchEmbed", "Mlp", "SqueezeExcite", "ConvBNAct", "global_pool_nhwc", "hswish", "relu6"]
+__all__ = ["DropPath", "PatchEmbed", "Mlp", "SqueezeExcite", "ConvBNAct", "ClassifierMixin",
+           "global_pool_nhwc", "hswish", "relu6"]
 
 
 class DropPath(nnx.Module):
@@ -94,3 +95,38 @@ def global_pool_nhwc(x, pool_type="avg"):
     if pool_type == "max":
         return jnp.max(x, axis=(1, 2))
     raise ValueError(f"unsupported pool {pool_type!r}")
+
+
+class ClassifierMixin:
+    """Shared timm-style classifier boilerplate (was duplicated across ~90 model files).
+
+    Subclasses set:
+      _classifier_attr: name of the classifier Linear ('fc' for conv models, 'head' for ViT-family)
+      _default_global_pool: reset_classifier default ('avg' conv, '' token models, 'token' VOLO)
+    Token-based models override forward_head with their own pooling logic.
+    """
+    _classifier_attr = "fc"
+    _default_global_pool = "avg"
+    # subclass contract (declared so type checkers accept attribute access)
+    num_features: int
+    head_drop: nnx.Dropout
+    num_classes: int
+    global_pool: str
+
+    def get_classifier(self):
+        return getattr(self, self._classifier_attr)
+
+    def reset_classifier(self, num_classes, global_pool=None):
+        if global_pool is None:
+            global_pool = self._default_global_pool
+        self.num_classes, self.global_pool = num_classes, global_pool
+        if num_classes > 0 and getattr(self, self._classifier_attr) is None:
+            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
+        setattr(self, self._classifier_attr,
+                nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None)
+
+    def forward_head(self, x):
+        x = global_pool_nhwc(x, self.global_pool)
+        x = self.head_drop(x)
+        fc = getattr(self, self._classifier_attr)
+        return fc(x) if fc is not None else x

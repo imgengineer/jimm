@@ -1,11 +1,9 @@
 """NextViT in flax nnx, NHWC. Mirrors timm.models.nextvit (conv blocks + transformer blocks)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, global_pool_nhwc, hswish
+from ..layers import ConvBNAct, DropPath, hswish, ClassifierMixin
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
-
 
 class ConvBlock(nnx.Module):
     """1x1 expand -> dw 3x3 -> 1x1 project, residual."""
@@ -24,7 +22,6 @@ class ConvBlock(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return self.drop_path(y) + sc
 
-
 class TransformerBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=2.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -38,8 +35,7 @@ class TransformerBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.fc2(hswish(self.fc1(self.norm2(x)))))
 
-
-class NextViT(nnx.Module):
+class NextViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 3, 8, 3), tf_depths=(0, 1, 2, 2),
@@ -79,30 +75,14 @@ class NextViT(nnx.Module):
                     x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "nextvit_small": ((96, 192, 384, 768), (2, 3, 8, 3), (0, 1, 2, 2)),
     "nextvit_base": ((96, 256, 512, 1024), (2, 3, 10, 3), (0, 1, 2, 2)),
     "nextvit_large": ((96, 256, 512, 1024), (3, 4, 12, 3), (0, 1, 3, 2)),
 }
-
 
 def _make(name):
     channels, depths, tf = _CFGS[name]
@@ -113,7 +93,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

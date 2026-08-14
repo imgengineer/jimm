@@ -4,15 +4,15 @@ import math
 from jax.nn import silu
 from flax import nnx
 
-from ..layers import SqueezeExcite, global_pool_nhwc
+from ..layers import DropPath, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
 from .mobilenetv2 import ConvBN
 
-
 class MBConv(nnx.Module):
-    def __init__(self, in_chs, out_chs, kernel, stride, expand, *, rngs):
+    def __init__(self, in_chs, out_chs, kernel, stride, expand, drop_path=0.0, *, rngs):
         mid = in_chs * expand
         self.use_residual = stride == 1 and in_chs == out_chs
+        self.drop_path = DropPath(drop_path)
         self.expand = ConvBN(in_chs, mid, rngs=rngs) if expand != 1 else None
         self.dw = nnx.Conv(mid, mid, (kernel, kernel), strides=(stride, stride), use_bias=False,
                            feature_group_count=mid, rngs=rngs)
@@ -26,8 +26,7 @@ class MBConv(nnx.Module):
         y = silu(self.bn1(self.dw(y)))
         y = self.se(y)
         y = self.bn2(self.pw(y))
-        return x + y if self.use_residual else y
-
+        return x + self.drop_path(y) if self.use_residual else y
 
 # (kernel, expand, out_chs, repeats, stride) — B0 base
 BASE_CFG = [
@@ -53,16 +52,13 @@ _VARIANTS = {
     "tinynet_e": (0.475, 0.51, 106, 0.2),
 }
 
-
 def _round_width(c, mult):
     return max(8, int(c * mult + 4) // 8 * 8)
-
 
 def _round_depth(n, mult):
     return int(math.ceil(n * mult))
 
-
-class EfficientNet(nnx.Module):
+class EfficientNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, width_mult=1.0, depth_mult=1.0, num_classes=1000, in_chans=3,
@@ -73,12 +69,11 @@ class EfficientNet(nnx.Module):
         self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
         total = sum(_round_depth(n, depth_mult) for _, _, _, n, _ in BASE_CFG)
         dpr = [drop_path_rate * i / max(total - 1, 1) for i in range(total)]
-        self._dpr = dpr  # kept for potential per-block stochastic depth wiring
         blocks, chs = [], stem
         for k, e, c, n, s in BASE_CFG:
             out = _round_width(c, width_mult)
             for j in range(_round_depth(n, depth_mult)):
-                blocks.append(MBConv(chs, out, k, s if j == 0 else 1, e, rngs=rngs))
+                blocks.append(MBConv(chs, out, k, s if j == 0 else 1, e, dpr[len(blocks)], rngs=rngs))
                 chs = out
         self.blocks = nnx.List(blocks)
         head = _round_width(1280, width_mult)
@@ -94,23 +89,8 @@ class EfficientNet(nnx.Module):
             x = blk(x)
         return silu(self.bn_head(self.conv_head(x)))
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _make(name):
     w, d, img, drop = _VARIANTS[name]
@@ -122,7 +102,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _VARIANTS:
     register_model(_make(_name))

@@ -7,13 +7,11 @@ import math
 
 from flax import nnx
 
-from ..layers import SqueezeExcite, global_pool_nhwc
+from ..layers import SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 def _quantize(v, q):
     return int(round(v / q) * q)  # timm quantize_float (timm default group_min_ratio=0)
-
 
 def gen_cfg(depth, w0, wa, wm, group_width):
     """Returns (widths, depths, groups) per stage, torchvision-exact."""
@@ -32,7 +30,6 @@ def gen_cfg(depth, w0, wa, wm, group_width):
     widths = [_quantize(w, g) for w, g in zip(widths, groups)]
     groups = [w // g for w, g in zip(widths, groups)]
     return widths, depths, groups
-
 
 class RegNetBlock(nnx.Module):
     """Bottleneck with group conv (and optional SE for RegNetY)."""
@@ -60,8 +57,7 @@ class RegNetBlock(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return nnx.relu(y + sc)
 
-
-class RegNet(nnx.Module):
+class RegNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, widths, depths, groups, num_classes=1000, in_chans=3,
@@ -88,23 +84,8 @@ class RegNet(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 # name: (depth, w0, wa, wm, group_width) — RegNet paper / torchvision params
 _CFGS = {
@@ -119,7 +100,6 @@ _CFGS = {
     "regnety_032": (21, 80, 42.63, 2.66, 24),
 }
 
-
 def _make(name):
     depth, w0, wa, wm, gw = _CFGS[name]
     widths, depths, groups = gen_cfg(depth, w0, wa, wm, gw)
@@ -131,7 +111,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

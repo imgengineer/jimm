@@ -2,10 +2,9 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, SqueezeExcite, global_pool_nhwc
+from ..layers import DropPath, Mlp, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
 from .swin_transformer import window_partition, window_reverse
-
 
 class MaxViTMBConv(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand=4, drop_path=0.0, *, rngs):
@@ -29,7 +28,6 @@ class MaxViTMBConv(nnx.Module):
         y = self.bn3(self.pw(y))
         sc = x if self.shortcut is None else self.shortcut(x)
         return self.drop_path(y) + sc
-
 
 class MaxViTAttention(nnx.Module):
     """Window/grid attention with relative position bias (proper q,k,v)."""
@@ -57,7 +55,6 @@ class MaxViTAttention(nnx.Module):
         attn = nnx.softmax(attn, axis=-1)
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
-
 
 class MaxViTBlock(nnx.Module):
     """Block attention (window or grid) + FFN."""
@@ -90,7 +87,6 @@ class MaxViTBlock(nnx.Module):
             x = window_reverse(t, ws, H, W, B)
         return x
 
-
 class MaxViTStage(nnx.Module):
     def __init__(self, in_chs, out_chs, depth, num_heads, window_size, stride,
                  drop_path=0.0, *, rngs):
@@ -107,8 +103,7 @@ class MaxViTStage(nnx.Module):
             x = blk(x)
         return x
 
-
-class MaxViT(nnx.Module):
+class MaxViT(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 5, 2), head_dim=32,
@@ -137,30 +132,14 @@ class MaxViT(nnx.Module):
             x = stage(x)
         return self.norm(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "maxvit_tiny_rw_224": ((96, 192, 384, 768), (2, 2, 5, 2)),
     "maxvit_small_rw_224": ((96, 192, 384, 768), (2, 2, 13, 2)),
     "maxvit_base_rw_224": ((96, 192, 384, 768), (2, 6, 14, 2)),
 }
-
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -171,7 +150,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

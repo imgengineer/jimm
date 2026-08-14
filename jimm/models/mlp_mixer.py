@@ -2,9 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed
+from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class MixerBlock(nnx.Module):
     def __init__(self, num_tokens, dim, tokens_mlp, channels_mlp, drop=0.0, drop_path=0.0, *, rngs):
@@ -20,8 +19,8 @@ class MixerBlock(nnx.Module):
         x = x + self.drop_path(y)
         return x + self.drop_path(self.channel_mlp(self.norm2(x)))
 
-
-class MlpMixer(nnx.Module):
+class MlpMixer(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, num_blocks=8, embed_dim=512,
@@ -50,39 +49,25 @@ class MlpMixer(nnx.Module):
         x = self.head_drop(x)
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _mixer(patch, dim, blocks, **kwargs):
     model = MlpMixer(patch_size=patch, embed_dim=dim, num_blocks=blocks, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def mixer_b16_224(**kwargs):
     return _mixer(16, 768, 12, **kwargs)
-
 
 @register_model
 def mixer_b32_224(**kwargs):
     return _mixer(32, 768, 12, img_size=224, **kwargs)
 
-
 @register_model
 def mixer_l16_224(**kwargs):
     return _mixer(16, 1024, 24, **kwargs)
-
 
 class ResMLPBlock(nnx.Module):
     def __init__(self, num_tokens, dim, mlp_ratio=4.0, *, rngs):
@@ -96,8 +81,7 @@ class ResMLPBlock(nnx.Module):
         x = x + self.token_fc(y).transpose(0, 2, 1)
         return x + self.channel_mlp(self.norm2(x))
 
-
-class ResMLP(nnx.Module):
+class ResMLP(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, num_blocks=12, embed_dim=384,
@@ -120,18 +104,8 @@ class ResMLP(nnx.Module):
         x = jnp.mean(x, axis=1) if self.global_pool == "avg" else x[:, 0]
         return self.head(x) if self.head is not None else x
 
-    def get_classifier(self):
-        return self.head
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.head is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def resmlp_12_224(**kwargs):
@@ -139,13 +113,11 @@ def resmlp_12_224(**kwargs):
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def resmlp_24_224(**kwargs):
     model = ResMLP(num_blocks=24, **kwargs)
     model.default_cfg = _cfg()
     return model
-
 
 @register_model
 def resmlp_36_224(**kwargs):

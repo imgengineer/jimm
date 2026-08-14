@@ -1,10 +1,8 @@
 """Hiera in flax nnx, NHWC. Mirrors timm.models.hiera (Hierarchical Vision Transformer)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, global_pool_nhwc
+from ..layers import DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class HieraBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -27,8 +25,7 @@ class HieraBlock(nnx.Module):
         x = x + self.drop_path(self.proj(out))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-
-class Hiera(nnx.Module):
+class Hiera(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, embed_dim=96, num_heads=1, stages=(1, 2, 7, 2),
@@ -73,23 +70,8 @@ class Hiera(nnx.Module):
             x = x.reshape(B, H, W, C)
         return self.norm(x)
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 _CFGS = {
     "hiera_tiny_224": dict(embed_dim=96, num_heads=1, stages=(1, 2, 7, 2)),
@@ -100,7 +82,6 @@ _CFGS = {
     "hiera_huge_224": dict(embed_dim=256, num_heads=4, stages=(2, 6, 36, 4)),
 }
 
-
 def _make(name):
     cfg = _CFGS[name]
 
@@ -110,7 +91,6 @@ def _make(name):
         return model
     entry.__name__ = name
     return entry
-
 
 for _name in _CFGS:
     register_model(_make(_name))

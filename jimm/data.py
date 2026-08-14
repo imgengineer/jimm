@@ -115,6 +115,7 @@ def create_loader(root, batch_size, img_size=224, is_training=False, crop_pct=0.
                               operations=[transform, grain.Batch(batch_size, drop_remainder=is_training)],
                               worker_count=num_workers)
     
-    # Calculate process-local record count
-    local_records = len(source) // jax.process_count()
+    # Process-local record count (eval keeps remainders per shard)
+    n = len(source)
+    local_records = n // jax.process_count() if is_training else -(-n // jax.process_count())
     return Loader(loader, local_records, batch_size, is_training)

@@ -1,17 +1,14 @@
 """TResNet in flax nnx, NHWC. Mirrors timm.models.tresnet (SpaceToDepth stem + SE bottlenecks)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 def space_to_depth(x, block_size=2):
     """(B,H,W,C) -> (B,H/2,W/2,4C)."""
     b, h, w, c = x.shape
     x = x.reshape(b, h // block_size, block_size, w // block_size, block_size, c)
     return x.transpose(0, 1, 3, 2, 4, 5).reshape(b, h // block_size, w // block_size, -1)
-
 
 class TResNetBasic(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, *, rngs):
@@ -24,7 +21,6 @@ class TResNetBasic(nnx.Module):
         y = self.conv2(self.conv1(x))
         sc = x if self.shortcut is None else self.shortcut(x)
         return nnx.relu(y + sc)
-
 
 class TResNetBottleneck(nnx.Module):
     expansion = 4
@@ -44,8 +40,7 @@ class TResNetBottleneck(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return nnx.relu(y + sc)
 
-
-class TResNet(nnx.Module):
+class TResNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, layers, widths=(64, 128, 256, 512), num_classes=1000, in_chans=3,
@@ -75,39 +70,21 @@ class TResNet(nnx.Module):
                 x = blk(x)
         return x
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 def _tresnet(layers, **kwargs):
     model = TResNet(layers, **kwargs)
     model.default_cfg = _cfg()
     return model
 
-
 @register_model
 def tresnet_m(**kwargs):
     return _tresnet([3, 4, 11, 3], **kwargs)
 
-
 @register_model
 def tresnet_l(**kwargs):
     return _tresnet([4, 5, 18, 3], **kwargs)
-
 
 @register_model
 def tresnet_xl(**kwargs):

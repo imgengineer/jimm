@@ -1,10 +1,8 @@
 """Xception in flax nnx, NHWC. Mirrors timm.models.xception (aligned with the keras ref impl)."""
-import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import global_pool_nhwc
+from ..layers import ClassifierMixin
 from ..registry import register_model, _cfg
-
 
 class SeparableConv(nnx.Module):
     """3x3 depthwise -> BN -> 1x1 pointwise -> BN (no activation in between)."""
@@ -18,7 +16,6 @@ class SeparableConv(nnx.Module):
 
     def __call__(self, x):
         return self.bn_pw(self.pw(self.bn_dw(self.dw(x))))
-
 
 class XceptionBlock(nnx.Module):
     """relu-sep x repeats, optional maxpool stride 2, residual shortcut."""
@@ -40,8 +37,7 @@ class XceptionBlock(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return y + sc
 
-
-class Xception(nnx.Module):
+class Xception(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
@@ -71,23 +67,8 @@ class Xception(nnx.Module):
         x = nnx.relu(self.conv3(x))
         return nnx.relu(self.conv4(x))
 
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
-
-    def get_classifier(self):
-        return self.fc
-
-    def reset_classifier(self, num_classes, global_pool="avg"):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        if num_classes > 0 and self.fc is None:
-            raise RuntimeError("cannot re-add classifier to a num_classes=0 model")
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None
-
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
 
 @register_model
 def xception(**kwargs):

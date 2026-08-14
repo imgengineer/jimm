@@ -132,6 +132,7 @@ print(batch["label"].shape)  # (128,) int32
 JAX automatically detects all available GPUs on the node and partitions data across them:
 
 ```bash
+# Standard DDP (Replicated Parameters across all local GPUs):
 python -m jimm.train \
     --model convnext_tiny \
     --data-dir /path/to/imagenet \
@@ -140,6 +141,13 @@ python -m jimm.train \
     --lr 1e-3 \
     --smoothing 0.1 \
     --output ./checkpoints
+
+# FSDP Mode (ZeRO-3: shards parameters & optimizer state across all GPUs to save memory):
+python -m jimm.train \
+    --model eva_large_patch16_224 \
+    --data-dir /path/to/imagenet \
+    --fsdp \
+    --batch-size 128
 ```
 
 #### Multi-Node Multi-GPU (e.g. 2 Nodes, 8 GPUs each)
@@ -174,7 +182,7 @@ Or via standard SLURM / MPI cluster managers (JAX auto-detects `SLURM_JOB_ID` / 
 srun -N 4 --ntasks-per-node=1 python -m jimm.train --model resnet50 --data-dir /path/to/imagenet
 ```
 
-#### Programmatic Distributed Training
+#### Programmatic Distributed Training (DDP & FSDP)
 
 ```python
 import jax
@@ -182,7 +190,7 @@ import jax.numpy as jnp
 import optax
 from flax import nnx
 import jimm
-from jimm.train import make_optimizer, train_step
+from jimm.train import make_optimizer, train_step, fsdp_shard_model
 
 # Setup 1D Data-Parallel Device Mesh
 mesh = jax.sharding.Mesh(jax.devices(), ('data',))
@@ -193,6 +201,11 @@ label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
 model = jimm.create_model("resnet50", num_classes=10, rngs=nnx.Rngs(0))
 model.train()
 optimizer = make_optimizer(model, lr=1e-3, weight_decay=0.05, epochs=90, steps_per_epoch=1000)
+
+# --- DDP (default): weights replicated on every device, nothing to do ---
+# --- FSDP (ZeRO-3): shard parameters & optimizer state across the mesh ---
+fsdp_shard_model(model, mesh)
+fsdp_shard_model(optimizer, mesh)
 
 # Feed process-local batch slices
 images = jax.make_array_from_process_local_data(data_sharding, batch["image"])

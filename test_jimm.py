@@ -96,6 +96,38 @@ def check_train_step():
     print(f"train_step (SPMD Mesh) OK, loss {float(loss1):.3f} -> {float(loss2):.3f}")
 
 
+def check_fsdp_step():
+    from jimm.train import train_step, make_optimizer, fsdp_shard_model
+    mesh = jax.sharding.Mesh(jax.devices(), ('data',))
+    P = jax.sharding.PartitionSpec
+    data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
+    label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
+
+    m = create_model("convnext_tiny", num_classes=5)
+    m.train()
+    opt = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
+    fsdp_shard_model(m, mesh)
+    fsdp_shard_model(opt, mesh)
+
+    # assert FSDP actually shards large weights along the mesh axis
+    P = jax.sharding.PartitionSpec
+    n_sharded = sum(1 for _, node in nnx.graph.iter_graph(m)
+                    if isinstance(node, nnx.Variable)
+                    and isinstance(node.get_value(), jax.Array)
+                    and hasattr(node.get_value().sharding, "spec")
+                    and node.get_value().sharding.spec == P('data', None))
+    assert n_sharded > 0, "FSDP sharded no variables"
+    raw_images = np.random.randn(4, 224, 224, 3).astype(np.float32)
+    raw_labels = np.array([0, 1, 2, 3], np.int32)
+    images = jax.make_array_from_process_local_data(data_sharding, raw_images)
+    labels = jax.make_array_from_process_local_data(label_sharding, raw_labels)
+
+    loss1, acc1 = train_step(m, opt, images, labels, 0.1)
+    loss2, acc2 = train_step(m, opt, images, labels, 0.1)
+    assert jnp.isfinite(loss1) and jnp.isfinite(loss2), (loss1, loss2)
+    print(f"train_step (FSDP ZeRO-3) OK, loss {float(loss1):.3f} -> {float(loss2):.3f}")
+
+
 def check_data_and_ckpt():
     from jimm.data import create_loader
     from jimm.checkpoint import save_checkpoint, load_checkpoint
@@ -138,5 +170,6 @@ if __name__ == "__main__":
     check_models()
     check_all_models_forward(mode=mode)
     check_train_step()
+    check_fsdp_step()
     check_data_and_ckpt()
     print("ALL CHECKS PASSED")

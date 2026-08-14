@@ -2,12 +2,16 @@
 
 Supports:
   - Single-device training (1 GPU / CPU)
-  - Single-node multi-GPU data-parallel training (SPMD Data Mesh)
+  - Single-node multi-GPU data-parallel training (DDP with SPMD Data Mesh)
   - Multi-node multi-GPU distributed data-parallel training (Multi-host JAX + Grain Sharding)
+  - FSDP (Fully Sharded Data Parallel / ZeRO-3 parameter and optimizer state sharding)
 
 Examples:
-  # Single-device / Single-node Multi-GPU (automatic device mesh):
+  # Standard DDP on all available GPUs on the node:
   python -m jimm.train --model resnet50 --data-dir /path/to/imagenet --epochs 90
+
+  # FSDP mode (ZeRO-3: shards weights and optimizer states across devices to save memory):
+  python -m jimm.train --model eva_large_patch16_224 --data-dir /path/to/imagenet --fsdp
 
   # Multi-node training (e.g. Node 0 of 2 nodes, 8 GPUs each):
   python -m jimm.train --model convnext_tiny --data-dir /path/to/imagenet \\
@@ -19,6 +23,7 @@ import time
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 from flax import nnx
 
@@ -41,6 +46,23 @@ def init_distributed(coordinator_address=None, num_processes=None, process_id=No
         except Exception as e:
             if jax.process_index() == 0:
                 print(f"[Warning] Auto jax.distributed.initialize() skipped: {e}")
+
+
+def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
+    """Shards parameters and optimizer states across the mesh axis (ZeRO-3 / FSDP)."""
+    num_devices = len(mesh.devices)
+    P = jax.sharding.PartitionSpec
+    for path, node in nnx.graph.iter_graph(model_or_opt):
+        if isinstance(node, nnx.Variable):
+            val = node.get_value()
+            if isinstance(val, (jax.Array, np.ndarray)) and val.ndim >= 1 and val.shape[0] % num_devices == 0:
+                spec = P(mesh_axis, *(None,) * (val.ndim - 1))
+            elif isinstance(val, (jax.Array, np.ndarray)):
+                spec = P()  # replicate if leading dimension is not evenly divisible
+            else:
+                continue
+            sharding = jax.sharding.NamedSharding(mesh, spec)
+            node.set_value(jax.device_put(val, sharding))
 
 
 def cross_entropy(logits, labels, smoothing=0.0):
@@ -93,6 +115,8 @@ def main(argv=None):
     p.add_argument("--steps-per-epoch", type=int, default=None,
                    help="cap train steps per epoch (default: full epoch)")
     p.add_argument("--output", default="./output", help="output directory for checkpoints")
+    p.add_argument("--fsdp", action="store_true", default=False,
+                   help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)")
     
     # Multi-node / distributed options
     p.add_argument("--dist-coordinator-address", type=str, default=None,
@@ -111,6 +135,7 @@ def main(argv=None):
 
     if rank == 0:
         print(f"=== JAX Distributed Training Setup ===")
+        print(f"  Parallel mode:       {'FSDP (ZeRO-3 Sharded)' if args.fsdp else 'DDP (Replicated Weights)'}")
         print(f"  Hosts (processes):   {world_size}")
         print(f"  Total devices:       {len(total_devices)} (devices: {[d.id for d in total_devices]})")
         print(f"  Local devices/host:  {len(local_devices)}")
@@ -130,13 +155,20 @@ def main(argv=None):
                          drop_path_rate=args.drop_path, rngs=nnx.Rngs(0))
     model.train()
 
+    steps_per_epoch = args.steps_per_epoch or 1000
+    optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs, steps_per_epoch)
+
+    # Apply FSDP sharding if enabled
+    if args.fsdp:
+        fsdp_shard_model(model, mesh)
+        fsdp_shard_model(optimizer, mesh)
+
     # 4. Data pipeline with automatic process sharding
     train_loader = create_loader(f"{args.data_dir}/train", args.batch_size,
                                  img_size=args.img_size, is_training=True,
                                  num_workers=args.workers, seed=rank)
 
     steps_per_epoch = args.steps_per_epoch or max(1, len(train_loader))
-    optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs, steps_per_epoch)
 
     val_loader = None
     if os.path.isdir(f"{args.data_dir}/val"):
@@ -146,7 +178,9 @@ def main(argv=None):
 
     it = iter(train_loader)
     for epoch in range(args.epochs):
-        t0, loss_sum, acc_sum = time.time(), 0.0, 0.0
+        t0 = time.time()
+        loss_sum = jnp.zeros(())
+        acc_sum = jnp.zeros(())
         for _ in range(steps_per_epoch):
             batch = next(it)
             # Distribute process-local batch across devices using SPMD data sharding
@@ -154,23 +188,29 @@ def main(argv=None):
             labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
             
             loss, acc = train_step(model, optimizer, images, labels, args.smoothing)
-            loss_sum += float(loss)
-            acc_sum += float(acc)
+            loss_sum = loss_sum + loss
+            acc_sum = acc_sum + acc
 
         if rank == 0:
-            msg = f"epoch {epoch:>3}: loss {loss_sum/steps_per_epoch:.4f} acc {acc_sum/steps_per_epoch:.4f} ({time.time()-t0:.1f}s)"
+            loss_avg = float(loss_sum) / steps_per_epoch
+            acc_avg = float(acc_sum) / steps_per_epoch
+            msg = f"epoch {epoch:>3}: loss {loss_avg:.4f} acc {acc_avg:.4f} ({time.time()-t0:.1f}s)"
             if val_loader is not None:
                 model.eval()
-                v_loss, v_acc, n = 0.0, 0.0, 0
+                v_loss_sum = jnp.zeros(())
+                v_acc_sum = jnp.zeros(())
+                n = 0
                 for batch in val_loader:
                     v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
                     v_labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
                     l, a = eval_step(model, v_images, v_labels)
-                    v_loss += float(l)
-                    v_acc += float(a)
+                    v_loss_sum = v_loss_sum + l
+                    v_acc_sum = v_acc_sum + a
                     n += 1
                 model.train()
-                msg += f" | val loss {v_loss/max(n, 1):.4f} val acc {v_acc/max(n, 1):.4f}"
+                v_loss_avg = float(v_loss_sum) / max(n, 1)
+                v_acc_avg = float(v_acc_sum) / max(n, 1)
+                msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"
             print(msg, flush=True)
             
             # Checkpoint only from primary host (rank 0)

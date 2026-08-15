@@ -18,8 +18,8 @@ class LayerScaleBlock(nnx.Module):
         self.gamma2 = nnx.Param(init_values * jnp.ones(dim))
 
     def __call__(self, x):
-        x = x + self.drop_path(self.gamma1.value * self.attn(self.norm1(x)))
-        return x + self.drop_path(self.gamma2.value * self.mlp(self.norm2(x)))
+        x = x + self.drop_path(self.gamma1[...] * self.attn(self.norm1(x)))
+        return x + self.drop_path(self.gamma2[...] * self.mlp(self.norm2(x)))
 
 class ClassAttentionBlock(nnx.Module):
     """Attention from cls token to patch tokens only (CaiT class-attention)."""
@@ -43,12 +43,12 @@ class ClassAttentionBlock(nnx.Module):
         cls = x[:, :1]
         tokens = self.norm1(x)
         B, N, C = tokens.shape
-        q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        k = self.k(tokens).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        v = self.v(tokens).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        cls_out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, 1, C)
-        cls = cls + self.drop_path(self.gamma1.value * self.proj(cls_out))
-        cls = cls + self.drop_path(self.gamma2.value * self.mlp(self.norm2(cls)))
+        q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim)
+        k = self.k(tokens).reshape(B, N, self.num_heads, self.head_dim)
+        v = self.v(tokens).reshape(B, N, self.num_heads, self.head_dim)
+        cls_out = nnx.dot_product_attention(q, k, v).reshape(B, 1, C)
+        cls = cls + self.drop_path(self.gamma1[...] * self.proj(cls_out))
+        cls = cls + self.drop_path(self.gamma2[...] * self.mlp(self.norm2(cls)))
         return jnp.concatenate([cls, x[:, 1:]], axis=1)
 
 class CaiT(ClassifierMixin, nnx.Module):
@@ -78,10 +78,10 @@ class CaiT(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = x + self.pos_embed.value
+        x = x + self.pos_embed[...]
         for blk in self.blocks:
             x = blk(x)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token.value, (B, 1, self.num_features)), x], axis=1)
+        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
         for blk in self.blocks_token_only:
             x = blk(x)
         return self.norm(x)

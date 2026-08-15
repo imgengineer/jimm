@@ -50,7 +50,7 @@ class VisionTransformerHybrid(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.stem(x).reshape(B, -1, self.num_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token.value, (B, 1, self.num_features)), x], axis=1)
+        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)

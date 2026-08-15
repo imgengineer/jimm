@@ -15,13 +15,16 @@ ALL_MODELS = sorted(list_models())
 
 def test_all_341_model_entrypoints_instantiation():
     """Verifies that all 341 registered model entrypoints can be instantiated cleanly."""
-    for name in ALL_MODELS:
+    for i, name in enumerate(ALL_MODELS):
         m = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
         assert isinstance(m, nnx.Module)
         assert hasattr(m, "num_features")
         assert getattr(m, "num_features") > 0
         assert hasattr(m, "default_cfg")
         assert "input_size" in getattr(m, "default_cfg")
+        del m
+        if (i + 1) % 20 == 0:
+            gc.collect()
 
 
 @pytest.mark.parametrize("module_name", MODULES)

@@ -28,9 +28,9 @@ class GroupedAttention(nnx.Module):
 
     def _attn(self, t):
         B, N, C = t.shape
-        qkv = self.qkv(t).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        qkv = self.qkv(t).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(out)
 
 class TwinsBlock(nnx.Module):

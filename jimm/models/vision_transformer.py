@@ -16,10 +16,10 @@ class Attention(nnx.Module):
 
     def __call__(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         out = nnx.dot_product_attention(q, k, v)
-        x = out.transpose(0, 2, 1, 3).reshape(B, N, C)
+        x = out.reshape(B, N, C)
         return self.drop(self.proj(x))
 
 class Block(nnx.Module):
@@ -60,8 +60,8 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token.value, (B, 1, self.num_features)), x], axis=1)
-        x = self.pos_drop(x + self.pos_embed.value)
+        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
+        x = self.pos_drop(x + self.pos_embed[...])
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)

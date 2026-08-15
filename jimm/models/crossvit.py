@@ -19,10 +19,10 @@ class CrossAttention(nnx.Module):
 
     def __call__(self, cls, tokens):
         B = tokens.shape[0]
-        q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        kv = self.kv(tokens).reshape(B, -1, 2, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        k, v = kv[0], kv[1]
-        out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, 1, -1)
+        q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim)
+        kv = self.kv(tokens).reshape(B, -1, 2, self.num_heads, self.head_dim)
+        k, v = kv[:, :, 0], kv[:, :, 1]
+        out = nnx.dot_product_attention(q, k, v).reshape(B, 1, -1)
         return self.proj(out)
 
 class ViTBlock(nnx.Module):
@@ -71,10 +71,10 @@ class CrossViT(ClassifierMixin, nnx.Module):
         B = x.shape[0]
         tokens = []
         for patch, pos_embed, cls_token, blocks in self.branches:
-            dim = cls_token.value.shape[-1]
+            dim = cls_token.shape[-1]
             t = patch(x).reshape(B, -1, dim)
-            t = jnp.concatenate([jnp.broadcast_to(cls_token.value, (B, 1, dim)), t], axis=1)
-            t = t + pos_embed.value
+            t = jnp.concatenate([jnp.broadcast_to(cls_token[...], (B, 1, dim)), t], axis=1)
+            t = t + pos_embed[...]
             for blk in blocks:
                 t = blk(t)
             tokens.append(t)

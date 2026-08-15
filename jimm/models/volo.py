@@ -75,9 +75,9 @@ class TransformerBlock(nnx.Module):
 
     def __call__(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(self.norm1(x)).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        qkv = self.qkv(self.norm1(x)).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
         x = x + self.drop_path(self.proj(out))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
@@ -93,10 +93,10 @@ class ClassAttention(nnx.Module):
 
     def __call__(self, cls, x):
         B, N, C = x.shape
-        q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, 1, C)
+        q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim)
+        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim)
+        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim)
+        out = nnx.dot_product_attention(q, k, v).reshape(B, 1, C)
         return self.proj(out)
 
 class ClassBlock(nnx.Module):
@@ -175,7 +175,7 @@ class VOLO(ClassifierMixin, nnx.Module):
         x = x.reshape(B, H * W, C)
         for blk in self.stage2:
             x = blk(x)
-        cls = jnp.broadcast_to(self.cls_token.value, (B, 1, C))
+        cls = jnp.broadcast_to(self.cls_token[...], (B, 1, C))
         for blk in self.cls_blocks:
             cls = blk(cls, x)
         return self.norm(cls)[:, 0]

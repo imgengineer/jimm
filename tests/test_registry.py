@@ -76,8 +76,8 @@ def test_create_model():
     with pytest.raises(ValueError, match="Unknown model"):
         create_model("unknown_architecture_123")
 
-    # pretrained=True raises NotImplementedError
-    with pytest.raises(NotImplementedError, match="pretrained torch weight porting"):
+    # pretrained=True raises NotImplementedError when no URL registered
+    with pytest.raises(NotImplementedError, match="No default pretrained weight URL"):
         create_model("resnet18", pretrained=True)
 
 
@@ -93,4 +93,4 @@ def test_custom_register_model():
     assert is_model("dummy_custom_model")
     m = create_model("dummy_custom_model", num_classes=3)
     assert m.num_classes == 3
-    assert get_default_cfg("dummy_custom_model") == {}
+    assert get_default_cfg("dummy_custom_model") == {"input_size": (3, 64, 64)}

@@ -29,10 +29,10 @@ class Gemma4Attention(nnx.Module):
 
     def __call__(self, x):
         B, N, C = x.shape
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
+        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim)
+        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim)
+        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(out)
 
 class Gemma4Block(nnx.Module):
@@ -74,7 +74,7 @@ class Gemma4Vit(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = x + self.pos_embed.value
+        x = x + self.pos_embed[...]
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)

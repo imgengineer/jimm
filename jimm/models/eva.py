@@ -15,9 +15,9 @@ class EvaAttention(nnx.Module):
 
     def __call__(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        x = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        x = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(x)
 
 class EvaBlock(nnx.Module):
@@ -37,12 +37,12 @@ class EvaBlock(nnx.Module):
     def __call__(self, x):
         y = self.attn(self.norm1(x))
         if self.gamma1 is not None:
-            y = self.gamma1.value * y
+            y = self.gamma1[...] * y
         x = x + self.drop_path(y)
         h = self.norm2(x)
         y = self.mlp_fc2(nnx.silu(self.mlp_gate(h)) * self.mlp_fc1(h))
         if self.gamma2 is not None:
-            y = self.gamma2.value * y
+            y = self.gamma2[...] * y
         return x + self.drop_path(y)
 
 class Eva(ClassifierMixin, nnx.Module):
@@ -69,8 +69,8 @@ class Eva(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token.value, (B, 1, self.num_features)), x], axis=1)
-        x = x + self.pos_embed.value
+        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
+        x = x + self.pos_embed[...]
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)

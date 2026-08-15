@@ -2,6 +2,7 @@
 import fnmatch
 from collections import defaultdict
 from collections.abc import Sequence
+from typing import Any
 
 __all__ = ["register_model", "create_model", "list_models", "list_modules", "model_entrypoint", "get_default_cfg", "is_model"]
 
@@ -11,12 +12,17 @@ _model_default_cfgs = {}
 _module_to_models = defaultdict(set)
 
 
-def register_model(fn):
-    _model_entrypoints[fn.__name__] = fn
-    _model_to_module[fn.__name__] = fn.__module__.split(".")[-1]
-    _module_to_models[fn.__module__.split(".")[-1]].add(fn.__name__)
-    if hasattr(fn, "default_cfg"):
-        _model_default_cfgs[fn.__name__] = fn.default_cfg
+def register_model(fn=None, *, default_cfg=None):
+    if fn is None:
+        return lambda f: register_model(f, default_cfg=default_cfg)
+    name = fn.__name__
+    _model_entrypoints[name] = fn
+    _model_to_module[name] = fn.__module__.split(".")[-1]
+    _module_to_models[fn.__module__.split(".")[-1]].add(name)
+    if default_cfg is not None:
+        _model_default_cfgs[name] = default_cfg
+    elif hasattr(fn, "default_cfg"):
+        _model_default_cfgs[name] = fn.default_cfg
     return fn
 
 
@@ -28,8 +34,16 @@ def is_model(name):
     return name in _model_entrypoints
 
 
-def get_default_cfg(name):
-    return _model_default_cfgs.get(name, {})
+def get_default_cfg(name: str) -> dict:
+    """Return the default configuration dictionary for a given model name."""
+    if name in _model_default_cfgs:
+        return dict(_model_default_cfgs[name])
+    if name in _model_entrypoints:
+        fn = _model_entrypoints[name]
+        if hasattr(fn, "default_cfg"):
+            _model_default_cfgs[name] = fn.default_cfg
+            return dict(fn.default_cfg)
+    return {}
 
 
 def _cfg(**kwargs):
@@ -59,16 +73,40 @@ def list_modules():
     return sorted(_module_to_models)
 
 
-def create_model(name, pretrained=False, rngs=None, **kwargs):
+def create_model(name: str, pretrained: bool | str | dict[str, Any] = False, features_only: bool = False,
+                 out_indices: Sequence[int] | None = None, rngs=None, **kwargs):
     """Mirror of timm.create_model. Extra JAX arg: rngs (flax.nnx.Rngs)."""
-    if pretrained:
-        raise NotImplementedError(
-            "pretrained torch weight porting is not implemented; train from scratch or "
-            "restore a jimm orbax checkpoint with jimm.checkpoint.load_checkpoint.")
     if not is_model(name):
         raise ValueError(f"Unknown model {name!r}. Available: {list_models()}")
     from flax import nnx
+    if features_only:
+        kwargs.setdefault("num_classes", 0)
     model = _model_entrypoints[name](rngs=rngs or nnx.Rngs(0), **kwargs)
-    if not getattr(model, "default_cfg", None):  # factory-set cfg (e.g. 299/256 input) wins
-        model.default_cfg = get_default_cfg(name)
+    if not getattr(model, "default_cfg", None):
+        model.default_cfg = get_default_cfg(name) or _cfg()
+    else:
+        _model_default_cfgs[name] = model.default_cfg
+
+    if pretrained:
+        import importlib
+        weights = importlib.import_module("jimm.weights")
+        if isinstance(pretrained, str):
+            weights.load_pretrained(model, pretrained)
+        elif isinstance(pretrained, dict):
+            weights.load_state_dict(model, pretrained)
+        elif isinstance(pretrained, bool) and pretrained:
+            cfg = get_default_cfg(name)
+            url = cfg.get("url") if isinstance(cfg, dict) else None
+            if url:
+                weights.load_pretrained(model, url)
+            else:
+                raise NotImplementedError(
+                    f"No default pretrained weight URL for {name!r}; train from scratch, "
+                    "restore an orbax checkpoint with jimm.checkpoint.load_checkpoint, "
+                    "or pass pretrained='path/to/weights.npz'.")
+
+    if features_only:
+        import importlib
+        features = importlib.import_module("jimm.features")
+        return features.create_feature_extractor(model, out_indices=out_indices)
     return model

@@ -41,8 +41,7 @@ class Gemma4Attention(nnx.Module):
         q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(out)
 
 class Gemma4Block(nnx.Module):

@@ -18,8 +18,8 @@ class Attention(nnx.Module):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
-        x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        out = nnx.dot_product_attention(q, k, v)
+        x = out.transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.drop(self.proj(x))
 
 class Block(nnx.Module):

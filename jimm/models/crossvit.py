@@ -22,8 +22,7 @@ class CrossAttention(nnx.Module):
         q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         kv = self.kv(tokens).reshape(B, -1, 2, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, 1, -1)
+        out = nnx.dot_product_attention(q, k, v).transpose(0, 2, 1, 3).reshape(B, 1, -1)
         return self.proj(out)
 
 class ViTBlock(nnx.Module):
@@ -87,8 +86,8 @@ class CrossViT(ClassifierMixin, nnx.Module):
             tokens[1] = jnp.concatenate([cls1, tokens[1][:, 1:]], axis=1)
         return [self.norms[i](tokens[i]) for i in range(2)]
 
-    def forward_head(self, xs):
-        x = jnp.concatenate([xs[0][:, 0], xs[1][:, 0]], axis=-1)
+    def forward_head(self, x):
+        x = jnp.concatenate([x[0][:, 0], x[1][:, 0]], axis=-1)
         x = self.head_drop(x)
         return self.fc(x) if self.fc is not None else x
 

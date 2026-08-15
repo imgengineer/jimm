@@ -49,16 +49,19 @@ class Mlp(nnx.Module):
         return self.drop(self.fc2(self.drop(nnx.gelu(self.fc1(x)))))
 
 
-def hswish(x):
-    return x * jax.nn.hard_sigmoid(x)
+# Native Flax NNX activation aliases
+hswish = nnx.hard_swish
+relu6 = nnx.relu6
 
-
-def relu6(x):
-    return jnp.minimum(jnp.maximum(x, 0), 6)
-
-
-_ACTS = {"relu": nnx.relu, "relu6": relu6, "hswish": hswish, "silu": jax.nn.silu,
-         "gelu": nnx.gelu, "sigmoid": jax.nn.sigmoid, "identity": None}
+_ACTS = {
+    "relu": nnx.relu,
+    "relu6": nnx.relu6,
+    "hswish": nnx.hard_swish,
+    "silu": nnx.silu,
+    "gelu": nnx.gelu,
+    "sigmoid": nnx.sigmoid,
+    "identity": None,
+}
 
 
 class ConvBNAct(nnx.Module):
@@ -90,7 +93,7 @@ class SqueezeExcite(nnx.Module):
 
     def __call__(self, x):
         s = jnp.mean(x, axis=(1, 2), keepdims=True)
-        s = jax.nn.sigmoid(self.fc2(nnx.relu(self.fc1(s))))
+        s = nnx.sigmoid(self.fc2(nnx.relu(self.fc1(s))))
         return x * s
 
 

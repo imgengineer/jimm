@@ -66,7 +66,7 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
 
 
 def cross_entropy(logits, labels, smoothing=0.0):
-    one_hot = jax.nn.one_hot(labels, logits.shape[-1])
+    one_hot = nnx.one_hot(labels, logits.shape[-1])
     one_hot = one_hot * (1 - smoothing) + smoothing / logits.shape[-1]
     return optax.softmax_cross_entropy(logits, one_hot).mean()
 

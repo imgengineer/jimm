@@ -6,15 +6,6 @@ from flax import nnx
 from ..layers import DropPath, PatchEmbed, global_pool_nhwc, ClassifierMixin
 from ..registry import register_model, _cfg
 
-class RMSNorm(nnx.Module):
-    def __init__(self, dim, eps=1e-6, *, rngs):
-        self.eps = eps
-        self.scale = nnx.Param(jnp.ones(dim))
-
-    def __call__(self, x):
-        var = jnp.mean(x ** 2, axis=-1, keepdims=True)
-        return x * jax.lax.rsqrt(var + self.eps) * self.scale.value
-
 class Gemma4GatedMlp(nnx.Module):
     """SwiGLU gated MLP."""
 
@@ -46,9 +37,9 @@ class Gemma4Attention(nnx.Module):
 
 class Gemma4Block(nnx.Module):
     def __init__(self, dim, num_heads, hidden_dim, drop_path=0.0, *, rngs):
-        self.norm1 = RMSNorm(dim, rngs=rngs)
+        self.norm1 = nnx.RMSNorm(dim, epsilon=1e-6, rngs=rngs)
         self.attn = Gemma4Attention(dim, num_heads, rngs=rngs)
-        self.norm2 = RMSNorm(dim, rngs=rngs)
+        self.norm2 = nnx.RMSNorm(dim, epsilon=1e-6, rngs=rngs)
         self.mlp = Gemma4GatedMlp(dim, hidden_dim, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
@@ -76,7 +67,7 @@ class Gemma4Vit(ClassifierMixin, nnx.Module):
             Gemma4Block(embed_dim, num_heads, hidden_dim, dpr[i], rngs=rngs)
             for i in range(depth)])
 
-        self.norm = RMSNorm(embed_dim, rngs=rngs)
+        self.norm = nnx.RMSNorm(embed_dim, epsilon=1e-6, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 

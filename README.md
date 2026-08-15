@@ -2,7 +2,7 @@
 
 **jimm** is a comprehensive JAX / Flax NNX implementation of the popular [`timm` (pytorch-image-models)](https://github.com/huggingface/pytorch-image-models) library.
 
-It provides **341 registered model architectures across 94 model families**, mirroring `timm`'s API surface with a pure JAX native design.
+It provides **1,344 registered model architectures across 94 model families** (100% coverage of timm's 1,309 entrypoints), mirroring `timm`'s API surface with a pure JAX native design.
 
 ---
 
@@ -11,10 +11,11 @@ It provides **341 registered model architectures across 94 model families**, mir
 - **Flax NNX Native**: Built on modern [Flax NNX](https://flax.readthedocs.io/), supporting both Python object-oriented model definitions and functional JAX transformations (`nnx.jit`, `nnx.grad`, `nnx.split`, etc.).
 - **NHWC Layout Throughout**: Native NHWC (channels-last) tensor layout optimized for JAX, XLA, NVIDIA Tensor Cores, and TPUs.
 - **Consistent `timm` API**:
-  - `jimm.create_model(name, num_classes=..., drop_rate=..., ...)`
+  - `jimm.create_model(name, num_classes=..., drop_rate=..., features_only=..., pretrained=...)`
   - `jimm.list_models(filter=..., module=...)`
   - `jimm.list_modules()`
-  - `model.forward_features(x)`: unpooled feature map extraction
+  - `jimm.get_default_cfg(name)`
+  - `model.forward_features(x)`: unpooled feature map extraction (or multi-scale features with `features_only=True`)
   - `model.forward_head(feats)`: global pooling + classifier
   - `model.reset_classifier(num_classes, global_pool=...)`: in-place feature extractor conversion
   - `model.default_cfg`: input size, normalization mean/std, interpolation settings

@@ -16,6 +16,7 @@ from . import (  # noqa: F401  (imports trigger registration)
     vision_transformer_sam, sequencer, byoanet, byobnet, coat,
     volo, hiera, efficientformer_v2, cpubone, csatv2, gemma4_vit,
     hieradet_sam2, mobilenetv5, naflexvit, swin_transformer_v2_cr, vitamin,
+    variants,
 )
 from .resnet import ResNet
 from .vision_transformer import VisionTransformer

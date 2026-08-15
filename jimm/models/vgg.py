@@ -68,8 +68,18 @@ def _vgg(name, use_bn, **kwargs):
 
 
 @register_model
+def vgg11(**kwargs):
+    return _vgg("vgg11", False, **kwargs)
+
+
+@register_model
 def vgg11_bn(**kwargs):
     return _vgg("vgg11", True, **kwargs)
+
+
+@register_model
+def vgg13(**kwargs):
+    return _vgg("vgg13", False, **kwargs)
 
 
 @register_model
@@ -78,8 +88,18 @@ def vgg13_bn(**kwargs):
 
 
 @register_model
+def vgg16(**kwargs):
+    return _vgg("vgg16", False, **kwargs)
+
+
+@register_model
 def vgg16_bn(**kwargs):
     return _vgg("vgg16", True, **kwargs)
+
+
+@register_model
+def vgg19(**kwargs):
+    return _vgg("vgg19", False, **kwargs)
 
 
 @register_model

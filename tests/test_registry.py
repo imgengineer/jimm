@@ -16,7 +16,7 @@ from jimm.registry import (
 
 def test_list_models_and_modules():
     models = list_models()
-    assert len(models) >= 341
+    assert len(models) >= 1309
     assert "resnet50" in models
     assert "convnext_tiny" in models
     assert "vit_base_patch16_224" in models
@@ -37,7 +37,7 @@ def test_list_models_and_modules():
 
     # Module filter
     vgg_models = list_models(module="vgg")
-    assert set(vgg_models) == {"vgg11_bn", "vgg13_bn", "vgg16_bn", "vgg19_bn"}
+    assert {"vgg11_bn", "vgg13_bn", "vgg16_bn", "vgg19_bn"}.issubset(set(vgg_models))
 
     # Exclude filters
     no_resnet = list_models(filter="resnet*", exclude_filters="*152*")

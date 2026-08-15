@@ -26,12 +26,25 @@ def save_checkpoint(path, model, optimizer=None, epoch=0, extra=None):
     return path
 
 
+def _fix_int_keys(d):
+    """Recursively converts stringified integer keys ('0', '1') into int keys for nnx.List/nnx.Sequential."""
+    if isinstance(d, dict):
+        new_d = {}
+        for k, v in d.items():
+            if isinstance(k, str) and (k.isdigit() or (k.startswith("-") and k[1:].isdigit())):
+                try:
+                    k = int(k)
+                except ValueError:
+                    pass
+            new_d[k] = _fix_int_keys(v)
+        return new_d
+    return d
+
+
 def load_checkpoint(path, model, optimizer=None):
     """Restore state saved by save_checkpoint into live model/optimizer. Returns epoch."""
-    item = _item(model, optimizer, 0, None)  # live structure as restore target
-    item.pop("extra", None)
-    restored = _checkpointer.restore(path, item)
-    nnx.update(model, restored["model"])
+    restored = _checkpointer.restore(path)
+    nnx.update(model, _fix_int_keys(restored["model"]))
     if optimizer is not None and "optimizer" in restored:
-        nnx.update(optimizer, restored["optimizer"])
-    return restored["epoch"]
+        nnx.update(optimizer, _fix_int_keys(restored["optimizer"]))
+    return restored.get("epoch", 0)

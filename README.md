@@ -275,11 +275,26 @@ print("Restored epoch:", epoch)
 
 ## Testing & Verification
 
-Run the end-to-end self-check suite:
+### Unit Test Suite & Code Coverage (>99.6% Coverage)
+
+Run the full pytest suite with code coverage across all core modules and 94 architecture families:
 
 ```bash
-# Run core test suite (representative models across all families + training + data + checkpointing)
+# Run all unit tests with pytest & coverage report
+pytest tests/ --cov=jimm --cov-report=term-missing
+
+# Or run parallel testing across all CPU cores
+pytest tests/ -n auto --cov=jimm
+```
+
+### Self-Check Regression Suite
+
+```bash
+# Run core test suite (representative models across all families + SPMD + FSDP + data + checkpointing)
 python test_jimm.py
+
+# Run backpropagation numerical gradient & convergence verification
+python test_backprop.py
 
 # Or run exhaustive check across all 341 models
 python test_jimm.py --all

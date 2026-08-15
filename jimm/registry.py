@@ -1,6 +1,7 @@
 """Model registry, mirrors timm.models.registry."""
 import fnmatch
 from collections import defaultdict
+from collections.abc import Sequence
 
 __all__ = ["register_model", "create_model", "list_models", "list_modules", "model_entrypoint", "get_default_cfg", "is_model"]
 
@@ -38,15 +39,16 @@ def _cfg(**kwargs):
     return d
 
 
-def list_models(filter="", module="", pretrained=False, exclude_filters=""):
+def list_models(filter: str | Sequence[str] = "", module: str = "", pretrained: bool = False,
+                exclude_filters: str | Sequence[str] = "") -> list[str]:
     names = sorted(_model_entrypoints)
     if module:
         names = [n for n in names if _model_to_module[n] == module]
     if filter:
-        pats = filter if isinstance(filter, (list, tuple)) else [filter]
+        pats = [filter] if isinstance(filter, str) else list(filter)
         names = [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
     if exclude_filters:
-        pats = exclude_filters if isinstance(exclude_filters, (list, tuple)) else [exclude_filters]
+        pats = [exclude_filters] if isinstance(exclude_filters, str) else list(exclude_filters)
         names = [n for n in names if not any(fnmatch.fnmatch(n, p) for p in pats)]
     if pretrained:
         names = [n for n in names if _model_default_cfgs.get(n, {}).get("url")]

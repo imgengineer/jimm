@@ -117,5 +117,6 @@ def create_loader(root, batch_size, img_size=224, is_training=False, crop_pct=0.
     
     # Process-local record count (eval keeps remainders per shard)
     n = len(source)
-    local_records = n // jax.process_count() if is_training else -(-n // jax.process_count())
+    sc = shard_options.shard_count
+    local_records = n // sc if is_training else -(-n // sc)
     return Loader(loader, local_records, batch_size, is_training)

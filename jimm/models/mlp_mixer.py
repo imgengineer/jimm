@@ -82,6 +82,7 @@ class ResMLPBlock(nnx.Module):
         return x + self.channel_mlp(self.norm2(x))
 
 class ResMLP(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
     default_cfg: dict = {}
 
     def __init__(self, img_size=224, patch_size=16, num_blocks=12, embed_dim=384,

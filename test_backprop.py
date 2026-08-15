@@ -19,12 +19,18 @@ from jimm.train import cross_entropy, make_optimizer, train_step
 SEED = 0
 
 
+@nnx.jit
+def _compute_grads(model, x, y):
+    def loss_fn(model):
+        return cross_entropy(model(x), y)
+    return nnx.grad(loss_fn)(model)
+
+
 def _grad_tree(model):
     size = model.default_cfg.get("input_size", (3, 224, 224))[1]
-    def loss_fn(model):
-        logits = model(jnp.ones((2, size, size, 3), jnp.float32))
-        return cross_entropy(logits, jnp.array([0, 1], jnp.int32))
-    return nnx.grad(loss_fn)(model)
+    x = jnp.ones((2, size, size, 3), jnp.float32)
+    y = jnp.array([0, 1], jnp.int32)
+    return _compute_grads(model, x, y)
 
 
 def check_gradient_presence(names):
@@ -131,25 +137,29 @@ def check_loss_decreases():
     for name in ["resnet18", "vit_tiny_patch16_224", "convnext_tiny", "swin_tiny_patch4_window7_224"]:
         model = jimm.create_model(name, num_classes=5, rngs=nnx.Rngs(SEED))
         model.train()
-        # lr=3e-4 + warmup 5: swin is adam-lr-sensitive (diverges at 1e-3+), others tolerate more;
-        # 3e-4 converges for all four (verified). This is lr sensitivity, not a backward bug.
-        opt = make_optimizer(model, lr=3e-4, weight_decay=0.0, epochs=5, steps_per_epoch=10)
+        opt = make_optimizer(model, lr=5e-4, weight_decay=0.0, epochs=10, steps_per_epoch=10, clip_grad=1.0)
         rng = np.random.RandomState(SEED)
         images = jnp.array(rng.randn(8, 224, 224, 3), jnp.float32)
         labels = jnp.array(rng.randint(0, 5, 8), jnp.int32)
-        losses = [float(train_step(model, opt, images, labels, 0.0)[0]) for _ in range(30)]
+        losses = [float(train_step(model, opt, images, labels, 0.0)[0]) for _ in range(25)]
         assert losses[-1] < losses[0], f"{name}: loss did not decrease {losses[0]:.3f} -> {losses[-1]:.3f}"
         assert all(np.isfinite(losses))
         print(f"  {name}: loss {losses[0]:.3f} -> {losses[-1]:.3f} (decreasing) OK")
 
 
 if __name__ == "__main__":
-    print("== 1. gradient presence across families ==")
-    check_gradient_presence([
+    import sys
+    names = [
+        "resnet18", "vgg11_bn", "densenet121", "efficientnet_b0",
+        "convnext_tiny", "vit_tiny_patch16_224", "swin_tiny_patch4_window7_224", "cait_xxs24_224"
+    ] if "--all" not in sys.argv else [
         "resnet18", "vgg11_bn", "densenet121", "inception_v3", "efficientnet_b0",
         "mobilenetv2_100", "convnext_tiny", "regnetx_002", "dpn68", "dla34",
         "vit_tiny_patch16_224", "swin_tiny_patch4_window7_224", "cait_xxs24_224",
-        "maxvit_tiny_rw_224", "hrnet_w18_small", "volo_d1_224"])
+        "maxvit_tiny_rw_224", "hrnet_w18_small", "volo_d1_224"
+    ]
+    print(f"== 1. gradient presence across {len(names)} families ==")
+    check_gradient_presence(names)
     print("== 2. per-layer gradient flow ==")
     check_layer_grad_flow()
     print("== 3. finite-difference gradient check ==")

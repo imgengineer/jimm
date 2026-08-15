@@ -155,7 +155,11 @@ def check_data_and_ckpt():
         out_before = m(batch["image"])
         path = save_checkpoint(f"{root}/ckpt", m, epoch=3)
         # corrupt weights with zeros (must actually change outputs), then restore
-        nnx.update(m, jax.tree.map(lambda a: np.zeros_like(a), nnx.state(m).to_pure_dict()))
+        def _zero_weights(a):
+            if isinstance(a, jax.Array) and not jnp.issubdtype(a.dtype, jax.dtypes.prng_key):
+                return jnp.zeros_like(a)
+            return a
+        nnx.update(m, jax.tree.map(_zero_weights, nnx.state(m).to_pure_dict()))
         out_zero = m(batch["image"])
         assert not np.allclose(np.asarray(out_zero), np.asarray(out_before), rtol=1e-3, atol=1e-3), \
             "zeroing weights did not change outputs — state write is broken"

@@ -13,7 +13,7 @@ class GRN(nnx.Module):
         self.beta = nnx.Param(jnp.zeros(dim))
 
     def __call__(self, x):
-        gx = jnp.linalg.norm(x, ord=2, axis=(1, 2), keepdims=True)  # (B,1,1,C)
+        gx = jnp.sqrt(jnp.sum(x ** 2, axis=(1, 2), keepdims=True) + 1e-6)  # (B,1,1,C) spatial L2 norm
         nx = gx / (jnp.mean(gx, axis=-1, keepdims=True) + 1e-6)
         return self.gamma.value * (x * nx) + self.beta.value + x
 

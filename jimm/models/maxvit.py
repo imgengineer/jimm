@@ -136,8 +136,10 @@ class MaxViT(ClassifierMixin, nnx.Module):
         return self.forward_head(self.forward_features(x))
 
 _CFGS = {
-    "maxvit_tiny_rw_224": ((96, 192, 384, 768), (2, 2, 5, 2)),
-    "maxvit_small_rw_224": ((96, 192, 384, 768), (2, 2, 13, 2)),
+    "maxvit_pico_rw_256": ((32, 64, 128, 256), (2, 2, 5, 2)),
+    "maxvit_nano_rw_256": ((32, 64, 128, 256), (2, 2, 5, 2)),
+    "maxvit_tiny_rw_224": ((64, 128, 256, 512), (2, 2, 5, 2)),
+    "maxvit_small_rw_224": ((64, 128, 256, 512), (2, 2, 13, 2)),
     "maxvit_base_rw_224": ((96, 192, 384, 768), (2, 6, 14, 2)),
 }
 

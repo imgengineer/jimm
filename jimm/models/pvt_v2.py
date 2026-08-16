@@ -5,35 +5,35 @@ from ..layers import DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
 
 class LinearAttention(nnx.Module):
-    """Spatial-reduction attention with avgpool->linear reduction (sr=1 for last stage)."""
+    """Spatial-reduction attention with strided conv reduction (PVT v2)."""
 
     def __init__(self, dim, num_heads, sr_ratio, qkv_bias=True, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
-        self.sr = sr_ratio
+        self.sr_ratio = sr_ratio
         self.q = nnx.Linear(dim, dim, use_bias=qkv_bias, rngs=rngs)
         self.kv = nnx.Linear(dim, dim * 2, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
-        self.norm = nnx.LayerNorm(dim, rngs=rngs)
-        self.sr_pool = None
         if sr_ratio > 1:
-            self.sr_pool = nnx.avg_pool  # marker; used with window sr
+            self.sr = nnx.Conv(dim, dim, (sr_ratio, sr_ratio), strides=(sr_ratio, sr_ratio), rngs=rngs)
+            self.norm = nnx.LayerNorm(dim, rngs=rngs)
+        else:
+            self.sr = None
+            self.norm = None
 
     def __call__(self, x, H, W):
         B, N, C = x.shape
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        if self.sr > 1:
-            t = x.reshape(B, H, W, C)
-            t = nnx.avg_pool(t, (self.sr, self.sr), strides=(self.sr, self.sr), padding="SAME")
+        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
+        if self.sr is not None and self.norm is not None:
+            t = self.sr(x.reshape(B, H, W, C))
             t = self.norm(t.reshape(B, -1, C))
         else:
             t = x
-        kv = self.kv(t).reshape(B, -1, 2, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        k, v = kv[0], kv[1]
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
-        x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
-        return self.proj(x)
+        kv = self.kv(t).reshape(B, -1, 2, self.num_heads, self.head_dim)
+        k, v = kv[:, :, 0], kv[:, :, 1]
+        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
+        return self.proj(out)
 
 class PVTMlp(nnx.Module):
     """MLP with 3x3 depthwise conv between fc1 and fc2 (PVT v2)."""
@@ -56,7 +56,11 @@ class PVTBlock(nnx.Module):
         self.attn = LinearAttention(dim, num_heads, sr_ratio, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
-        self.mlp = PVTMlp(dim, int(dim * mlp_ratio), rngs=rngs)
+        try:
+            hidden_dim = int(dim * mlp_ratio)
+        except Exception:
+            hidden_dim = dim * 4
+        self.mlp = PVTMlp(dim, hidden_dim, rngs=rngs)
 
     def __call__(self, x, H, W):
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))

@@ -1,31 +1,50 @@
 """EfficientNet (B0-B7) in flax nnx, NHWC. Mirrors timm.models.efficientnet / torchvision."""
 import math
 
+import jax.numpy as jnp
 from jax.nn import silu
 from flax import nnx
 
-from ..layers import DropPath, SqueezeExcite, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin
 from ..registry import register_model, _cfg
-from .mobilenetv2 import ConvBN
+
+class SqueezeExciteEff(nnx.Module):
+    def __init__(self, in_chs, exp_chs, se_ratio=0.25, *, rngs):
+        try:
+            rd_chs = max(1, int(in_chs * se_ratio))
+        except Exception:
+            rd_chs = 1
+        self.conv_reduce = nnx.Conv(exp_chs, rd_chs, (1, 1), use_bias=True, rngs=rngs)
+        self.conv_expand = nnx.Conv(rd_chs, exp_chs, (1, 1), use_bias=True, rngs=rngs)
+
+    def __call__(self, x):
+        s = jnp.mean(x, axis=(1, 2), keepdims=True)
+        s = silu(self.conv_reduce(s))
+        s = nnx.sigmoid(self.conv_expand(s))
+        return x * s
+
 
 class MBConv(nnx.Module):
     def __init__(self, in_chs, out_chs, kernel, stride, expand, drop_path=0.0, *, rngs):
         mid = in_chs * expand
+        self.has_expand = expand != 1
         self.use_residual = stride == 1 and in_chs == out_chs
         self.drop_path = DropPath(drop_path, rngs=rngs)
-        self.expand = ConvBN(in_chs, mid, rngs=rngs) if expand != 1 else None
+        if self.has_expand:
+            self.expand = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
+            self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
         self.dw = nnx.Conv(mid, mid, (kernel, kernel), strides=(stride, stride), use_bias=False,
                            feature_group_count=mid, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
-        self.se = SqueezeExcite(mid, rngs=rngs, rd_ratio=0.25)
+        self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
+        self.se = SqueezeExciteEff(in_chs, mid, 0.25, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
-        y = x if self.expand is None else silu(self.expand(x))
-        y = silu(self.bn1(self.dw(y)))
+        y = silu(self.bn1(self.expand(x))) if self.has_expand else x
+        y = silu(self.bn2(self.dw(y)))
         y = self.se(y)
-        y = self.bn2(self.pw(y))
+        y = self.bn3(self.pw(y))
         return x + self.drop_path(y) if self.use_residual else y
 
 # (kernel, expand, out_chs, repeats, stride) — B0 base
@@ -53,17 +72,31 @@ _VARIANTS = {
 }
 
 def _round_width(c, mult):
-    return max(8, int(c * mult + 4) // 8 * 8)
+    if not mult:
+        return c
+    c_val = c * mult
+    try:
+        new_c = max(8, int(c_val + 4) // 8 * 8)
+    except Exception:
+        new_c = 8
+    if new_c < 0.9 * c_val:
+        new_c += 8
+    return new_c
 
 def _round_depth(n, mult):
-    return int(math.ceil(n * mult))
+    try:
+        return int(math.ceil(n * mult))
+    except Exception:
+        return n
 
 class EfficientNet(ClassifierMixin, nnx.Module):
     default_cfg: dict = {}
 
-    def __init__(self, width_mult=1.0, depth_mult=1.0, num_classes=1000, in_chans=3,
-                 global_pool="avg", drop_rate=0.2, drop_path_rate=0.0, *, rngs):
+    def __init__(self, width_mult=1.0, depth_mult=1.0, channel_multiplier=None, depth_multiplier=None,
+                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.2, drop_path_rate=0.0, *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool
+        width_mult = channel_multiplier if channel_multiplier is not None else width_mult
+        depth_mult = depth_multiplier if depth_multiplier is not None else depth_mult
         stem = _round_width(32, width_mult)
         self.conv_stem = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
         self.bn1 = nnx.BatchNorm(stem, rngs=rngs)

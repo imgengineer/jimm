@@ -367,133 +367,133 @@ def coat_lite_tiny(**kwargs):
 
 @register_model
 def coatnet_0_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_1_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_2_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_3_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_3_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_4_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_5_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_bn_0_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_nano_cc_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_nano_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_pico_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_rmlp_0_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_rmlp_1_rw2_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_rmlp_1_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_rmlp_2_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_rmlp_2_rw_384(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 384, 384))
     return model
 
 
 @register_model
 def coatnet_rmlp_3_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnet_rmlp_nano_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def coatnext_nano_rw_224(**kwargs):
-    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), (2, 4, 8, 16), **kwargs)
+    model = maxvit.MaxViT((64, 128, 256, 512), (2, 2, 5, 2), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 

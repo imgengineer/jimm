@@ -19,7 +19,7 @@ class ConvNeXtBlock(nnx.Module):
         y = self.norm(y)
         y = self.pw2(nnx.gelu(self.pw1(y)))
         if self.gamma is not None:
-            y = self.gamma.value * y
+            y = self.gamma[...] * y
         return x + self.drop_path(y)
 
 class ConvNeXt(ClassifierMixin, nnx.Module):

@@ -1025,56 +1025,56 @@ def densenetblur121d(**kwargs):
 
 @register_model
 def dla102x(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dla102x2(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dla46_c(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dla46x_c(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dla60_res2net(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dla60_res2next(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dla60x(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dla60x_c(**kwargs):
-    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DLABasic, **kwargs)
+    model = dla.DLA((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), dla.DlaBasic, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 

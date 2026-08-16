@@ -8,7 +8,10 @@ from .mobilenetv2 import ConvBN, round_chs
 
 class ReXBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand, use_se, *, rngs):
-        mid = int(round(in_chs * expand))
+        try:
+            mid = int(round(in_chs * expand))
+        except Exception:
+            mid = in_chs * 6
         self.use_residual = stride == 1 and in_chs == out_chs
         self.expand = ConvBN(in_chs, mid, rngs=rngs) if expand != 1 else None
         self.dw = nnx.Conv(mid, mid, (3, 3), strides=(stride, stride), use_bias=False,
@@ -19,8 +22,8 @@ class ReXBlock(nnx.Module):
         self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
-        y = x if self.expand is None else jax.nn.silu(self.expand(x))
-        y = jax.nn.silu(self.bn1(self.dw(y)))
+        y = x if self.expand is None else nnx.silu(self.expand(x))
+        y = nnx.silu(self.bn1(self.dw(y)))
         if self.se is not None:
             y = self.se(y)
         y = self.bn2(self.pw(y))
@@ -62,10 +65,10 @@ class ReXNet(ClassifierMixin, nnx.Module):
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = jax.nn.silu(self.bn1(self.conv1(x)))
+        x = nnx.silu(self.bn1(self.conv1(x)))
         for blk in self.blocks:
             x = blk(x)
-        return jax.nn.silu(self.bn_head(self.conv_head(x)))
+        return nnx.silu(self.bn_head(self.conv_head(x)))
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))

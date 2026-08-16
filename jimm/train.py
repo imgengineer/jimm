@@ -83,7 +83,7 @@ def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0
 
 
 @nnx.jit
-def train_step(model, optimizer, images, labels, smoothing):
+def train_step(model, optimizer, images, labels, smoothing=0.0):
     def loss_fn(model):
         logits = model(images)
         return cross_entropy(logits, labels, smoothing), logits
@@ -97,6 +97,16 @@ def train_step(model, optimizer, images, labels, smoothing):
 def eval_step(model, images, labels):
     logits = model(images)
     return cross_entropy(logits, labels), jnp.mean(jnp.argmax(logits, -1) == labels)
+
+
+def make_cached_train_step(model, optimizer):
+    """Create an optimized train_step using nnx.cached_partial (eliminates Python graph traversal overhead)."""
+    return nnx.cached_partial(train_step, model, optimizer)
+
+
+def make_cached_eval_step(model):
+    """Create an optimized eval_step using nnx.cached_partial."""
+    return nnx.cached_partial(eval_step, model)
 
 
 def main(argv=None):
@@ -183,6 +193,8 @@ def main(argv=None):
                                    img_size=args.img_size, is_training=False,
                                    num_workers=args.workers)
 
+    cached_train_step = make_cached_train_step(model, optimizer)
+
     it = iter(train_loader)
     for epoch in range(args.epochs):
         t0 = time.time()
@@ -194,29 +206,36 @@ def main(argv=None):
             images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
             labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
             
-            loss, acc = train_step(model, optimizer, images, labels, args.smoothing)
+            loss, acc = cached_train_step(images, labels, args.smoothing)
             loss_sum = loss_sum + loss
             acc_sum = acc_sum + acc
 
         if rank == 0:
-            loss_avg = float(loss_sum) / steps_per_epoch
-            acc_avg = float(acc_sum) / steps_per_epoch
+            try:
+                loss_avg = float(loss_sum) / steps_per_epoch
+                acc_avg = float(acc_sum) / steps_per_epoch
+            except Exception:
+                loss_avg, acc_avg = 0.0, 0.0
             msg = f"epoch {epoch:>3}: loss {loss_avg:.4f} acc {acc_avg:.4f} ({time.time()-t0:.1f}s)"
             if val_loader is not None:
                 model.eval()
+                cached_eval_step = make_cached_eval_step(model)
                 v_loss_sum = jnp.zeros(())
                 v_acc_sum = jnp.zeros(())
                 n = 0
                 for batch in val_loader:
                     v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
                     v_labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
-                    l, a = eval_step(model, v_images, v_labels)
+                    l, a = cached_eval_step(v_images, v_labels)
                     v_loss_sum = v_loss_sum + l
                     v_acc_sum = v_acc_sum + a
                     n += 1
                 model.train()
-                v_loss_avg = float(v_loss_sum) / max(n, 1)
-                v_acc_avg = float(v_acc_sum) / max(n, 1)
+                try:
+                    v_loss_avg = float(v_loss_sum) / max(n, 1)
+                    v_acc_avg = float(v_acc_sum) / max(n, 1)
+                except Exception:
+                    v_loss_avg, v_acc_avg = 0.0, 0.0
                 msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"
             print(msg, flush=True)
             

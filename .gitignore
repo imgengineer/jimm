@@ -8,3 +8,8 @@ build/
 output/
 *.egg-info/
 /tmp/
+
+datasets/
+checkpoints/
+*.json
+cov.json

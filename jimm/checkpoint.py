@@ -20,7 +20,12 @@ def _item(model, optimizer, epoch, extra):
 
 def save_checkpoint(path, model, optimizer=None, epoch=0, extra=None):
     """Save model (and optimizer) state to `path`. Returns path."""
-    os.makedirs(path, exist_ok=True)
+    path = os.path.abspath(path)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        if not os.path.isdir(path):
+            raise
     _checkpointer.save(path, _item(model, optimizer, epoch, extra), force=True)
     _checkpointer.wait_until_finished()
     return path
@@ -43,6 +48,7 @@ def _fix_int_keys(d):
 
 def load_checkpoint(path, model, optimizer=None):
     """Restore state saved by save_checkpoint into live model/optimizer. Returns epoch."""
+    path = os.path.abspath(path)
     restored = _checkpointer.restore(path)
     nnx.update(model, _fix_int_keys(restored["model"]))
     if optimizer is not None and "optimizer" in restored:

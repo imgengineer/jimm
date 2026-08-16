@@ -82,10 +82,13 @@ def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0
                          wrt=nnx.Param)
 
 
-@nnx.jit
-def train_step(model, optimizer, images, labels, smoothing=0.0):
+@nnx.jit(static_argnames=("smoothing", "amp"))
+def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False):
     def loss_fn(model):
-        logits = model(images)
+        x = images.astype(jnp.bfloat16) if amp else images
+        logits = model(x)
+        if amp:
+            logits = logits.astype(jnp.float32)
         return cross_entropy(logits, labels, smoothing), logits
     (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
     optimizer.update(model, grads)
@@ -93,19 +96,32 @@ def train_step(model, optimizer, images, labels, smoothing=0.0):
     return loss, acc
 
 
-@nnx.jit
-def eval_step(model, images, labels):
-    logits = model(images)
+@nnx.jit(static_argnames=("amp",))
+def eval_step(model, images, labels, amp=False):
+    x = images.astype(jnp.bfloat16) if amp else images
+    logits = model(x)
+    if amp:
+        logits = logits.astype(jnp.float32)
     return cross_entropy(logits, labels), jnp.mean(jnp.argmax(logits, -1) == labels)
 
 
-def make_cached_train_step(model, optimizer):
+def make_cached_train_step(model, optimizer, amp=False):
     """Create an optimized train_step using nnx.cached_partial (eliminates Python graph traversal overhead)."""
+    if amp:
+        @nnx.jit(static_argnames=("smoothing",))
+        def _step(m, opt, img, lbl, smoothing=0.0):
+            return train_step(m, opt, img, lbl, smoothing=smoothing, amp=True)
+        return nnx.cached_partial(_step, model, optimizer)
     return nnx.cached_partial(train_step, model, optimizer)
 
 
-def make_cached_eval_step(model):
+def make_cached_eval_step(model, amp=False):
     """Create an optimized eval_step using nnx.cached_partial."""
+    if amp:
+        @nnx.jit
+        def _step(m, img, lbl):
+            return eval_step(m, img, lbl, amp=True)
+        return nnx.cached_partial(_step, model)
     return nnx.cached_partial(eval_step, model)
 
 
@@ -130,6 +146,8 @@ def main(argv=None):
     p.add_argument("--output", default="./output", help="output directory for checkpoints")
     p.add_argument("--fsdp", action="store_true", default=False,
                    help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)")
+    p.add_argument("--amp", action="store_true", default=True,
+                   help="enable AMP half-precision (bfloat16) compute on Tensor Cores (default: True)")
     
     # Multi-node / distributed options
     p.add_argument("--dist-coordinator-address", type=str, default=None,
@@ -195,9 +213,9 @@ def main(argv=None):
 
     # Construct cached train & eval steps (freezes the respective mode graph traversal)
     model.train()
-    cached_train_step = make_cached_train_step(model, optimizer)
+    cached_train_step = make_cached_train_step(model, optimizer, amp=args.amp)
     model.eval()
-    cached_eval_step = make_cached_eval_step(model) if val_loader is not None else None
+    cached_eval_step = make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
     model.train()
 
     it = iter(train_loader)

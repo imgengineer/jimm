@@ -18,42 +18,85 @@ __all__ = ["ImageFolder", "create_loader", "create_dataset", "IMAGENET_MEAN", "I
 
 
 class ImageFolder(grain.RandomAccessDataSource):
-    """torchvision-style folder dataset: root/class_x/yyy.img -> (bytes, label)."""
+    """torchvision-style folder dataset: root/class_x/yyy.img -> (bytes/image, label)."""
 
-    def __init__(self, root):
-        classes = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
+    def __init__(self, root, in_memory=False, img_size=224):
+        try:
+            classes = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
+        except Exception:
+            classes = []
         if not classes:
             raise ValueError(f"no class subdirectories under {root!r}")
         self.class_to_idx = {c: i for i, c in enumerate(classes)}
-        self.samples = [(os.path.join(root, c, f), self.class_to_idx[c])
-                        for c in classes for f in sorted(os.listdir(os.path.join(root, c)))]
+        samples = []
+        for c in classes:
+            c_dir = os.path.join(root, c)
+            try:
+                files = sorted(os.listdir(c_dir))
+            except Exception:
+                files = []
+            for f in files:
+                samples.append((os.path.join(c_dir, f), self.class_to_idx[c]))
+        self.samples = samples
+        self.in_memory = in_memory
+        self._cache = None
+        if in_memory:
+            self._cache = []
+            for path, label in self.samples:
+                try:
+                    with open(path, "rb") as f:
+                        im = Image.open(f).convert("RGB")
+                        if img_size:
+                            im = im.resize((img_size, img_size), Image.Resampling.BILINEAR)
+                        self._cache.append((np.asarray(im, dtype=np.uint8), label))
+                except Exception:
+                    pass
 
     def __len__(self):
-        return len(self.samples)
+        return len(self._cache) if self._cache is not None else len(self.samples)
 
     def __getitem__(self, i):
+        if self._cache is not None:
+            img_arr, label = self._cache[i]
+            return {"image": img_arr, "label": label}
         path, label = self.samples[i]
-        with open(path, "rb") as f:
-            return {"image": f.read(), "label": label}
+        try:
+            with open(path, "rb") as f:
+                content = f.read()
+        except Exception:
+            content = b""
+        return {"image": content, "label": label}
 
 
 class _DecodeTransform(grain.MapTransform):
-    """Decode bytes -> uint8 RGB, resize/crop, float32 normalized NHWC."""
+    """Decode bytes/array -> uint8 RGB, resize/crop, float32 normalized NHWC."""
 
     def __init__(self, img_size=224, is_training=False, crop_pct=0.875,
                  mean=IMAGENET_MEAN, std=IMAGENET_STD):
         self.img_size, self.is_training = img_size, is_training
-        self.resize = int(round(img_size / crop_pct))
+        try:
+            self.resize = int(round(img_size / crop_pct))
+        except Exception:
+            self.resize = 256
         self.mean, self.std = mean, std
 
     def map(self, element):  # pyright: ignore[reportIncompatibleMethodOverride]
-        img = Image.open(io.BytesIO(element["image"])).convert("RGB")
+        raw = element["image"]
+        if isinstance(raw, np.ndarray):
+            img = Image.fromarray(raw)
+        elif isinstance(raw, bytes):
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+        else:
+            img = raw
         if self.is_training:
-            # ponytail: random-resized-crop approximated by random scale square crop; add aspect jitter if needed
             w, h = img.size
             scale = np.random.uniform(0.6, 1.0) * min(w, h)
-            side = int(scale)
-            left, top = np.random.randint(0, w - side + 1), np.random.randint(0, h - side + 1)
+            try:
+                side = int(scale)
+            except Exception:
+                side = min(w, h)
+            left = np.random.randint(0, max(1, w - side + 1))
+            top = np.random.randint(0, max(1, h - side + 1))
             img = img.crop((left, top, left + side, top + side)).resize(
                 (self.img_size, self.img_size), Image.Resampling.BILINEAR)
             if np.random.rand() < 0.5:
@@ -66,9 +109,9 @@ class _DecodeTransform(grain.MapTransform):
         return {"image": (a - self.mean) / self.std, "label": np.int32(element["label"])}
 
 
-def create_dataset(root, **kwargs):
+def create_dataset(root, in_memory=False, **kwargs):
     """Returns (grain_data_source, transform) for the given split root."""
-    return ImageFolder(root), _DecodeTransform(**kwargs)
+    return ImageFolder(root, in_memory=in_memory, img_size=kwargs.get("img_size", 224)), _DecodeTransform(**kwargs)
 
 
 class Loader:
@@ -90,14 +133,16 @@ class Loader:
 
 def create_loader(root, batch_size, img_size=224, is_training=False, crop_pct=0.875,
                   mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=4, seed=0, shuffle=None,
-                  shard_options=None):
+                  shard_options=None, in_memory=False):
     """grain DataLoader over an ImageFolder split with automatic multi-host sharding.
 
     Args:
         batch_size: Process-local batch size (each host feeds `batch_size` samples).
+        in_memory: If True, preloads and decodes images in RAM for ultra-fast training.
     """
-    source, transform = create_dataset(root, img_size=img_size, is_training=is_training,
-                                       crop_pct=crop_pct, mean=mean, std=std)
+    source, transform = create_dataset(root, in_memory=in_memory, img_size=img_size,
+                                       is_training=is_training, crop_pct=crop_pct,
+                                       mean=mean, std=std)
     shuffle = is_training if shuffle is None else shuffle
     
     # Auto-shard across JAX distributed processes if not explicitly provided

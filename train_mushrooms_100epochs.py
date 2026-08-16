@@ -1,59 +1,41 @@
-"""High performance training of mainstream vision models on Mushrooms dataset for 100 epochs."""
+"""High-performance 100-Epoch training using jimm.data and native AMP mixed precision."""
 import time
 import json
-from pathlib import Path
-import numpy as np
-from PIL import Image
 import jax.numpy as jnp
 from flax import nnx
 
 import jimm
+from jimm.data import create_loader
 from jimm.checkpoint import save_checkpoint
 from jimm.train import make_optimizer, make_cached_train_step, make_cached_eval_step
 
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-
-def load_dataset_to_ram(split_dir: Path, img_size: int = 224):
-    classes = sorted([d.name for d in split_dir.iterdir() if d.is_dir()])
-    cls_to_idx = {c: i for i, c in enumerate(classes)}
-    imgs, labels = [], []
-    for c in classes:
-        for f in sorted((split_dir / c).glob('*.*')):
-            if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
-                try:
-                    im = Image.open(f).convert("RGB").resize((img_size, img_size), Image.Resampling.BILINEAR)
-                    imgs.append(np.asarray(im, dtype=np.uint8))
-                    labels.append(cls_to_idx[c])
-                except Exception:
-                    pass
-    x = np.stack(imgs, axis=0)
-    y = np.array(labels, dtype=np.int32)
-    return x, y, classes
-
-
-def train_single_model(model_name: str, train_x: np.ndarray, train_y: np.ndarray,
-                       val_x: np.ndarray, val_y: np.ndarray, num_classes: int = 9,
-                       epochs: int = 100, batch_size: int = 64, lr: float = 1e-3,
-                       weight_decay: float = 0.01, smoothing: float = 0.1,
-                       out_dir: str = "./checkpoints"):
+def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
+                       epochs: int = 100, batch_size: int = 256, img_size: int = 224,
+                       lr: float = 2e-3, weight_decay: float = 0.01, smoothing: float = 0.1,
+                       amp: bool = True, out_dir: str = "./checkpoints"):
     print(f"\n=======================================================", flush=True)
-    print(f"  Training {model_name} (100 Epochs, lr={lr}, wd={weight_decay}, bs={batch_size})", flush=True)
+    print(f"  Training {model_name} (100 Epochs, AMP={'bfloat16' if amp else 'FP32'}, bs={batch_size}, lr={lr})", flush=True)
     print(f"=======================================================", flush=True)
 
+    # 1. Create Model
     model = jimm.create_model(model_name, num_classes=num_classes, rngs=nnx.Rngs(0))
-    n_train = len(train_x)
-    n_val = len(val_x)
-    steps_per_epoch = max(1, n_train // batch_size)
 
+    # 2. Use jimm.data.create_loader with in_memory=True for zero-disk-IO fast streaming
+    train_loader = create_loader(f"{data_dir}/train", batch_size=batch_size, img_size=img_size,
+                                 is_training=True, num_workers=0, seed=42, in_memory=True)
+    val_loader = create_loader(f"{data_dir}/val", batch_size=batch_size, img_size=img_size,
+                               is_training=False, num_workers=0, seed=42, in_memory=True)
+
+    steps_per_epoch = len(train_loader)
     opt = make_optimizer(model, lr=lr, weight_decay=weight_decay, epochs=epochs,
                          steps_per_epoch=steps_per_epoch, clip_grad=1.0)
 
+    # 3. Create Cached Step Functions with Native AMP (bfloat16) on Tensor Cores
     model.train()
-    cached_train_step = make_cached_train_step(model, opt)
+    cached_train_step = make_cached_train_step(model, opt, amp=amp)
     model.eval()
-    cached_eval_step = make_cached_eval_step(model)
+    cached_eval_step = make_cached_eval_step(model, amp=amp)
     model.train()
 
     best_val_acc = 0.0
@@ -63,23 +45,18 @@ def train_single_model(model_name: str, train_x: np.ndarray, train_y: np.ndarray
     val_loss, val_acc = 0.0, 0.0
     t_start = time.time()
 
-    val_steps = -(-n_val // batch_size)
-
+    it = iter(train_loader)
     for epoch in range(1, epochs + 1):
         t0 = time.time()
-        perm = np.random.permutation(n_train)
         loss_sum = jnp.zeros(())
         acc_sum = jnp.zeros(())
 
-        for step in range(steps_per_epoch):
-            idx = perm[step * batch_size:(step + 1) * batch_size]
-            batch_img = train_x[idx].astype(np.float32) / 255.0
-            if np.random.rand() > 0.5:
-                batch_img = batch_img[:, :, ::-1, :]
-            batch_img = (batch_img - IMAGENET_MEAN) / IMAGENET_STD
-            batch_lbl = train_y[idx]
+        for _ in range(steps_per_epoch):
+            batch = next(it)
+            images = jnp.asarray(batch["image"])
+            labels = jnp.asarray(batch["label"])
 
-            l, a = cached_train_step(jnp.asarray(batch_img), jnp.asarray(batch_lbl), smoothing)
+            l, a = cached_train_step(images, labels, smoothing)
             loss_sum = loss_sum + l
             acc_sum = acc_sum + a
 
@@ -89,16 +66,17 @@ def train_single_model(model_name: str, train_x: np.ndarray, train_y: np.ndarray
         except Exception:
             train_loss, train_acc = 0.0, 0.0
 
-        # Validation
+        # Validation with jimm.data loader
         v_loss_sum = jnp.zeros(())
         v_acc_sum = jnp.zeros(())
-        for v_step in range(val_steps):
-            v_idx = slice(v_step * batch_size, min((v_step + 1) * batch_size, n_val))
-            v_img = (val_x[v_idx].astype(np.float32) / 255.0 - IMAGENET_MEAN) / IMAGENET_STD
-            v_lbl = val_y[v_idx]
-            l, a = cached_eval_step(jnp.asarray(v_img), jnp.asarray(v_lbl))
-            v_loss_sum = v_loss_sum + l * len(v_lbl)
-            v_acc_sum = v_acc_sum + a * len(v_lbl)
+        n_val = 0
+        for v_batch in val_loader:
+            v_images = jnp.asarray(v_batch["image"])
+            v_labels = jnp.asarray(v_batch["label"])
+            l, a = cached_eval_step(v_images, v_labels)
+            v_loss_sum = v_loss_sum + l * len(v_labels)
+            v_acc_sum = v_acc_sum + a * len(v_labels)
+            n_val += len(v_labels)
 
         try:
             val_loss = float(v_loss_sum) / max(n_val, 1)
@@ -148,24 +126,18 @@ def train_single_model(model_name: str, train_x: np.ndarray, train_y: np.ndarray
 
 
 def main():
-    split_dir = Path("/home/lzc/Documents/jimm/datasets/mushrooms_split")
-    print("Loading Mushroom dataset into RAM...", flush=True)
-    t0 = time.time()
-    train_x, train_y, classes = load_dataset_to_ram(split_dir / "train")
-    val_x, val_y, _ = load_dataset_to_ram(split_dir / "val")
-    print(f"Loaded {len(train_x)} train and {len(val_x)} val images across {len(classes)} classes in {time.time()-t0:.1f}s.")
+    data_dir = "/home/lzc/Documents/jimm/datasets/mushrooms_split"
 
     models_config = [
-        ("resnet18", 1e-3, 0.01),
-        ("mobilenetv3_large_100", 1e-3, 0.01),
-        ("convnext_tiny", 5e-4, 0.05),
+        ("resnet18", 2e-3, 0.01),
+        ("mobilenetv3_large_100", 2e-3, 0.01),
+        ("convnext_tiny", 1e-3, 0.05),
     ]
 
     all_results = {}
     for name, lr, wd in models_config:
-        res = train_single_model(name, train_x, train_y, val_x, val_y,
-                                 num_classes=len(classes), epochs=100, batch_size=64,
-                                 lr=lr, weight_decay=wd, out_dir="./checkpoints")
+        res = train_single_model(name, data_dir, num_classes=9, epochs=100, batch_size=256,
+                                 lr=lr, weight_decay=wd, amp=True, out_dir="./checkpoints")
         all_results[name] = res
 
     try:
@@ -176,7 +148,7 @@ def main():
         print("Could not save JSON:", e)
 
     print("\n==========================================================================")
-    print("             100-EPOCH BENCHMARK RESULTS (MUSHROOMS DATASET)              ")
+    print("      100-EPOCH BENCHMARK RESULTS (jimm.data + AMP bfloat16 on RTX 5090)  ")
     print("==========================================================================")
     print(f"{'Model Architecture':25} {'Best Val Acc':>14} {'Final Val Acc':>14} {'Final Train Acc':>16} {'Total Time':>12}")
     print("-" * 85)

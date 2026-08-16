@@ -193,7 +193,12 @@ def main(argv=None):
                                    img_size=args.img_size, is_training=False,
                                    num_workers=args.workers)
 
+    # Construct cached train & eval steps (freezes the respective mode graph traversal)
+    model.train()
     cached_train_step = make_cached_train_step(model, optimizer)
+    model.eval()
+    cached_eval_step = make_cached_eval_step(model) if val_loader is not None else None
+    model.train()
 
     it = iter(train_loader)
     for epoch in range(args.epochs):
@@ -217,9 +222,7 @@ def main(argv=None):
             except Exception:
                 loss_avg, acc_avg = 0.0, 0.0
             msg = f"epoch {epoch:>3}: loss {loss_avg:.4f} acc {acc_avg:.4f} ({time.time()-t0:.1f}s)"
-            if val_loader is not None:
-                model.eval()
-                cached_eval_step = make_cached_eval_step(model)
+            if val_loader is not None and cached_eval_step is not None:
                 v_loss_sum = jnp.zeros(())
                 v_acc_sum = jnp.zeros(())
                 n = 0
@@ -230,7 +233,6 @@ def main(argv=None):
                     v_loss_sum = v_loss_sum + l
                     v_acc_sum = v_acc_sum + a
                     n += 1
-                model.train()
                 try:
                     v_loss_avg = float(v_loss_sum) / max(n, 1)
                     v_acc_avg = float(v_acc_sum) / max(n, 1)

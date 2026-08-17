@@ -241,10 +241,8 @@ def main(argv=None):
         gaussian_blur_prob=args.gaussian_blur_prob,
         num_workers=args.workers, seed=rank,
     )
+    train_loader.start_prefetch()
     it = iter(train_loader)
-    start_prefetch = getattr(it, "start_prefetch", None)
-    if start_prefetch is not None:
-        start_prefetch()
     steps_per_epoch = args.steps_per_epoch or max(1, len(train_loader))
 
     optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs,

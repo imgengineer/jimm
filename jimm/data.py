@@ -3,6 +3,11 @@
 Images are decoded to RGB NumPy arrays with OpenCV and yielded as normalized
 float32 NHWC batches. Grain handles sharding and batching.
 """
+import fcntl
+import hashlib
+import json
+import os
+import tempfile
 from pathlib import Path
 
 import cv2  # pyright: ignore[reportMissingImports]
@@ -52,6 +57,7 @@ IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
 _IMAGE_SUFFIXES = frozenset({
     ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jp2", ".png", ".tif", ".tiff", ".webp",
 })
+_IMAGE_CACHE_ROOT = Path(os.environ.get("JIMM_CACHE_DIR", "~/.cache/jimm/image-cache")).expanduser()
 
 __all__ = [
     "AugmentOp", "AutoAugment", "AugMixAugment", "ImageFolder", "Loader",
@@ -95,6 +101,137 @@ def _read_image(path: Path) -> np.ndarray:
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
+def _decode_file(path: Path) -> np.ndarray:
+    try:
+        with path.open("rb") as file:
+            raw = file.read()
+        try:
+            return _decode_image(raw)
+        except ValueError:
+            return _read_image(path)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"unable to cache image {path}") from exc
+
+
+def _cache_key(root: Path, samples, img_size) -> str:
+    digest = hashlib.sha256()
+    digest.update(str(root).encode())
+    digest.update(str(img_size).encode())
+    for path, _ in samples:
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise ValueError(f"unable to stat image {path}") from exc
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+    return digest.hexdigest()
+
+
+class _MemmapImageCache:
+    """Read-only decoded images backed by one file shared across Grain workers."""
+
+    def __init__(self, data_path, records, total_bytes):
+        self.data_path = str(data_path)
+        self.records = records
+        self.total_bytes = total_bytes
+        self._mmap = None
+
+    def _data(self):
+        if self._mmap is None:
+            self._mmap = np.memmap(
+                self.data_path,
+                mode="r",
+                dtype=np.uint8,
+                shape=(self.total_bytes,),
+            )
+        return self._mmap
+
+    def __len__(self):
+        return len(self.records)
+
+    def __getitem__(self, index):
+        offset, size, shape, label = self.records[index]
+        image = self._data()[offset:offset + size].reshape(shape)
+        return image, label
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_mmap"] = None
+        return state
+
+
+def _load_memmap_cache(data_path: Path, metadata_path: Path):
+    try:
+        with metadata_path.open("r", encoding="utf-8") as file:
+            metadata = json.load(file)
+        if data_path.stat().st_size != metadata["total_bytes"]:
+            raise ValueError("cache size mismatch")
+        records = [
+            (int(offset), int(size), tuple(shape), int(label))
+            for offset, size, shape, label in metadata["records"]
+        ]
+        return _MemmapImageCache(data_path, records, metadata["total_bytes"])
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _build_memmap_cache(root: Path, samples, img_size):
+    key = _cache_key(root, samples, img_size)
+    cache_dir = _IMAGE_CACHE_ROOT
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    data_path = cache_dir / f"{key}.bin"
+    metadata_path = cache_dir / f"{key}.json"
+    cache = _load_memmap_cache(data_path, metadata_path)
+    if cache is not None:
+        return cache
+
+    lock_path = cache_dir / f"{key}.lock"
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        cache = _load_memmap_cache(data_path, metadata_path)
+        if cache is not None:
+            return cache
+        data_tmp = metadata_tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=cache_dir, prefix=f"{key}.", suffix=".bin.tmp", delete=False
+            ) as data_file:
+                data_tmp = Path(data_file.name)
+                offset = 0
+                records = []
+                for path, label in samples:
+                    image = _decode_file(path)
+                    if img_size:
+                        image = cv2.resize(
+                            image, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
+                    image = np.ascontiguousarray(image, dtype=np.uint8)
+                    raw = image.tobytes()
+                    data_file.write(raw)
+                    records.append((offset, len(raw), list(image.shape), label))
+                    offset += len(raw)
+                data_file.flush()
+                os.fsync(data_file.fileno())
+            metadata = {"version": 1, "total_bytes": offset, "records": records}
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=cache_dir,
+                prefix=f"{key}.", suffix=".json.tmp", delete=False
+            ) as metadata_file:
+                metadata_tmp = Path(metadata_file.name)
+                json.dump(metadata, metadata_file, separators=(",", ":"))
+                metadata_file.flush()
+                os.fsync(metadata_file.fileno())
+            os.replace(data_tmp, data_path)
+            os.replace(metadata_tmp, metadata_path)
+            cache = _load_memmap_cache(data_path, metadata_path)
+            if cache is None:
+                raise ValueError(f"unable to load image cache {data_path}")
+            return cache
+        finally:
+            for path in (data_tmp, metadata_tmp):
+                if path is not None:
+                    path.unlink(missing_ok=True)
+
+
 class ImageFolder(grain.RandomAccessDataSource):
     """Folder dataset: ``root/class_name/image`` -> image bytes and label."""
 
@@ -127,23 +264,7 @@ class ImageFolder(grain.RandomAccessDataSource):
         if not samples:
             raise ValueError(f"no image files under class directories in {root!r}")
         self.samples = samples
-        self._cache = None
-        if in_memory:
-            self._cache = []
-            for path, label in self.samples:
-                try:
-                    with path.open("rb") as file:
-                        raw = file.read()
-                    try:
-                        image = _decode_image(raw)
-                    except ValueError:
-                        image = _read_image(path)
-                    if img_size:
-                        image = cv2.resize(
-                            image, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
-                    self._cache.append((image, label))
-                except (OSError, ValueError) as exc:
-                    raise ValueError(f"unable to cache image {path}") from exc
+        self._cache = _build_memmap_cache(self.root, self.samples, img_size) if in_memory else None
 
     def __len__(self):
         return len(self._cache) if self._cache is not None else len(self.samples)
@@ -276,16 +397,50 @@ def create_dataset(root, in_memory=False, **kwargs):
 
 
 class Loader:
-    """Grain loader with a timm-style ``len`` while preserving iterator controls."""
+    """Grain loader with a timm-style ``len`` and explicit worker cleanup."""
 
     def __init__(self, loader, num_records, batch_size, drop_remainder):
         self._loader = loader
+        self._prefetched_iterator = None
         self.num_records = num_records
         self.batch_size = batch_size
         self._drop = drop_remainder
 
+    def start_prefetch(self):
+        if self._prefetched_iterator is not None:
+            return
+        iterator = iter(self._loader)
+        start = getattr(iterator, "start_prefetch", None)
+        if start is not None:
+            start()
+        self._prefetched_iterator = iterator
+
     def __iter__(self):
-        return iter(self._loader)
+        iterator = self._prefetched_iterator
+        self._prefetched_iterator = None
+        if iterator is None:
+            iterator = iter(self._loader)
+        try:
+            while True:
+                yield next(iterator)
+        except StopIteration:
+            return
+        finally:
+            close = getattr(iterator, "close", None)
+            if close is None:
+                close = getattr(getattr(iterator, "_iterator", None), "close", None)
+            if close is not None:
+                close()
+
+    def close(self):
+        iterator = self._prefetched_iterator
+        self._prefetched_iterator = None
+        if iterator is not None:
+            close = getattr(iterator, "close", None)
+            if close is None:
+                close = getattr(getattr(iterator, "_iterator", None), "close", None)
+            if close is not None:
+                close()
 
     def __len__(self):
         quotient, remainder = divmod(self.num_records, self.batch_size)

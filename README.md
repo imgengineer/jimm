@@ -125,6 +125,10 @@ print(batch["image"].shape)  # (128, 224, 224, 3) float32
 print(batch["label"].shape)  # (128,) int32
 ```
 
+With `in_memory=True`, decoded images use a shared read-only cache under
+`~/.cache/jimm/image-cache` (override with `JIMM_CACHE_DIR`) so Grain workers
+reuse the same pages instead of copying the full image cache.
+
 ---
 
 ### 3. Distributed Training with SPMD & Optax

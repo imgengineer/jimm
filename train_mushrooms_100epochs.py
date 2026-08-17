@@ -32,10 +32,8 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
     )
     val_loader = create_loader(f"{data_dir}/val", batch_size=batch_size, img_size=img_size,
                                is_training=False, num_workers=4, seed=42, in_memory=True)
+    train_loader.start_prefetch()
     it = iter(train_loader)
-    start_prefetch = getattr(it, "start_prefetch", None)
-    if start_prefetch is not None:
-        start_prefetch()
 
     mixup = None
     if mixup_alpha > 0 or cutmix_alpha > 0:

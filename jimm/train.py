@@ -436,6 +436,9 @@ def main(argv=None):
                 f"{args.output}/{args.model}/epoch_{epoch}", model, optimizer,
                 epoch=epoch, wait=False)
 
+    train_loader.close()
+    if val_loader is not None:
+        val_loader.close()
     wait_for_checkpoints()
 
 

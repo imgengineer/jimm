@@ -402,12 +402,21 @@ class Loader:
     def __init__(self, loader, num_records, batch_size, drop_remainder):
         self._loader = loader
         self._prefetched_iterator = None
+        self._active_iterator = None
         self.num_records = num_records
         self.batch_size = batch_size
         self._drop = drop_remainder
 
+    @staticmethod
+    def _close_iterator(iterator):
+        close = getattr(iterator, "close", None)
+        if close is None:
+            close = getattr(getattr(iterator, "_iterator", None), "close", None)
+        if close is not None:
+            close()
+
     def start_prefetch(self):
-        if self._prefetched_iterator is not None:
+        if self._prefetched_iterator is not None or self._active_iterator is not None:
             return
         iterator = iter(self._loader)
         start = getattr(iterator, "start_prefetch", None)
@@ -420,27 +429,30 @@ class Loader:
         self._prefetched_iterator = None
         if iterator is None:
             iterator = iter(self._loader)
+        self._active_iterator = iterator
         try:
             while True:
                 yield next(iterator)
         except StopIteration:
             return
         finally:
-            close = getattr(iterator, "close", None)
-            if close is None:
-                close = getattr(getattr(iterator, "_iterator", None), "close", None)
-            if close is not None:
-                close()
+            if self._active_iterator is iterator:
+                self._active_iterator = None
+            self._close_iterator(iterator)
 
     def close(self):
-        iterator = self._prefetched_iterator
+        iterators = (self._prefetched_iterator, self._active_iterator)
         self._prefetched_iterator = None
-        if iterator is not None:
-            close = getattr(iterator, "close", None)
-            if close is None:
-                close = getattr(getattr(iterator, "_iterator", None), "close", None)
-            if close is not None:
-                close()
+        self._active_iterator = None
+        for iterator in iterators:
+            if iterator is not None:
+                self._close_iterator(iterator)
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            return
 
     def __len__(self):
         quotient, remainder = divmod(self.num_records, self.batch_size)

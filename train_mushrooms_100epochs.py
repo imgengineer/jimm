@@ -127,6 +127,8 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
                   f"(best: {best_val_acc*100:5.1f}% @ep{best_epoch}) "
                   f"[{epoch_time:.2f}s/ep]", flush=True)
 
+    train_loader.close()
+    val_loader.close()
     save_checkpoint(
         f"{out_dir}/{model_name}_final", model, opt, epoch=epochs,
         extra={"val_acc": val_acc, "best_val_acc": best_val_acc}, wait=False)

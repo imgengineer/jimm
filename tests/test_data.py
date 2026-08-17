@@ -468,3 +468,7 @@ def test_create_dataset_and_loader(temp_dataset):
         shard_options=shard_opt,
     )
     assert len(sharded_loader) == 3  # (24 // 2) // 4 = 3 batches on this shard
+    train_loader.close()
+    memory_loader.close()
+    val_loader.close()
+    sharded_loader.close()

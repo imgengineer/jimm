@@ -18,6 +18,7 @@ Examples:
       --dist-coordinator-address 192.168.1.100:12345 --dist-num-processes 2 --dist-process-id 0
 """
 import argparse
+import functools
 import os
 import time
 
@@ -133,23 +134,13 @@ def eval_step(model, images, labels, amp=False):
 
 
 def make_cached_train_step(model, optimizer, amp=False):
-    """Create an optimized train_step using nnx.cached_partial (eliminates Python graph traversal overhead)."""
-    if amp:
-        @nnx.jit(static_argnames=("smoothing",))
-        def _step(m, opt, img, lbl, smoothing=0.0):
-            return train_step(m, opt, img, lbl, smoothing=smoothing, amp=True)
-        return nnx.cached_partial(_step, model, optimizer)
-    return nnx.cached_partial(train_step, model, optimizer)
+    """Create one cached JIT train step with AMP bound at construction time."""
+    return nnx.cached_partial(functools.partial(train_step, amp=amp), model, optimizer)
 
 
 def make_cached_eval_step(model, amp=False):
-    """Create an optimized eval_step using nnx.cached_partial."""
-    if amp:
-        @nnx.jit
-        def _step(m, img, lbl):
-            return eval_step(m, img, lbl, amp=True)
-        return nnx.cached_partial(_step, model)
-    return nnx.cached_partial(eval_step, model)
+    """Create one cached JIT eval step with AMP bound at construction time."""
+    return nnx.cached_partial(functools.partial(eval_step, amp=amp), model)
 
 
 def main(argv=None):
@@ -250,6 +241,10 @@ def main(argv=None):
         gaussian_blur_prob=args.gaussian_blur_prob,
         num_workers=args.workers, seed=rank,
     )
+    it = iter(train_loader)
+    start_prefetch = getattr(it, "start_prefetch", None)
+    if start_prefetch is not None:
+        start_prefetch()
     steps_per_epoch = args.steps_per_epoch or max(1, len(train_loader))
 
     optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs,
@@ -273,11 +268,9 @@ def main(argv=None):
     cached_eval_step = make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
     model.train()
 
-    it = iter(train_loader)
     for epoch in range(args.epochs):
         t0 = time.time()
-        loss_sum = jnp.zeros(())
-        acc_sum = jnp.zeros(())
+        losses, accuracies = [], []
         for _ in range(steps_per_epoch):
             batch = next(it)
             images, labels = batch["image"], batch["label"]
@@ -288,31 +281,38 @@ def main(argv=None):
             labels = jax.make_array_from_process_local_data(train_label_sharding, labels)
             
             loss, acc = cached_train_step(images, labels, args.smoothing)
-            loss_sum = loss_sum + loss
-            acc_sum = acc_sum + acc
+            losses.append(loss)
+            accuracies.append(acc)
 
         try:
-            loss_avg = float(loss_sum) / steps_per_epoch
-            acc_avg = float(acc_sum) / steps_per_epoch
+            loss_avg, acc_avg = (
+                float(value)
+                for value in jax.device_get((
+                    jnp.mean(jnp.stack(losses)),
+                    jnp.mean(jnp.stack(accuracies)),
+                ))
+            )
         except Exception:
             loss_avg, acc_avg = 0.0, 0.0
         msg = f"epoch {epoch:>3}: loss {loss_avg:.4f} acc {acc_avg:.4f} ({time.time()-t0:.1f}s)"
         if val_loader is not None and cached_eval_step is not None:
             # Every host must execute the SPMD validation step; only rank 0 reports it.
-            v_loss_sum = jnp.zeros(())
-            v_acc_sum = jnp.zeros(())
-            n = 0
+            v_losses, v_accuracies = [], []
             for batch in val_loader:
                 v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
                 v_labels = jax.make_array_from_process_local_data(eval_label_sharding, batch["label"])
                 l, a = cached_eval_step(v_images, v_labels)
-                v_loss_sum = v_loss_sum + l
-                v_acc_sum = v_acc_sum + a
-                n += 1
+                v_losses.append(l)
+                v_accuracies.append(a)
             if rank == 0:
                 try:
-                    v_loss_avg = float(v_loss_sum) / max(n, 1)
-                    v_acc_avg = float(v_acc_sum) / max(n, 1)
+                    v_loss_avg, v_acc_avg = (
+                        float(value)
+                        for value in jax.device_get((
+                            jnp.mean(jnp.stack(v_losses)),
+                            jnp.mean(jnp.stack(v_accuracies)),
+                        ))
+                    )
                 except Exception:
                     v_loss_avg, v_acc_avg = 0.0, 0.0
                 msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"

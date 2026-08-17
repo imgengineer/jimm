@@ -32,6 +32,10 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
     )
     val_loader = create_loader(f"{data_dir}/val", batch_size=batch_size, img_size=img_size,
                                is_training=False, num_workers=4, seed=42, in_memory=True)
+    it = iter(train_loader)
+    start_prefetch = getattr(it, "start_prefetch", None)
+    if start_prefetch is not None:
+        start_prefetch()
 
     mixup = None
     if mixup_alpha > 0 or cutmix_alpha > 0:
@@ -60,11 +64,9 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
     val_loss, val_acc = 0.0, 0.0
     t_start = time.time()
 
-    it = iter(train_loader)
     for epoch in range(1, epochs + 1):
         t0 = time.time()
-        loss_sum = jnp.zeros(())
-        acc_sum = jnp.zeros(())
+        losses, accuracies = [], []
 
         for _ in range(steps_per_epoch):
             batch = next(it)
@@ -75,30 +77,30 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
             labels = jnp.asarray(labels)
 
             l, a = cached_train_step(images, labels, smoothing)
-            loss_sum = loss_sum + l
-            acc_sum = acc_sum + a
+            losses.append(l)
+            accuracies.append(a)
 
         try:
-            train_loss = float(loss_sum) / max(steps_per_epoch, 1)
-            train_acc = float(acc_sum) / max(steps_per_epoch, 1)
+            train_loss = float(jnp.mean(jnp.stack(losses)))
+            train_acc = float(jnp.mean(jnp.stack(accuracies)))
         except Exception:
             train_loss, train_acc = 0.0, 0.0
 
         # Validation with jimm.data loader
-        v_loss_sum = jnp.zeros(())
-        v_acc_sum = jnp.zeros(())
+        v_losses, v_accuracies = [], []
         n_val = 0
         for v_batch in val_loader:
             v_images = jnp.asarray(v_batch["image"])
             v_labels = jnp.asarray(v_batch["label"])
             l, a = cached_eval_step(v_images, v_labels)
-            v_loss_sum = v_loss_sum + l * len(v_labels)
-            v_acc_sum = v_acc_sum + a * len(v_labels)
-            n_val += len(v_labels)
+            weight = len(v_labels)
+            v_losses.append(l * weight)
+            v_accuracies.append(a * weight)
+            n_val += weight
 
         try:
-            val_loss = float(v_loss_sum) / max(n_val, 1)
-            val_acc = float(v_acc_sum) / max(n_val, 1)
+            val_loss = float(jnp.sum(jnp.stack(v_losses))) / max(n_val, 1)
+            val_acc = float(jnp.sum(jnp.stack(v_accuracies))) / max(n_val, 1)
         except Exception:
             val_loss, val_acc = 0.0, 0.0
         epoch_time = time.time() - t0

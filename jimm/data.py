@@ -276,7 +276,7 @@ def create_dataset(root, in_memory=False, **kwargs):
 
 
 class Loader:
-    """Thin wrapper over ``grain.DataLoader`` with a timm-style ``len``."""
+    """Grain loader with a timm-style ``len`` while preserving iterator controls."""
 
     def __init__(self, loader, num_records, batch_size, drop_remainder):
         self._loader = loader
@@ -285,12 +285,7 @@ class Loader:
         self._drop = drop_remainder
 
     def __iter__(self):
-        iterator = iter(self._loader)
-        while True:
-            try:
-                yield next(iterator)
-            except StopIteration:
-                return
+        return iter(self._loader)
 
     def __len__(self):
         quotient, remainder = divmod(self.num_records, self.batch_size)

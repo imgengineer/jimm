@@ -215,13 +215,17 @@ def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
 
 
 def random_flip_left_right(image, prob=0.5):
-    array = jnp.asarray(_float_image(image), dtype=jnp.float32)
-    return _uint8_image(pix.random_flip_left_right(_key(), array, probability=prob))
+    image = _rgb(image)
+    if prob <= 0 or np.random.rand() >= prob:
+        return image
+    return cv2.flip(image, 1)
 
 
 def random_flip_up_down(image, prob=0.0):
-    array = jnp.asarray(_float_image(image), dtype=jnp.float32)
-    return _uint8_image(pix.random_flip_up_down(_key(), array, probability=prob))
+    image = _rgb(image)
+    if prob <= 0 or np.random.rand() >= prob:
+        return image
+    return cv2.flip(image, 0)
 
 
 def random_grayscale(image, prob=0.0):

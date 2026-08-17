@@ -108,7 +108,7 @@ train_loader = create_loader(
     auto_augment="rand-m9-n2",
     grayscale_prob=0.1,
     gaussian_blur_prob=0.1,
-    num_workers=8
+    num_workers=4
 )
 
 val_loader = create_loader(
@@ -116,7 +116,7 @@ val_loader = create_loader(
     batch_size=128,
     img_size=224,
     is_training=False,
-    num_workers=8
+    num_workers=4
 )
 
 # Fetch a batch

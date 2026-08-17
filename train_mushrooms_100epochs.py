@@ -28,10 +28,10 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
     train_loader = create_loader(
         f"{data_dir}/train", batch_size=batch_size, img_size=img_size,
         is_training=True, auto_augment=auto_augment,
-        num_workers=8, seed=42, in_memory=True,
+        num_workers=4, seed=42, in_memory=True,
     )
     val_loader = create_loader(f"{data_dir}/val", batch_size=batch_size, img_size=img_size,
-                               is_training=False, num_workers=8, seed=42, in_memory=True)
+                               is_training=False, num_workers=4, seed=42, in_memory=True)
 
     mixup = None
     if mixup_alpha > 0 or cutmix_alpha > 0:

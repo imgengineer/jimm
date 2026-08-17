@@ -94,7 +94,7 @@ print("Pooled feature dimension:", pooled_feats.shape[-1]) # 768
 
 ### 2. High-Performance Data Pipeline (Grain)
 
-`jimm.data` provides a multi-threaded Grain pipeline reading standard `ImageFolder` directories:
+`jimm.data` provides a Grain pipeline reading standard `ImageFolder` directories. Images are decoded with OpenCV; JAX-native color, crop/pad, flip, blur, hue, saturation, and solarization use `dm_pix`:
 
 ```python
 from jimm.data import create_loader
@@ -105,6 +105,9 @@ train_loader = create_loader(
     batch_size=128,
     img_size=224,
     is_training=True,
+    auto_augment="rand-m9-n2",
+    grayscale_prob=0.1,
+    gaussian_blur_prob=0.1,
     num_workers=8
 )
 

@@ -1,24 +1,30 @@
 """Unit tests for jimm.data."""
-import io
 import os
 import shutil
 import tempfile
 from pathlib import Path
 
+import cv2  # pyright: ignore[reportMissingImports]
 import grain.python as grain
+import jimm.augment as augment_module
 import jimm.data as data_module
 import numpy as np
 import pytest
-from PIL import Image
 
 from jimm.data import (
     ImageFolder,
     MixupCutmix,
     _DecodeTransform,
+    build_auto_augment,
+    center_crop_or_pad,
     color_jitter,
     create_dataset,
     create_loader,
+    gaussian_blur,
     random_erasing,
+    random_flip_left_right,
+    random_flip_up_down,
+    random_grayscale,
     random_resized_crop,
 )
 
@@ -30,8 +36,11 @@ def temp_dataset():
         for cls in ["cat", "dog", "bird"]:
             os.makedirs(f"{root}/{split}/{cls}", exist_ok=True)
             for i in range(8):
-                img = Image.fromarray(np.random.randint(0, 255, (48, 48, 3), dtype=np.uint8))
-                img.save(f"{root}/{split}/{cls}/img_{i}.png")
+                img = np.random.randint(0, 255, (48, 48, 3), dtype=np.uint8)
+                cv2.imwrite(
+                    f"{root}/{split}/{cls}/img_{i}.png",
+                    cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
+                )
     yield root
     shutil.rmtree(root, ignore_errors=True)
 
@@ -57,22 +66,36 @@ def test_image_folder(temp_dataset):
 
 
 def test_augmentations(monkeypatch):
-    img = Image.fromarray(np.arange(48 * 48 * 3, dtype=np.uint8).reshape(48, 48, 3))
+    img = np.arange(48 * 48 * 3, dtype=np.uint8).reshape(48, 48, 3)
     cropped = random_resized_crop(img, size=16, scale=(1.0, 1.0), ratio=(1.0, 1.0))
-    assert cropped.size == (16, 16)
+    assert cropped.shape[:2] == (16, 16)
 
     # Invalid crop ranges use the resize fallback instead of producing an invalid crop.
     fallback = random_resized_crop(img, size=16, scale=(2.0, 2.0), ratio=(1.0, 1.0))
-    assert fallback.size == (16, 16)
+    assert fallback.shape[:2] == (16, 16)
 
     monkeypatch.setattr(np.random, "rand", lambda: 0.0)
     jittered = color_jitter(img, brightness=0.2, contrast=0.2, saturation=0.2)
-    assert jittered.size == img.size
+    assert jittered.shape == img.shape
 
     array = np.ones((16, 16, 3), dtype=np.float32)
     erased = random_erasing(array, prob=1.0, sl=0.25, sh=0.25, r1=1.0)
     assert erased.shape == array.shape
     assert np.any(erased == 0.0)
+
+
+def test_dm_pix_augmentations():
+    img = np.full((32, 32, 3), 128, dtype=np.uint8)
+    assert random_flip_left_right(img, prob=1.0).shape == img.shape
+    assert random_flip_up_down(img, prob=1.0).shape == img.shape
+    assert random_grayscale(img, prob=1.0).shape == img.shape
+    assert gaussian_blur(img, prob=1.0, sigma=(0.5, 0.5)).shape == img.shape
+    assert center_crop_or_pad(img, 16).shape[:2] == (16, 16)
+
+    for config in ("v0", "original", "3a", "rand-m2-n1", "augmix-m2-w2-d1", "trivialaugment"):
+        transform = build_auto_augment(config)
+        assert transform is not None
+        assert transform(img).shape == img.shape
 
 
 def test_mixup_cutmix(monkeypatch):
@@ -84,27 +107,30 @@ def test_mixup_cutmix(monkeypatch):
 
     random_values = iter([0.0, 0.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    mixed, mixed_labels = MixupCutmix(mixup_alpha=1.0, cutmix_alpha=0.0)(images, labels)
+    mixed, mixed_labels = MixupCutmix(
+        mixup_alpha=1.0, cutmix_alpha=0.0, num_classes=2)(images, labels)
     assert mixed.shape == images.shape
-    assert mixed_labels is labels
+    assert mixed_labels.shape == (2, 2)
+    assert np.allclose(mixed_labels.sum(axis=1), 1.0)
     assert np.any((mixed > 0.0) & (mixed < 1.0))
 
     random_values = iter([0.0, 1.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    cutmixed, cutmix_labels = MixupCutmix(mixup_alpha=1.0, cutmix_alpha=1.0)(images, labels)
+    cutmixed, cutmix_labels = MixupCutmix(
+        mixup_alpha=1.0, cutmix_alpha=1.0, num_classes=2)(images, labels)
     assert cutmixed.shape == images.shape
-    assert cutmix_labels is labels
+    assert cutmix_labels.shape == (2, 2)
 
     random_values = iter([1.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    unchanged, unchanged_labels = MixupCutmix(prob=0.0)(images, labels)
+    unchanged, unchanged_labels = MixupCutmix(prob=0.0, num_classes=2)(images, labels)
     assert unchanged is images
     assert unchanged_labels is labels
 
 
 def test_data_error_paths(temp_dataset, monkeypatch):
     root = Path(temp_dataset) / "train"
-    img = Image.new("RGB", (16, 16), color="white")
+    img = np.full((16, 16, 3), 255, dtype=np.uint8)
 
     assert data_module._is_within(root, root / "cat")
     assert not data_module._is_within(root, root.parent)
@@ -113,14 +139,13 @@ def test_data_error_paths(temp_dataset, monkeypatch):
         raise ValueError("synthetic failure")
 
     with monkeypatch.context() as mp:
-        mp.setattr(data_module.math, "sqrt", fail)
-        assert data_module.random_resized_crop(img, size=8).size == (8, 8)
+        mp.setattr(augment_module.math, "sqrt", fail)
+        assert data_module.random_resized_crop(img, size=8).shape[:2] == (8, 8)
         erased = data_module.random_erasing(np.ones((8, 8, 3), dtype=np.float32), prob=1.0)
         assert np.array_equal(erased, np.ones((8, 8, 3), dtype=np.float32))
 
     monkeypatch.setattr(np.random, "rand", lambda: 0.0)
-    monkeypatch.setattr(np.random, "uniform", fail)
-    assert data_module.color_jitter(img).size == img.size
+    assert data_module.color_jitter(img).shape == img.shape
 
     with pytest.raises(ValueError, match="no class subdirectories"):
         ImageFolder(Path(temp_dataset) / "missing")
@@ -150,36 +175,34 @@ def test_data_error_paths(temp_dataset, monkeypatch):
 
     images = np.zeros((2, 8, 8, 3), dtype=np.float32)
     labels = np.array([0, 1], dtype=np.int32)
-    monkeypatch.setattr(np.random, "beta", fail)
+    monkeypatch.setattr(np.random, "beta", lambda *_: 0.5)
     monkeypatch.setattr(np.random, "permutation", lambda _: np.array([1, 0]))
 
     random_values = iter([0.0, 0.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    assert MixupCutmix(mixup_alpha=1.0, cutmix_alpha=0.0)(images, labels)[0].shape == images.shape
+    assert MixupCutmix(
+        mixup_alpha=1.0, cutmix_alpha=0.0, num_classes=2)(images, labels)[0].shape == images.shape
 
     random_values = iter([0.0, 1.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    assert MixupCutmix(mixup_alpha=1.0, cutmix_alpha=1.0)(images, labels)[0].shape == images.shape
-
-    with monkeypatch.context() as mp:
-        mp.setattr("builtins.round", fail)
-        random_values = iter([0.0, 1.0])
-        mp.setattr(np.random, "rand", lambda: next(random_values))
-        assert MixupCutmix(mixup_alpha=1.0, cutmix_alpha=1.0)(images, labels)[0].shape == images.shape
+    assert MixupCutmix(
+        mixup_alpha=1.0, cutmix_alpha=1.0, num_classes=2)(images, labels)[0].shape == images.shape
 
     random_values = iter([0.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    unchanged, unchanged_labels = MixupCutmix(mixup_alpha=0.0, cutmix_alpha=0.0)(images, labels)
+    unchanged, unchanged_labels = MixupCutmix(
+        mixup_alpha=0.0, cutmix_alpha=0.0, num_classes=2)(images, labels)
     assert unchanged is images
     assert unchanged_labels is labels
 
 
 def test_decode_transform():
     # 1. Create a test sample
-    img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    sample = {"image": buf.getvalue(), "label": 2}
+    img = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
+    ok, encoded = cv2.imencode(
+        ".png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    assert ok
+    sample = {"image": encoded.tobytes(), "label": 2}
 
     # 2. Eval transform (center crop)
     t_eval = _DecodeTransform(img_size=32, is_training=False)
@@ -194,14 +217,14 @@ def test_decode_transform():
     assert list(out_train["image"].shape) == [32, 32, 3]
     assert out_train["image"].dtype == np.float32
 
-    # 4. Array/PIL inputs and disabled optional augmentations.
+    # 4. Array inputs and disabled optional augmentations.
     t_plain = _DecodeTransform(
         img_size=32, is_training=True, hflip=0.0,
         color_jitter_prob=0.0, re_prob=0.0,
     )
     out_array = t_plain.map({"image": np.asarray(img), "label": 1})
-    out_pil = t_plain.map({"image": img, "label": 1})
-    assert out_array["image"].shape == out_pil["image"].shape == (32, 32, 3)
+    out_array2 = t_plain.map({"image": img, "label": 1})
+    assert out_array["image"].shape == out_array2["image"].shape == (32, 32, 3)
 
 
 def test_create_dataset_and_loader(temp_dataset):

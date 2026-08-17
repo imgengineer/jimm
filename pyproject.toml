@@ -9,8 +9,9 @@ dependencies = [
   "flax",
   "optax",
   "orbax-checkpoint",
-  "pillow",
   "numpy",
+  "dm-pix>=0.4.5",
+  "opencv-python-headless>=5.0.0.93",
 ]
 
 [build-system]

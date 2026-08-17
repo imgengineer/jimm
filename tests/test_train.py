@@ -3,12 +3,12 @@ import os
 import shutil
 import tempfile
 
+import cv2  # pyright: ignore[reportMissingImports]
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
-from PIL import Image
 
 from jimm.registry import create_model
 from jimm.train import (
@@ -31,8 +31,11 @@ def temp_dataset():
         for cls in ["cat", "dog"]:
             os.makedirs(f"{root}/{split}/{cls}", exist_ok=True)
             for i in range(4):
-                img = Image.fromarray(np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8))
-                img.save(f"{root}/{split}/{cls}/img_{i}.png")
+                img = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
+                cv2.imwrite(
+                    f"{root}/{split}/{cls}/img_{i}.png",
+                    cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
+                )
     yield root
     shutil.rmtree(root, ignore_errors=True)
 
@@ -47,6 +50,10 @@ def test_cross_entropy():
     loss_smooth = cross_entropy(logits, labels, smoothing=0.1)
     assert float(loss_smooth) > 0.0
     assert float(loss_smooth) != float(loss_plain)
+
+    soft_labels = nnx.one_hot(labels, 3).astype(jnp.float32)
+    loss_soft = cross_entropy(logits, soft_labels)
+    assert float(loss_soft) > 0.0
 
 
 def test_make_optimizer():

@@ -28,7 +28,7 @@ import optax
 from flax import nnx
 
 from .checkpoint import save_checkpoint
-from .data import create_loader
+from .data import MixupCutmix, create_loader
 from .registry import create_model
 
 
@@ -66,8 +66,11 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
 
 
 def cross_entropy(logits, labels, smoothing=0.0):
-    one_hot = nnx.one_hot(labels, logits.shape[-1])
-    one_hot = one_hot * (1 - smoothing) + smoothing / logits.shape[-1]
+    # Mixup/CutMix supplies soft one-hot targets; ordinary batches use class ids.
+    one_hot = labels if labels.ndim == logits.ndim else nnx.one_hot(labels, logits.shape[-1])
+    one_hot = one_hot.astype(logits.dtype)
+    if labels.ndim != logits.ndim:
+        one_hot = one_hot * (1 - smoothing) + smoothing / logits.shape[-1]
     return optax.softmax_cross_entropy(logits, one_hot).mean()
 
 
@@ -148,6 +151,15 @@ def main(argv=None):
                    help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)")
     p.add_argument("--amp", action="store_true", default=True,
                    help="enable AMP half-precision (bfloat16) compute on Tensor Cores (default: True)")
+    p.add_argument("--auto-augment", default=None,
+                   help="timm policy: v0, original, rand-m9-n2, augmix-m3-w3-d-1, or trivialaugment")
+    p.add_argument("--vflip", type=float, default=0.0)
+    p.add_argument("--grayscale-prob", type=float, default=0.0)
+    p.add_argument("--gaussian-blur-prob", type=float, default=0.0)
+    p.add_argument("--mixup-alpha", type=float, default=0.0)
+    p.add_argument("--cutmix-alpha", type=float, default=0.0)
+    p.add_argument("--mixup-prob", type=float, default=1.0)
+    p.add_argument("--mixup-mode", choices=("batch", "pair", "elem"), default="batch")
     
     # Multi-node / distributed options
     p.add_argument("--dist-coordinator-address", type=str, default=None,
@@ -175,11 +187,24 @@ def main(argv=None):
         print(f"  Architecture:        {args.model} (classes: {args.num_classes})")
         print(f"=======================================")
 
+    mixup = None
+    if args.mixup_alpha > 0 or args.cutmix_alpha > 0:
+        mixup = MixupCutmix(
+            mixup_alpha=args.mixup_alpha,
+            cutmix_alpha=args.cutmix_alpha,
+            prob=args.mixup_prob,
+            mode=args.mixup_mode,
+            label_smoothing=args.smoothing,
+            num_classes=args.num_classes,
+        )
+
     # 2. Setup 1D Data-Parallel Mesh & SPMD NamedSharding
     mesh = jax.sharding.Mesh(total_devices, ('data',))
     P = jax.sharding.PartitionSpec
     data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
-    label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
+    train_label_sharding = jax.sharding.NamedSharding(
+        mesh, P('data', None) if mixup is not None else P('data',))
+    eval_label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
 
     # 3. Instantiate model and data pipeline (loader first: step count drives the LR schedule)
     model = create_model(args.model, num_classes=args.num_classes,
@@ -192,9 +217,15 @@ def main(argv=None):
             f"{len(local_devices)} for SPMD data sharding (each device gets "
             f"batch_size / num_devices examples)")
 
-    train_loader = create_loader(f"{args.data_dir}/train", args.batch_size,
-                                 img_size=args.img_size, is_training=True,
-                                 num_workers=args.workers, seed=rank)
+    train_loader = create_loader(
+        f"{args.data_dir}/train", args.batch_size,
+        img_size=args.img_size, is_training=True,
+        auto_augment=args.auto_augment,
+        vflip=args.vflip,
+        grayscale_prob=args.grayscale_prob,
+        gaussian_blur_prob=args.gaussian_blur_prob,
+        num_workers=args.workers, seed=rank,
+    )
     steps_per_epoch = args.steps_per_epoch or max(1, len(train_loader))
 
     optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs,
@@ -225,9 +256,12 @@ def main(argv=None):
         acc_sum = jnp.zeros(())
         for _ in range(steps_per_epoch):
             batch = next(it)
+            images, labels = batch["image"], batch["label"]
+            if mixup is not None:
+                images, labels = mixup(images, labels)
             # Distribute process-local batch across devices using SPMD data sharding
-            images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
-            labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
+            images = jax.make_array_from_process_local_data(data_sharding, images)
+            labels = jax.make_array_from_process_local_data(train_label_sharding, labels)
             
             loss, acc = cached_train_step(images, labels, args.smoothing)
             loss_sum = loss_sum + loss
@@ -246,7 +280,7 @@ def main(argv=None):
                 n = 0
                 for batch in val_loader:
                     v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
-                    v_labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
+                    v_labels = jax.make_array_from_process_local_data(eval_label_sharding, batch["label"])
                     l, a = cached_eval_step(v_images, v_labels)
                     v_loss_sum = v_loss_sum + l
                     v_acc_sum = v_acc_sum + a

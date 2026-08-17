@@ -1,11 +1,12 @@
 """High-performance 100-Epoch training using jimm.data and native AMP mixed precision."""
 import time
 import json
+import numpy as np
 import jax.numpy as jnp
 from flax import nnx
 
 import jimm
-from jimm.data import create_loader
+from jimm.data import MixupCutmix, create_loader
 from jimm.checkpoint import save_checkpoint
 from jimm.train import make_optimizer, make_cached_train_step, make_cached_eval_step
 
@@ -13,7 +14,9 @@ from jimm.train import make_optimizer, make_cached_train_step, make_cached_eval_
 def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
                        epochs: int = 100, batch_size: int = 256, img_size: int = 224,
                        lr: float = 2e-3, weight_decay: float = 0.01, smoothing: float = 0.1,
-                       amp: bool = True, out_dir: str = "./checkpoints"):
+                       amp: bool = True, out_dir: str = "./checkpoints",
+                       auto_augment: str | None = None, mixup_alpha: float = 0.0,
+                       cutmix_alpha: float = 0.0):
     print(f"\n=======================================================", flush=True)
     print(f"  Training {model_name} (100 Epochs, AMP={'bfloat16' if amp else 'FP32'}, bs={batch_size}, lr={lr})", flush=True)
     print(f"=======================================================", flush=True)
@@ -21,11 +24,23 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
     # 1. Create Model
     model = jimm.create_model(model_name, num_classes=num_classes, rngs=nnx.Rngs(0))
 
-    # 2. Use jimm.data.create_loader with in_memory=True for zero-disk-IO fast streaming
-    train_loader = create_loader(f"{data_dir}/train", batch_size=batch_size, img_size=img_size,
-                                 is_training=True, num_workers=0, seed=42, in_memory=True)
+    # 2. Use dm_pix-backed jimm.data Grain transforms with original-resolution RAM caching.
+    train_loader = create_loader(
+        f"{data_dir}/train", batch_size=batch_size, img_size=img_size,
+        is_training=True, auto_augment=auto_augment,
+        num_workers=0, seed=42, in_memory=True,
+    )
     val_loader = create_loader(f"{data_dir}/val", batch_size=batch_size, img_size=img_size,
                                is_training=False, num_workers=0, seed=42, in_memory=True)
+
+    mixup = None
+    if mixup_alpha > 0 or cutmix_alpha > 0:
+        mixup = MixupCutmix(
+            mixup_alpha=mixup_alpha,
+            cutmix_alpha=cutmix_alpha,
+            label_smoothing=smoothing,
+            num_classes=num_classes,
+        )
 
     steps_per_epoch = len(train_loader)
     opt = make_optimizer(model, lr=lr, weight_decay=weight_decay, epochs=epochs,
@@ -53,8 +68,11 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
 
         for _ in range(steps_per_epoch):
             batch = next(it)
-            images = jnp.asarray(batch["image"])
-            labels = jnp.asarray(batch["label"])
+            images, labels = batch["image"], batch["label"]
+            if mixup is not None:
+                images, labels = mixup(np.asarray(images), np.asarray(labels))
+            images = jnp.asarray(images)
+            labels = jnp.asarray(labels)
 
             l, a = cached_train_step(images, labels, smoothing)
             loss_sum = loss_sum + l
@@ -136,8 +154,11 @@ def main():
 
     all_results = {}
     for name, lr, wd in models_config:
-        res = train_single_model(name, data_dir, num_classes=9, epochs=100, batch_size=256,
-                                 lr=lr, weight_decay=wd, amp=True, out_dir="./checkpoints")
+        res = train_single_model(
+            name, data_dir, num_classes=9, epochs=100, batch_size=256,
+            lr=lr, weight_decay=wd, amp=True, out_dir="./checkpoints",
+            auto_augment="rand-m9-n2", mixup_alpha=0.8, cutmix_alpha=1.0,
+        )
         all_results[name] = res
 
     try:

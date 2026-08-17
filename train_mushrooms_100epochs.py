@@ -7,7 +7,7 @@ from flax import nnx
 
 import jimm
 from jimm.data import MixupCutmix, create_loader
-from jimm.checkpoint import save_checkpoint
+from jimm.checkpoint import save_checkpoint, wait_for_checkpoints
 from jimm.train import make_optimizer, make_cached_train_step, make_cached_eval_step
 
 
@@ -107,8 +107,9 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_epoch = epoch
-            save_checkpoint(f"{out_dir}/{model_name}_best", model, opt, epoch=epoch,
-                            extra={"val_acc": val_acc, "train_acc": train_acc})
+            save_checkpoint(
+                f"{out_dir}/{model_name}_best", model, opt, epoch=epoch,
+                extra={"val_acc": val_acc, "train_acc": train_acc}, wait=False)
 
         history.append({
             "epoch": epoch,
@@ -126,8 +127,10 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
                   f"(best: {best_val_acc*100:5.1f}% @ep{best_epoch}) "
                   f"[{epoch_time:.2f}s/ep]", flush=True)
 
-    save_checkpoint(f"{out_dir}/{model_name}_final", model, opt, epoch=epochs,
-                    extra={"val_acc": val_acc, "best_val_acc": best_val_acc})
+    save_checkpoint(
+        f"{out_dir}/{model_name}_final", model, opt, epoch=epochs,
+        extra={"val_acc": val_acc, "best_val_acc": best_val_acc}, wait=False)
+    wait_for_checkpoints()
     total_time = time.time() - t_start
     print(f"\n✓ Completed {model_name} in {total_time:.1f}s ({total_time/60:.2f} mins). "
           f"Best Val Acc: {best_val_acc*100:.2f}% (Epoch {best_epoch})\n", flush=True)

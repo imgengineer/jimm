@@ -227,10 +227,11 @@ loss, acc = train_step(model, optimizer, images, labels, smoothing=0.1)
 ### 4. Checkpoint Save and Restore (Orbax)
 
 ```python
-from jimm.checkpoint import save_checkpoint, load_checkpoint
+from jimm.checkpoint import load_checkpoint, save_checkpoint, wait_for_checkpoints
 
-# Save model and optimizer
-save_checkpoint("./checkpoints/epoch_1", model, optimizer, epoch=1)
+# Save model and optimizer without blocking the training loop
+save_checkpoint("./checkpoints/epoch_1", model, optimizer, epoch=1, wait=False)
+wait_for_checkpoints()
 
 # In-place restore into a fresh model
 new_model = jimm.create_model("resnet50", num_classes=10, rngs=nnx.Rngs(0))

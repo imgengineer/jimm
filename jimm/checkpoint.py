@@ -5,7 +5,7 @@ import os
 import orbax.checkpoint as ocp
 from flax import nnx
 
-__all__ = ["save_checkpoint", "load_checkpoint"]
+__all__ = ["save_checkpoint", "load_checkpoint", "wait_for_checkpoints"]
 
 _checkpointer = ocp.StandardCheckpointer()  # module-level: avoids GC before async write finishes
 
@@ -19,8 +19,8 @@ def _item(model, optimizer, epoch, extra):
     return item
 
 
-def save_checkpoint(path, model, optimizer=None, epoch=0, extra=None):
-    """Save model (and optimizer) state to `path`. Returns path."""
+def save_checkpoint(path, model, optimizer=None, epoch=0, extra=None, wait=True):
+    """Save model (and optimizer) state to `path`; optionally return immediately."""
     path = os.path.abspath(path)
     try:
         os.makedirs(path, exist_ok=True)
@@ -30,8 +30,14 @@ def save_checkpoint(path, model, optimizer=None, epoch=0, extra=None):
         if exc.errno != errno.EEXIST:
             raise
     _checkpointer.save(path, _item(model, optimizer, epoch, extra), force=True)
-    _checkpointer.wait_until_finished()
+    if wait:
+        _checkpointer.wait_until_finished()
     return path
+
+
+def wait_for_checkpoints():
+    """Block until all asynchronous checkpoint writes finish and surface errors."""
+    _checkpointer.wait_until_finished()
 
 
 def _fix_int_keys(d):

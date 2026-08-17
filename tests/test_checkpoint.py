@@ -8,7 +8,7 @@ import numpy as np
 import optax
 from flax import nnx
 
-from jimm.checkpoint import load_checkpoint, save_checkpoint
+from jimm.checkpoint import load_checkpoint, save_checkpoint, wait_for_checkpoints
 from jimm.registry import create_model
 
 
@@ -31,6 +31,7 @@ def test_checkpoint_save_and_load_roundtrip():
             optimizer=opt,
             epoch=5,
             extra={"val_acc": 0.95, "best_epoch": 5},
+            wait=False,
         )
         assert saved_path == ckpt_dir
 
@@ -59,6 +60,7 @@ def test_checkpoint_save_and_load_roundtrip():
         assert epoch2 == 5
         out_fresh = np.asarray(m_fresh(x))
         np.testing.assert_allclose(out_fresh, out_before, rtol=1e-5, atol=1e-5)
+        wait_for_checkpoints()
 
     finally:
         shutil.rmtree(root, ignore_errors=True)

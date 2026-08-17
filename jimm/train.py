@@ -29,7 +29,7 @@ import numpy as np
 import optax
 from flax import nnx
 
-from .checkpoint import save_checkpoint
+from .checkpoint import save_checkpoint, wait_for_checkpoints
 from .data import MixupCutmix, create_loader
 from .registry import create_model
 
@@ -432,7 +432,11 @@ def main(argv=None):
         if rank == 0:
             print(msg, flush=True)
             # Checkpoint only from primary host (rank 0).
-            save_checkpoint(f"{args.output}/{args.model}/epoch_{epoch}", model, optimizer, epoch=epoch)
+            save_checkpoint(
+                f"{args.output}/{args.model}/epoch_{epoch}", model, optimizer,
+                epoch=epoch, wait=False)
+
+    wait_for_checkpoints()
 
 
 if __name__ == "__main__":

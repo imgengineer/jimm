@@ -1,6 +1,7 @@
 """High-performance 100-Epoch training using jimm.data and native AMP mixed precision."""
 import time
 import json
+import os
 import numpy as np
 import jax.numpy as jnp
 from flax import nnx
@@ -16,7 +17,8 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
                        lr: float = 2e-3, weight_decay: float = 0.01, smoothing: float = 0.1,
                        amp: bool = True, out_dir: str = "./checkpoints",
                        auto_augment: str | None = None, mixup_alpha: float = 0.0,
-                       cutmix_alpha: float = 0.0):
+                       cutmix_alpha: float = 0.0,
+                       augmentation_backend: str = "opencv"):
     print(f"\n=======================================================", flush=True)
     print(f"  Training {model_name} (100 Epochs, AMP={'bfloat16' if amp else 'FP32'}, bs={batch_size}, lr={lr})", flush=True)
     print(f"=======================================================", flush=True)
@@ -24,14 +26,18 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
     # 1. Create Model
     model = jimm.create_model(model_name, num_classes=num_classes, rngs=nnx.Rngs(0))
 
-    # 2. Use OpenCV-backed jimm.data Grain transforms with original-resolution RAM caching.
+    # 2. Use configurable jimm.data transforms with original-resolution RAM caching.
     train_loader = create_loader(
         f"{data_dir}/train", batch_size=batch_size, img_size=img_size,
         is_training=True, auto_augment=auto_augment,
+        augmentation_backend=augmentation_backend,
         num_workers=0, seed=42, in_memory=True,
     )
-    val_loader = create_loader(f"{data_dir}/val", batch_size=batch_size, img_size=img_size,
-                               is_training=False, num_workers=0, seed=42, in_memory=True)
+    val_loader = create_loader(
+        f"{data_dir}/val", batch_size=batch_size, img_size=img_size,
+        is_training=False, augmentation_backend=augmentation_backend,
+        num_workers=0, seed=42, in_memory=True,
+    )
 
     mixup = None
     if mixup_alpha > 0 or cutmix_alpha > 0:
@@ -152,12 +158,14 @@ def main():
         ("convnext_tiny", 1e-3, 0.05),
     ]
 
+    augmentation_backend = os.environ.get("JIMM_AUGMENTATION_BACKEND", "opencv")
     all_results = {}
     for name, lr, wd in models_config:
         res = train_single_model(
             name, data_dir, num_classes=9, epochs=100, batch_size=256,
             lr=lr, weight_decay=wd, amp=True, out_dir="./checkpoints",
             auto_augment="rand-m9-n2", mixup_alpha=0.8, cutmix_alpha=1.0,
+            augmentation_backend=augmentation_backend,
         )
         all_results[name] = res
 

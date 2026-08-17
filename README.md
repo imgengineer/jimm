@@ -125,6 +125,27 @@ print(batch["image"].shape)  # (128, 224, 224, 3) float32
 print(batch["label"].shape)  # (128,) int32
 ```
 
+For the official AlbumentationsX backend, install a matching PyTorch build
+first, then the optional profile. AlbumentationsX is AGPL-3.0-only:
+
+```bash
+# Install the PyTorch build appropriate for the host, then:
+uv sync --extra albumentationsx
+```
+
+```python
+train_loader = create_loader(
+    root="/path/to/dataset/train",
+    batch_size=128,
+    img_size=224,
+    is_training=True,
+    augmentation_backend="albumentationsx",
+)
+```
+
+The default remains the lightweight OpenCV backend when the optional profile is
+not installed.
+
 ---
 
 ### 3. Distributed Training with SPMD & Optax

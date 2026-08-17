@@ -15,6 +15,13 @@ from .augment import (
     AutoAugment,
     AugMixAugment,
     Mixup,
+    auto_augment_policy,
+    auto_augment_policy_3a,
+    auto_augment_policy_original,
+    auto_augment_policy_originalr,
+    auto_augment_policy_v0,
+    auto_augment_policy_v0r,
+    augmix_ops,
     MixupCutmix,
     RandAugment,
     TrivialAugmentWide,
@@ -30,9 +37,14 @@ from .augment import (
     random_flip_up_down,
     random_grayscale,
     random_resized_crop,
+    rand_augment_choices,
+    rand_augment_ops,
     rand_augment_transform,
     resize_keep_ratio,
     resolve_interpolation,
+    str_to_interp_mode,
+    str_to_pil_interp,
+    interp_mode_to_str,
 )
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
@@ -41,12 +53,17 @@ IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
 __all__ = [
     "AugmentOp", "AutoAugment", "AugMixAugment", "ImageFolder", "Loader",
     "Mixup", "MixupCutmix", "RandAugment", "TrivialAugmentWide",
-    "IMAGENET_MEAN", "IMAGENET_STD", "_DecodeTransform", "auto_augment_transform",
+    "IMAGENET_MEAN", "IMAGENET_STD", "_DecodeTransform", "auto_augment_policy",
+    "auto_augment_policy_3a", "auto_augment_policy_original",
+    "auto_augment_policy_originalr", "auto_augment_policy_v0",
+    "auto_augment_policy_v0r", "auto_augment_transform", "augmix_ops",
     "augment_and_mix_transform", "build_auto_augment", "center_crop_or_pad",
     "color_jitter", "create_dataset", "create_loader", "gaussian_blur",
     "random_crop_or_pad", "random_erasing", "random_flip_left_right",
     "random_flip_up_down", "random_grayscale", "random_resized_crop",
-    "rand_augment_transform", "resize_keep_ratio", "resolve_interpolation",
+    "rand_augment_choices", "rand_augment_ops", "rand_augment_transform",
+    "resize_keep_ratio", "resolve_interpolation", "str_to_interp_mode",
+    "str_to_pil_interp", "interp_mode_to_str",
 ]
 
 

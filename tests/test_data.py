@@ -98,6 +98,26 @@ def test_opencv_augmentations():
         assert transform(img).shape == img.shape
 
 
+def test_timm_augmentation_api():
+    img = np.full((32, 32, 3), 128, dtype=np.uint8)
+    assert len(data_module.auto_augment_policy("v0")) == 25
+    assert len(data_module.auto_augment_policy("originalr")) == 25
+    assert len(data_module.rand_augment_ops(transforms=["Invert"])) == 1
+    assert data_module.rand_augment_choices("3a") == [
+        "SolarizeIncreasing", "Desaturate", "GaussianBlur"
+    ]
+    assert data_module.str_to_interp_mode("bilinear") == cv2.INTER_LINEAR
+    assert data_module.interp_mode_to_str(cv2.INTER_NEAREST) == "nearest"
+
+    for config in (
+        "rand-m9-n3-p1-mstd0.5-mmax12-inc1-t3aw",
+        "augmix-m5-w4-d2-a0.5-b1-mstd0.5",
+    ):
+        transform = build_auto_augment(config)
+        assert transform is not None
+        assert transform(img).shape == img.shape
+
+
 def test_mixup_cutmix(monkeypatch):
     images = np.zeros((2, 8, 8, 3), dtype=np.float32)
     images[1] = 1.0

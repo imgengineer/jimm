@@ -37,12 +37,16 @@ def _as_float(value):
 
 __all__ = [
     "AugmentOp", "AutoAugment", "AugMixAugment", "Mixup", "MixupCutmix",
-    "RandAugment", "TrivialAugmentWide", "auto_augment_transform",
+    "RandAugment", "TrivialAugmentWide", "auto_augment_policy",
+    "auto_augment_policy_3a", "auto_augment_policy_original",
+    "auto_augment_policy_originalr", "auto_augment_policy_v0",
+    "auto_augment_policy_v0r", "auto_augment_transform", "augmix_ops",
     "augment_and_mix_transform", "build_auto_augment", "center_crop_or_pad",
     "color_jitter", "gaussian_blur", "random_crop_or_pad", "random_erasing",
     "random_flip_left_right", "random_flip_up_down", "random_grayscale",
-    "random_resized_crop", "rand_augment_transform", "resize_keep_ratio",
-    "resolve_interpolation",
+    "random_resized_crop", "rand_augment_choices", "rand_augment_ops",
+    "rand_augment_transform", "resize_keep_ratio", "resolve_interpolation",
+    "str_to_interp_mode", "str_to_pil_interp", "interp_mode_to_str",
 ]
 
 
@@ -57,6 +61,21 @@ def resolve_interpolation(interpolation="random"):
         except KeyError as exc:
             raise ValueError(f"unknown interpolation mode: {interpolation!r}") from exc
     return interpolation
+
+
+def str_to_interp_mode(mode_str):
+    return resolve_interpolation(mode_str)
+
+
+def str_to_pil_interp(mode_str):
+    return resolve_interpolation(mode_str)
+
+
+def interp_mode_to_str(mode):
+    for name, value in _INTERPOLATIONS.items():
+        if mode == value:
+            return name
+    raise ValueError(f"unknown interpolation mode: {mode!r}")
 
 
 def _size(size):
@@ -357,12 +376,23 @@ def _auto_op(image, name, magnitude, hparams):
     if name in ("Posterize", "PosterizeOriginal", "PosterizeIncreasing"):
         bits = max(1, 8 - _as_int(round(4 * strength)))
         return image & np.uint8((0xFF << (8 - bits)) & 0xFF)
-    if name in ("ShearX", "ShearY", "TranslateXRel", "TranslateYRel"):
+    if name in ("ShearX", "ShearY", "TranslateX", "TranslateY",
+                "TranslateXRel", "TranslateYRel"):
         height, width = image.shape[:2]
         shear_x = _random_sign(0.3 * strength) if name == "ShearX" else 0.0
         shear_y = _random_sign(0.3 * strength) if name == "ShearY" else 0.0
-        tx = _random_sign(0.45 * strength) * width if name == "TranslateXRel" else 0.0
-        ty = _random_sign(0.45 * strength) * height if name == "TranslateYRel" else 0.0
+        translate_const = _as_float(hparams.get("translate_const", 250))
+        translate_pct = _as_float(hparams.get("translate_pct", 0.45))
+        tx = 0.0
+        ty = 0.0
+        if name == "TranslateX":
+            tx = _random_sign(translate_const * strength)
+        elif name == "TranslateY":
+            ty = _random_sign(translate_const * strength)
+        elif name == "TranslateXRel":
+            tx = _random_sign(translate_pct * strength) * width
+        elif name == "TranslateYRel":
+            ty = _random_sign(translate_pct * strength) * height
         matrix = np.array([[1.0, shear_x, tx], [shear_y, 1.0, ty]], dtype=np.float32)
         return cv2.warpAffine(
             image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
@@ -390,6 +420,10 @@ class AugmentOp:
         elif std:
             magnitude = np.random.normal(magnitude, std)
         return _auto_op(image, self.name, magnitude, self.hparams)
+
+    def __repr__(self):
+        return (f"{self.__class__.__name__}(name={self.name!r}, prob={self.prob}, "
+                f"magnitude={self.magnitude})")
 
 
 _V0_POLICY = [
@@ -424,6 +458,56 @@ _ORIGINAL_POLICY = [
 ]
 
 
+def _policy_ops(policy, hparams=None):
+    config = dict(hparams or {})
+    return [[AugmentOp(name, probability, magnitude, config)
+             for name, probability, magnitude in row] for row in policy]
+
+
+def auto_augment_policy_v0(hparams=None):
+    return _policy_ops(_V0_POLICY, hparams)
+
+
+def auto_augment_policy_v0r(hparams=None):
+    policy = [[
+        ("PosterizeIncreasing" if name == "Posterize" else name, probability, magnitude)
+        for name, probability, magnitude in row
+    ] for row in _V0_POLICY]
+    return _policy_ops(policy, hparams)
+
+
+def auto_augment_policy_original(hparams=None):
+    return _policy_ops(_ORIGINAL_POLICY, hparams)
+
+
+def auto_augment_policy_originalr(hparams=None):
+    policy = [[
+        ("PosterizeIncreasing" if name == "PosterizeOriginal" else name, probability, magnitude)
+        for name, probability, magnitude in row
+    ] for row in _ORIGINAL_POLICY]
+    return _policy_ops(policy, hparams)
+
+
+def auto_augment_policy_3a(hparams=None):
+    policy = [[("Solarize", 1.0, 5)], [("Desaturate", 1.0, 10)],
+              [("GaussianBlurRand", 1.0, 10)]]
+    return _policy_ops(policy, hparams)
+
+
+def auto_augment_policy(name="v0", hparams=None):
+    policies = {
+        "v0": auto_augment_policy_v0,
+        "v0r": auto_augment_policy_v0r,
+        "original": auto_augment_policy_original,
+        "originalr": auto_augment_policy_originalr,
+        "3a": auto_augment_policy_3a,
+    }
+    try:
+        return policies[name](hparams)
+    except KeyError as exc:
+        raise ValueError(f"unknown AutoAugment policy: {name}") from exc
+
+
 class AutoAugment:
     def __init__(self, policy, hparams=None):
         self.policy = policy
@@ -431,60 +515,142 @@ class AutoAugment:
 
     def __call__(self, image):
         row = self.policy[np.random.randint(len(self.policy))]
-        for name, probability, magnitude in row:
-            image = AugmentOp(name, probability, magnitude, self.hparams)(image)
+        for op in row:
+            if isinstance(op, AugmentOp):
+                image = op(image)
+            else:
+                name, probability, magnitude = op
+                image = AugmentOp(name, probability, magnitude, self.hparams)(image)
         return image
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(policy={self.policy!r})"
 
 
 def auto_augment_transform(config_str="v0", hparams=None):
-    name = config_str.split("-")[0]
-    if name in ("v0", "v0r"):
-        policy = _V0_POLICY
-    elif name in ("original", "originalr"):
-        policy = _ORIGINAL_POLICY
-    elif name == "3a":
-        policy = [[("Solarize", 1.0, 5)], [("Desaturate", 1.0, 10)], [("GaussianBlurRand", 1.0, 10)]]
-    else:
-        raise ValueError(f"unknown AutoAugment policy: {name}")
-    if name.endswith("r"):
-        policy = [[
-            (operation.replace("Posterize", "PosterizeIncreasing"), probability, magnitude)
-            for operation, probability, magnitude in row
-        ] for row in policy]
+    parts = config_str.split("-")
     config = dict(hparams or {})
-    for part in config_str.split("-")[1:]:
+    for part in parts[1:]:
         if part.startswith("mstd"):
             config["magnitude_std"] = _as_float(part[4:])
-    return AutoAugment(policy, config)
+        elif part:
+            raise ValueError(f"unknown AutoAugment config section: {part}")
+    return AutoAugment(auto_augment_policy(parts[0], config), config)
 
 
-_RAND_OPS = ["AutoContrast", "Equalize", "Invert", "Rotate", "Posterize", "Solarize", "Color", "Contrast", "Brightness", "Sharpness", "ShearX", "ShearY", "TranslateXRel", "TranslateYRel"]
+_RAND_TRANSFORMS = [
+    "AutoContrast", "Equalize", "Invert", "Rotate", "Posterize", "Solarize",
+    "SolarizeAdd", "Color", "Contrast", "Brightness", "Sharpness", "ShearX",
+    "ShearY", "TranslateXRel", "TranslateYRel",
+]
+_RAND_INCREASING_TRANSFORMS = [
+    "AutoContrast", "Equalize", "Invert", "Rotate", "PosterizeIncreasing",
+    "SolarizeIncreasing", "SolarizeAdd", "ColorIncreasing", "ContrastIncreasing",
+    "BrightnessIncreasing", "SharpnessIncreasing", "ShearX", "ShearY",
+    "TranslateXRel", "TranslateYRel",
+]
+_RAND_3A = ["SolarizeIncreasing", "Desaturate", "GaussianBlur"]
+_RAND_WEIGHTED_3A = {
+    "SolarizeIncreasing": 6, "Desaturate": 6, "GaussianBlur": 6,
+    "Rotate": 3, "ShearX": 2, "ShearY": 2, "PosterizeIncreasing": 1,
+    "AutoContrast": 1, "ColorIncreasing": 1, "SharpnessIncreasing": 1,
+    "ContrastIncreasing": 1, "BrightnessIncreasing": 1, "Equalize": 1,
+    "Invert": 1,
+}
+_RAND_WEIGHTED_0 = {
+    "Rotate": 3, "ShearX": 2, "ShearY": 2, "TranslateXRel": 1,
+    "TranslateYRel": 1, "ColorIncreasing": 0.25, "SharpnessIncreasing": 0.25,
+    "AutoContrast": 0.25, "SolarizeIncreasing": 0.05, "SolarizeAdd": 0.05,
+    "ContrastIncreasing": 0.05, "BrightnessIncreasing": 0.05,
+    "Equalize": 0.05, "PosterizeIncreasing": 0.05, "Invert": 0.05,
+}
+_AUGMIX_TRANSFORMS = [
+    "AutoContrast", "ColorIncreasing", "ContrastIncreasing", "BrightnessIncreasing",
+    "SharpnessIncreasing", "Equalize", "Rotate", "PosterizeIncreasing",
+    "SolarizeIncreasing", "ShearX", "ShearY", "TranslateXRel", "TranslateYRel",
+]
+_RAND_OPS = _RAND_TRANSFORMS
+
+
+def _weighted_transforms(transforms):
+    names, weights = zip(*transforms.items())
+    weights = np.asarray(weights, dtype=np.float64)
+    weights /= weights.sum()
+    return list(names), weights
+
+
+def rand_augment_choices(name, increasing=True):
+    if name == "weights":
+        return _RAND_WEIGHTED_0
+    if name == "3aw":
+        return _RAND_WEIGHTED_3A
+    if name == "3a":
+        return _RAND_3A
+    return _RAND_INCREASING_TRANSFORMS if increasing else _RAND_TRANSFORMS
+
+
+def rand_augment_ops(magnitude=10.0, prob=0.5, hparams=None, transforms=None):
+    if transforms is None:
+        transforms = _RAND_TRANSFORMS
+    if isinstance(transforms, dict):
+        transforms, _ = _weighted_transforms(transforms)
+    return [AugmentOp(name, prob=prob, magnitude=magnitude, hparams=hparams)
+            for name in transforms]
 
 
 class RandAugment:
-    def __init__(self, ops, num_layers=2):
+    def __init__(self, ops, num_layers=2, choice_weights=None):
         self.ops = ops
         self.num_layers = _as_int(num_layers)
+        self.choice_weights = choice_weights
 
     def __call__(self, image):
-        count = min(self.num_layers, len(self.ops))
-        for index in np.random.choice(len(self.ops), count, replace=False):
+        count = min(max(self.num_layers, 0), len(self.ops))
+        if count == 0:
+            return image
+        indices = np.random.choice(
+            len(self.ops), count, replace=self.choice_weights is None,
+            p=self.choice_weights)
+        for index in np.atleast_1d(indices):
             image = self.ops[_as_int(index)](image)
         return image
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}(n={self.num_layers}, ops={self.ops!r})"
 
-def rand_augment_transform(config_str="rand-m9-n2", hparams=None):
-    magnitude, layers = 10, 2
+
+def rand_augment_transform(config_str="rand-m9-n2", hparams=None, transforms=None):
+    magnitude, layers, prob = 10, 2, 0.5
+    increasing = False
     config = dict(hparams or {})
     for part in config_str.split("-")[1:]:
         if part.startswith("mstd"):
-            config["magnitude_std"] = _as_float(part[4:])
+            value = _as_float(part[4:])
+            config["magnitude_std"] = math.inf if value > 100 else value
+        elif part.startswith("mmax"):
+            config["magnitude_max"] = _as_float(part[4:])
+        elif part.startswith("inc"):
+            increasing = bool(_as_int(part[3:] or 1))
+        elif part.startswith("t"):
+            if transforms is None:
+                transforms = part[1:]
         elif part.startswith("m"):
             magnitude = _as_float(part[1:])
         elif part.startswith("n"):
             layers = _as_int(part[1:])
-    ops = [AugmentOp(name, magnitude=magnitude, hparams=config) for name in _RAND_OPS]
-    return RandAugment(ops, layers)
+        elif part.startswith("p"):
+            prob = _as_float(part[1:])
+        elif part:
+            raise ValueError(f"unknown RandAugment config section: {part}")
+    if isinstance(transforms, str):
+        transforms = rand_augment_choices(transforms, increasing)
+    elif transforms is None:
+        transforms = _RAND_INCREASING_TRANSFORMS if increasing else _RAND_TRANSFORMS
+    weights = None
+    if isinstance(transforms, dict):
+        transforms, weights = _weighted_transforms(transforms)
+    ops = rand_augment_ops(magnitude, prob, config, transforms)
+    return RandAugment(ops, layers, weights)
 
 
 class TrivialAugmentWide:
@@ -497,12 +663,22 @@ class TrivialAugmentWide:
         return AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=self.hparams)(image)
 
 
+def augmix_ops(magnitude=10.0, hparams=None, transforms=None):
+    if transforms is None:
+        transforms = _AUGMIX_TRANSFORMS
+    if isinstance(transforms, dict):
+        transforms = list(transforms)
+    return [AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=hparams)
+            for name in transforms]
+
+
 class AugMixAugment:
-    def __init__(self, ops, alpha=1.0, width=3, depth=-1):
+    def __init__(self, ops, alpha=1.0, width=3, depth=-1, blended=False):
         self.ops = ops
         self.alpha = _as_float(alpha)
         self.width = _as_int(width)
         self.depth = _as_int(depth)
+        self.blended = bool(blended)
 
     def __call__(self, image):
         weights = np.random.dirichlet([self.alpha] * self.width)
@@ -516,19 +692,33 @@ class AugMixAugment:
             mixed += weight * _float_image(result)
         return _uint8_image((1.0 - mix) * _float_image(image) + mix * mixed)
 
+    def __repr__(self):
+        return (f"{self.__class__.__name__}(alpha={self.alpha}, width={self.width}, "
+                f"depth={self.depth}, blended={self.blended})")
 
-def augment_and_mix_transform(config_str="augmix-m3-w3", hparams=None):
-    magnitude, width, depth = 3, 3, -1
+
+def augment_and_mix_transform(config_str="augmix-m3-w3", hparams=None, transforms=None):
+    magnitude, width, depth, alpha, blended = 3.0, 3, -1, 1.0, False
+    config = dict(hparams or {})
     for part in config_str.split("-")[1:]:
-        if part.startswith("m"):
+        if part.startswith("mstd"):
+            value = _as_float(part[4:])
+            config["magnitude_std"] = math.inf if value > 100 else value
+        elif part.startswith("m"):
             magnitude = _as_float(part[1:])
         elif part.startswith("w"):
             width = _as_int(part[1:])
         elif part.startswith("d"):
             depth = _as_int(part[1:])
-    ops = [AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=hparams)
-           for name in _RAND_OPS]
-    return AugMixAugment(ops, width=width, depth=depth)
+        elif part.startswith("a"):
+            alpha = _as_float(part[1:])
+        elif part.startswith("b"):
+            blended = bool(_as_int(part[1:] or 1))
+        elif part:
+            raise ValueError(f"unknown AugMix config section: {part}")
+    config.setdefault("magnitude_std", math.inf)
+    ops = augmix_ops(magnitude, config, transforms)
+    return AugMixAugment(ops, alpha=alpha, width=width, depth=depth, blended=blended)
 
 
 def build_auto_augment(config, hparams=None):

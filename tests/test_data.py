@@ -84,7 +84,7 @@ def test_augmentations(monkeypatch):
     assert np.any(erased == 0.0)
 
 
-def test_dm_pix_augmentations():
+def test_opencv_augmentations():
     img = np.full((32, 32, 3), 128, dtype=np.uint8)
     assert random_flip_left_right(img, prob=1.0).shape == img.shape
     assert random_flip_up_down(img, prob=1.0).shape == img.shape

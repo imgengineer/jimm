@@ -1,16 +1,13 @@
-"""Timm-style image augmentation using OpenCV and dm_pix.
+"""Timm-style image augmentation using OpenCV and NumPy.
 
-Images are RGB ``uint8`` NumPy arrays at the Grain boundary. Geometric and
-codec operations use OpenCV; differentiable/JAX-native color, crop, flip,
-blur, rotation, hue, saturation, and solarization use dm_pix. Batch
-Mixup/CutMix remains NumPy/JAX friendly because it runs after Grain batching.
+Images are RGB ``uint8`` NumPy arrays at the Grain boundary. OpenCV handles
+codec, geometric, color, flip, blur, rotation, hue, saturation, and
+solarization operations. Batch Mixup/CutMix remains NumPy friendly because it
+runs after Grain batching.
 """
 import math
 
 import cv2  # pyright: ignore[reportMissingImports]
-import dm_pix as pix  # pyright: ignore[reportMissingImports]
-import jax
-import jax.numpy as jnp
 import numpy as np
 
 _INTERPOLATIONS = {
@@ -71,10 +68,6 @@ def _size(size):
     return value, value
 
 
-def _key():
-    return jax.random.PRNGKey(np.int32(np.random.randint(0, 2**31 - 1)))
-
-
 def _rgb(image):
     array = np.asarray(image)
     if array.ndim == 2:
@@ -94,9 +87,8 @@ def _uint8_image(array):
     return np.clip(np.asarray(array) * 255.0, 0, 255).astype(np.uint8)
 
 
-def _dm_pix_image(image, operation, *args, **kwargs):
-    array = jnp.asarray(_float_image(image), dtype=jnp.float32)
-    return _uint8_image(operation(array, *args, **kwargs))
+def _clip_uint8(array):
+    return np.clip(array, 0, 255).astype(np.uint8)
 
 
 def random_resized_crop(image, size=224, scale=(0.08, 1.0),
@@ -147,19 +139,37 @@ def resize_keep_ratio(image, size=224, scale=(0.8, 1.0),
 
 
 def center_crop_or_pad(image, size=224):
-    height, width = _size(size)
-    return _dm_pix_image(image, pix.resize_with_crop_or_pad, height, width)
+    image = _rgb(image)
+    target_h, target_w = _size(size)
+    height, width = image.shape[:2]
+    if height < target_h or width < target_w:
+        top = max(0, (target_h - height) // 2)
+        bottom = max(0, target_h - height - top)
+        left = max(0, (target_w - width) // 2)
+        right = max(0, target_w - width - left)
+        image = cv2.copyMakeBorder(
+            image, top, bottom, left, right, cv2.BORDER_REFLECT_101)
+        height, width = image.shape[:2]
+    top = max(0, (height - target_h) // 2)
+    left = max(0, (width - target_w) // 2)
+    return image[top:top + target_h, left:left + target_w].copy()
 
 
 def random_crop_or_pad(image, size=224):
     image = _rgb(image)
-    height, width = _size(size)
-    array = jnp.asarray(_float_image(image), dtype=jnp.float32)
-    if image.shape[0] >= height and image.shape[1] >= width:
-        array = pix.random_crop(_key(), array, (height, width, 3))
-    else:
-        array = pix.resize_with_crop_or_pad(array, height, width)
-    return _uint8_image(array)
+    target_h, target_w = _size(size)
+    height, width = image.shape[:2]
+    if height < target_h or width < target_w:
+        top = max(0, (target_h - height) // 2)
+        bottom = max(0, target_h - height - top)
+        left = max(0, (target_w - width) // 2)
+        right = max(0, target_w - width - left)
+        image = cv2.copyMakeBorder(
+            image, top, bottom, left, right, cv2.BORDER_REFLECT_101)
+        height, width = image.shape[:2]
+    top = np.random.randint(0, max(1, height - target_h + 1))
+    left = np.random.randint(0, max(1, width - target_w + 1))
+    return image[top:top + target_h, left:left + target_w].copy()
 
 
 def _range(value, name):
@@ -184,9 +194,31 @@ def _hue_range(value):
     return -value, value
 
 
+def _adjust_brightness(image, delta):
+    return _clip_uint8(_rgb(image).astype(np.float32) + delta * 255.0)
+
+
+def _adjust_contrast(image, factor):
+    array = _rgb(image).astype(np.float32)
+    mean = array.mean(axis=(0, 1), keepdims=True)
+    return _clip_uint8((array - mean) * factor + mean)
+
+
+def _adjust_saturation(image, factor):
+    hsv = cv2.cvtColor(_rgb(image), cv2.COLOR_RGB2HSV).astype(np.float32)
+    hsv[..., 1] = np.clip(hsv[..., 1] * factor, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+
+
+def _adjust_hue(image, delta):
+    hsv = cv2.cvtColor(_rgb(image), cv2.COLOR_RGB2HSV).astype(np.float32)
+    hsv[..., 0] = (hsv[..., 0] + delta * 180.0) % 180.0
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+
+
 def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
                  hue=0.0, prob=None, random_order=True):
-    """Color jitter using dm_pix's JAX-native brightness/contrast/HSL ops."""
+    """Apply timm-style color jitter with OpenCV without JAX dispatch."""
     if prob is not None and np.random.rand() >= prob:
         return _rgb(image)
     operations = [
@@ -200,17 +232,15 @@ def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
         np.random.shuffle(operations)
     result = _rgb(image)
     for name, bounds in operations:
-        array = jnp.asarray(_float_image(result), dtype=jnp.float32)
         if name == "brightness":
-            delta = np.random.uniform(-_as_float(brightness), _as_float(brightness))
-            array = pix.adjust_brightness(array, delta)
+            limit = max(abs(bounds[0]), abs(bounds[1]))
+            result = _adjust_brightness(result, np.random.uniform(-limit, limit))
         elif name == "contrast":
-            array = pix.adjust_contrast(array, np.random.uniform(bounds[0], bounds[1]))
+            result = _adjust_contrast(result, np.random.uniform(*bounds))
         elif name == "saturation":
-            array = pix.adjust_saturation(array, np.random.uniform(bounds[0], bounds[1]))
+            result = _adjust_saturation(result, np.random.uniform(*bounds))
         else:
-            array = pix.adjust_hue(array, np.random.uniform(bounds[0], bounds[1]))
-        result = _uint8_image(array)
+            result = _adjust_hue(result, np.random.uniform(*bounds))
     return result
 
 
@@ -232,9 +262,8 @@ def random_grayscale(image, prob=0.0):
     image = _rgb(image)
     if prob <= 0 or np.random.rand() >= prob:
         return image
-    array = pix.rgb_to_grayscale(
-        jnp.asarray(_float_image(image), dtype=jnp.float32), keep_dims=True)
-    return _uint8_image(array)
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
 
 
 def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0)):
@@ -245,7 +274,7 @@ def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0)):
     kernel = max(3, _as_int(round(radius * 6)))
     if kernel % 2 == 0:
         kernel += 1
-    return _dm_pix_image(image, pix.gaussian_blur, radius, kernel)
+    return cv2.GaussianBlur(image, (kernel, kernel), sigmaX=radius)
 
 
 def random_erasing(array, prob=0.0, sl=0.02, sh=0.33, r1=0.3,
@@ -281,8 +310,7 @@ def _auto_op(image, name, magnitude, hparams):
     image = _rgb(image)
     strength = max(0.0, min(_as_float(magnitude), _as_float(hparams.get("magnitude_max", 10)))) / 10.0
     if name == "AutoContrast":
-        array = jnp.asarray(_float_image(image), dtype=jnp.float32)
-        return _uint8_image(pix.adjust_contrast(array, 1.0 + strength))
+        return _adjust_contrast(image, 1.0 + strength)
     if name == "Equalize":
         ycrcb = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
         ycrcb[..., 0] = cv2.equalizeHist(ycrcb[..., 0])
@@ -290,19 +318,29 @@ def _auto_op(image, name, magnitude, hparams):
     if name == "Invert":
         return 255 - image
     if name in ("Solarize", "SolarizeIncreasing"):
-        array = jnp.asarray(_float_image(image), dtype=jnp.float32)
-        return _uint8_image(pix.solarize(array, 1.0 - strength))
+        result = image.copy()
+        try:
+            threshold = int(round((1.0 - strength) * 255.0))
+        except (TypeError, ValueError, OverflowError):
+            threshold = 0
+        mask = result > threshold
+        result[mask] = 255 - result[mask]
+        return result
     if name == "SolarizeAdd":
-        array = _float_image(image)
-        mask = array < 0.5
-        array[mask] = np.clip(array[mask] + 0.43 * strength, 0.0, 1.0)
-        return _uint8_image(array)
+        result = image.copy()
+        try:
+            amount = int(round(110 * strength))
+        except (TypeError, ValueError, OverflowError):
+            amount = 0
+        mask = result < 128
+        result[mask] = np.clip(result[mask].astype(np.int16) + amount, 0, 255)
+        return result.astype(np.uint8)
     if name in ("Color", "ColorIncreasing"):
-        return _dm_pix_image(image, pix.adjust_saturation, 1.0 + _random_sign(0.9 * strength))
+        return _adjust_saturation(image, 1.0 + _random_sign(0.9 * strength))
     if name in ("Contrast", "ContrastIncreasing"):
-        return _dm_pix_image(image, pix.adjust_contrast, 1.0 + _random_sign(0.9 * strength))
+        return _adjust_contrast(image, 1.0 + _random_sign(0.9 * strength))
     if name in ("Brightness", "BrightnessIncreasing"):
-        return _dm_pix_image(image, pix.adjust_brightness, _random_sign(0.9 * strength))
+        return _adjust_brightness(image, _random_sign(0.9 * strength))
     if name in ("Sharpness", "SharpnessIncreasing"):
         blur = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
         return cv2.addWeighted(image, 1.0 + 0.9 * strength, blur, -0.9 * strength, 0)
@@ -311,16 +349,23 @@ def _auto_op(image, name, magnitude, hparams):
     if name in ("GaussianBlur", "GaussianBlurRand"):
         return gaussian_blur(image, 1.0, (0.1, max(0.2, 2.0 * strength)))
     if name == "Rotate":
-        return _dm_pix_image(image, pix.rotate, math.radians(_random_sign(30.0 * strength)))
+        height, width = image.shape[:2]
+        matrix = cv2.getRotationMatrix2D(
+            (width / 2.0, height / 2.0), _random_sign(30.0 * strength), 1.0)
+        return cv2.warpAffine(
+            image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
     if name in ("Posterize", "PosterizeOriginal", "PosterizeIncreasing"):
         bits = max(1, 8 - _as_int(round(4 * strength)))
         return image & np.uint8((0xFF << (8 - bits)) & 0xFF)
     if name in ("ShearX", "ShearY", "TranslateXRel", "TranslateYRel"):
-        shear = _random_sign(0.3 * strength) if name.startswith("Shear") else 0.0
-        tx = _random_sign(0.45 * strength) if name == "TranslateXRel" else 0.0
-        ty = _random_sign(0.45 * strength) if name == "TranslateYRel" else 0.0
-        matrix = jnp.array([[1.0, shear, tx], [shear, 1.0, ty], [0.0, 0.0, 1.0]])
-        return _dm_pix_image(image, pix.affine_transform, matrix)
+        height, width = image.shape[:2]
+        shear_x = _random_sign(0.3 * strength) if name == "ShearX" else 0.0
+        shear_y = _random_sign(0.3 * strength) if name == "ShearY" else 0.0
+        tx = _random_sign(0.45 * strength) * width if name == "TranslateXRel" else 0.0
+        ty = _random_sign(0.45 * strength) * height if name == "TranslateYRel" else 0.0
+        matrix = np.array([[1.0, shear_x, tx], [shear_y, 1.0, ty]], dtype=np.float32)
+        return cv2.warpAffine(
+            image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
     raise ValueError(f"unknown augmentation operation: {name}")
 
 

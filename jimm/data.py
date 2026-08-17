@@ -1,4 +1,4 @@
-"""Grain data pipeline with timm-style augmentations and dm_pix primitives.
+"""Grain data pipeline with timm-style OpenCV augmentations.
 
 Images are decoded to RGB NumPy arrays with OpenCV and yielded as normalized
 float32 NHWC batches. Grain handles sharding and batching.

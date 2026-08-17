@@ -24,7 +24,7 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
     # 1. Create Model
     model = jimm.create_model(model_name, num_classes=num_classes, rngs=nnx.Rngs(0))
 
-    # 2. Use dm_pix-backed jimm.data Grain transforms with original-resolution RAM caching.
+    # 2. Use OpenCV-backed jimm.data Grain transforms with original-resolution RAM caching.
     train_loader = create_loader(
         f"{data_dir}/train", batch_size=batch_size, img_size=img_size,
         is_training=True, auto_augment=auto_augment,

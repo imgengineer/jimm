@@ -165,7 +165,7 @@ def main(argv=None):
     p.add_argument("--weight-decay", type=float, default=0.05)
     p.add_argument("--smoothing", type=float, default=0.1)
     p.add_argument("--drop-path", type=float, default=0.0)
-    p.add_argument("--workers", type=int, default=8, help="data loader worker count per host")
+    p.add_argument("--workers", type=int, default=4, help="data loader worker count per host")
     p.add_argument("--clip-grad", type=float, default=1.0,
                    help="global-norm gradient clipping (0 = disabled)")
     p.add_argument("--steps-per-epoch", type=int, default=None,

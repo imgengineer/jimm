@@ -108,7 +108,7 @@ train_loader = create_loader(
     auto_augment="rand-m9-n2",
     grayscale_prob=0.1,
     gaussian_blur_prob=0.1,
-    num_workers=8
+    num_workers=4
 )
 
 val_loader = create_loader(

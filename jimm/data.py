@@ -304,7 +304,7 @@ def create_loader(
         vflip=0.0, color_jitter=0.4, color_jitter_prob=None, hue=0.0,
         grayscale_prob=0.0, gaussian_blur_prob=0.0, auto_augment=None,
         force_color_jitter=False, re_prob=0.2, re_mode="const", re_count=1,
-        mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=0,
+        mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=4,
         worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
         shard_options=None, in_memory=False):
     """Create a Grain loader with timm-compatible augmentation options."""

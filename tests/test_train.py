@@ -17,6 +17,8 @@ from jimm.train import (
     fsdp_shard_model,
     init_distributed,
     main,
+    make_cached_eval_step,
+    make_cached_train_step,
     make_optimizer,
     train_step,
 )
@@ -73,6 +75,33 @@ def test_train_and_eval_step():
     assert float(v_loss) > 0.0
     assert 0.0 <= float(v_acc) <= 1.0
 
+    # AMP path and cached wrappers use the same train/eval semantics.
+    m.train()
+    amp_loss, amp_acc = train_step(m, opt, images, labels, amp=True)
+    assert float(amp_loss) > 0.0
+    assert 0.0 <= float(amp_acc) <= 1.0
+
+    cached_train = make_cached_train_step(m, opt, amp=True)
+    cached_loss, cached_acc = cached_train(images, labels, 0.1)
+    assert float(cached_loss) > 0.0
+    assert 0.0 <= float(cached_acc) <= 1.0
+
+    plain_cached_train = make_cached_train_step(m, opt)
+    plain_loss, plain_acc = plain_cached_train(images, labels, 0.0)
+    assert float(plain_loss) > 0.0
+    assert 0.0 <= float(plain_acc) <= 1.0
+
+    m.eval()
+    cached_eval = make_cached_eval_step(m, amp=True)
+    cached_v_loss, cached_v_acc = cached_eval(images, labels)
+    assert float(cached_v_loss) > 0.0
+    assert 0.0 <= float(cached_v_acc) <= 1.0
+
+    plain_cached_eval = make_cached_eval_step(m)
+    plain_v_loss, plain_v_acc = plain_cached_eval(images, labels)
+    assert float(plain_v_loss) > 0.0
+    assert 0.0 <= float(plain_v_acc) <= 1.0
+
 
 def test_fsdp_shard_model():
     mesh = jax.sharding.Mesh(jax.devices(), ("data",))
@@ -91,12 +120,25 @@ def test_fsdp_shard_model():
 
 
 def test_init_distributed(monkeypatch):
-    # 1. Without args/env it should be a no-op
-    init_distributed()
+    calls = []
+    monkeypatch.setattr(
+        jax.distributed,
+        "initialize",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    init_distributed("127.0.0.1:12345", num_processes=2, process_id=1)
+    assert calls == [{
+        "coordinator_address": "127.0.0.1:12345",
+        "num_processes": 2,
+        "process_id": 1,
+    }]
 
-    # 2. With mock coordinator address
+    def fail_initialize():
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(jax.distributed, "initialize", fail_initialize)
+    monkeypatch.setattr(jax, "process_index", lambda: 0)
     monkeypatch.setenv("JAX_COORDINATOR_ADDRESS", "127.0.0.1:12345")
-    # should catch exception cleanly
     init_distributed()
 
 

@@ -3,13 +3,13 @@
 Yields dicts {'image': float32 NHWC batch, 'label': int32 batch}.
 Supports automatic multi-host / multi-process sharding via JAX process indices.
 """
-import io
-import os
 import math
+from pathlib import Path
+
 import grain.python as grain
 import jax
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFile
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
@@ -19,6 +19,21 @@ __all__ = [
     "IMAGENET_MEAN", "IMAGENET_STD", "MixupCutmix",
     "random_resized_crop", "color_jitter", "random_erasing"
 ]
+
+
+def _is_within(root: Path, path: Path) -> bool:
+    """Return whether a resolved path stays inside the dataset root."""
+    try:
+        path.resolve().relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
+def _decode_image(raw: bytes) -> Image.Image:
+    parser = ImageFile.Parser()
+    parser.feed(raw)
+    return parser.close().convert("RGB")
 
 
 def random_resized_crop(img: Image.Image, size: int = 224, scale=(0.08, 1.0),
@@ -33,7 +48,7 @@ def random_resized_crop(img: Image.Image, size: int = 224, scale=(0.08, 1.0),
         try:
             w = int(round(math.sqrt(target_area * aspect_ratio)))
             h = int(round(math.sqrt(target_area / aspect_ratio)))
-        except Exception:
+        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
             w, h = width, height
         if 0 < w <= width and 0 < h <= height:
             i = np.random.randint(0, max(1, height - h + 1))
@@ -48,19 +63,19 @@ def color_jitter(img: Image.Image, brightness=0.2, contrast=0.2, saturation=0.2)
     if brightness > 0 and np.random.rand() < 0.8:
         try:
             factor = float(np.random.uniform(max(0.0, 1.0 - brightness), 1.0 + brightness))
-        except Exception:
+        except (TypeError, ValueError, OverflowError):
             factor = 1.0
         img = ImageEnhance.Brightness(img).enhance(factor)
     if contrast > 0 and np.random.rand() < 0.8:
         try:
             factor = float(np.random.uniform(max(0.0, 1.0 - contrast), 1.0 + contrast))
-        except Exception:
+        except (TypeError, ValueError, OverflowError):
             factor = 1.0
         img = ImageEnhance.Contrast(img).enhance(factor)
     if saturation > 0 and np.random.rand() < 0.8:
         try:
             factor = float(np.random.uniform(max(0.0, 1.0 - saturation), 1.0 + saturation))
-        except Exception:
+        except (TypeError, ValueError, OverflowError):
             factor = 1.0
         img = ImageEnhance.Color(img).enhance(factor)
     return img
@@ -78,7 +93,7 @@ def random_erasing(arr: np.ndarray, prob=0.2, sl=0.02, sh=0.33, r1=0.3) -> np.nd
         try:
             h_e = int(round(math.sqrt(target_area * aspect_ratio)))
             w_e = int(round(math.sqrt(target_area / aspect_ratio)))
-        except Exception:
+        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
             h_e, w_e = 0, 0
         if 0 < h_e < h and 0 < w_e < w:
             x1 = np.random.randint(0, h - h_e)
@@ -93,22 +108,29 @@ class ImageFolder(grain.RandomAccessDataSource):
     """torchvision-style folder dataset: root/class_x/yyy.img -> (bytes/image, label)."""
 
     def __init__(self, root, in_memory=False, img_size=224):
+        self.root = Path(root).expanduser().resolve()
         try:
-            classes = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
-        except Exception:
+            classes = sorted(
+                (path for path in self.root.iterdir()
+                 if path.is_dir() and _is_within(self.root, path)),
+                key=lambda path: path.name,
+            )
+        except OSError:
             classes = []
         if not classes:
             raise ValueError(f"no class subdirectories under {root!r}")
-        self.class_to_idx = {c: i for i, c in enumerate(classes)}
+        self.class_to_idx = {path.name: i for i, path in enumerate(classes)}
         samples = []
-        for c in classes:
-            c_dir = os.path.join(root, c)
+        for class_dir in classes:
             try:
-                files = sorted(os.listdir(c_dir))
-            except Exception:
+                files = sorted(
+                    (path for path in class_dir.iterdir()
+                     if path.is_file() and _is_within(self.root, path)),
+                    key=lambda path: path.name,
+                )
+            except OSError:
                 files = []
-            for f in files:
-                samples.append((os.path.join(c_dir, f), self.class_to_idx[c]))
+            samples.extend((path, self.class_to_idx[class_dir.name]) for path in files)
         self.samples = samples
         self.in_memory = in_memory
         self._cache = None
@@ -116,13 +138,13 @@ class ImageFolder(grain.RandomAccessDataSource):
             self._cache = []
             for path, label in self.samples:
                 try:
-                    with open(path, "rb") as f:
-                        im = Image.open(f).convert("RGB")
-                        if img_size:
-                            im = im.resize((img_size, img_size), Image.Resampling.BILINEAR)
-                        self._cache.append((np.asarray(im, dtype=np.uint8), label))
-                except Exception:
-                    pass
+                    with path.open("rb") as file:
+                        im = _decode_image(file.read())
+                    if img_size:
+                        im = im.resize((img_size, img_size), Image.Resampling.BILINEAR)
+                    self._cache.append((np.asarray(im, dtype=np.uint8), label))
+                except (OSError, ValueError):
+                    continue
 
     def __len__(self):
         return len(self._cache) if self._cache is not None else len(self.samples)
@@ -133,9 +155,9 @@ class ImageFolder(grain.RandomAccessDataSource):
             return {"image": img_arr, "label": label}
         path, label = self.samples[i]
         try:
-            with open(path, "rb") as f:
-                content = f.read()
-        except Exception:
+            with path.open("rb") as file:
+                content = file.read()
+        except OSError:
             content = b""
         return {"image": content, "label": label}
 
@@ -153,7 +175,7 @@ class _DecodeTransform(grain.MapTransform):
         self.re_prob = re_prob
         try:
             self.resize = int(round(img_size / crop_pct))
-        except Exception:
+        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
             self.resize = 256
         self.mean, self.std = mean, std
 
@@ -162,7 +184,7 @@ class _DecodeTransform(grain.MapTransform):
         if isinstance(raw, np.ndarray):
             img = Image.fromarray(raw)
         elif isinstance(raw, bytes):
-            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            img = _decode_image(raw)
         else:
             img = raw
 
@@ -203,27 +225,27 @@ class MixupCutmix:
         if np.random.rand() > self.prob:
             return images, labels
         B, H, W, _ = images.shape
-        try:
-            lam = float(np.random.beta(self.mixup_alpha, self.mixup_alpha))
-        except Exception:
-            lam = 1.0
         rand_index = np.random.permutation(B)
-        
+
         # Mixup
-        if np.random.rand() < 0.5 and self.mixup_alpha > 0:
+        if self.mixup_alpha > 0 and np.random.rand() < 0.5:
+            try:
+                lam = float(np.random.beta(self.mixup_alpha, self.mixup_alpha))
+            except (TypeError, ValueError, OverflowError):
+                lam = 1.0
             mixed_images = lam * images + (1.0 - lam) * images[rand_index]
             return mixed_images, labels
         # CutMix
         elif self.cutmix_alpha > 0:
             try:
                 lam = float(np.random.beta(self.cutmix_alpha, self.cutmix_alpha))
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 lam = 1.0
             cut_rat = math.sqrt(1.0 - lam)
             try:
                 cut_w = int(round(W * cut_rat))
                 cut_h = int(round(H * cut_rat))
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 cut_w, cut_h = 0, 0
             cx = np.random.randint(W)
             cy = np.random.randint(H)

@@ -22,7 +22,7 @@ class VisBlock(nnx.Module):
 
 class Visformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="avg", embed_dim=384, depth=12, num_heads=6, mlp_ratio=4.0,
@@ -45,7 +45,7 @@ class Visformer(ClassifierMixin, nnx.Module):
         for layer in self.stem:
             x = layer(x)
         x = x.reshape(x.shape[0], -1, self.num_features)
-        x = x + self.pos_embed.value
+        x = x + self.pos_embed[...]
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)

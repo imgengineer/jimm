@@ -21,7 +21,7 @@ class XCA(nnx.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]  # (B, heads, head_dim, N)
         q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-6)
         k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-6)
-        attn = nnx.softmax((q.transpose(0, 1, 3, 2) @ k) * self.temperature.value, axis=-1)
+        attn = nnx.softmax((q.transpose(0, 1, 3, 2) @ k) * self.temperature[...], axis=-1)
         x = (attn @ v.transpose(0, 1, 3, 2)).transpose(0, 3, 1, 2).reshape(B, N, C)
         return self.proj(x)
 
@@ -36,8 +36,8 @@ class XCABlock(nnx.Module):
         self.gamma2 = nnx.Param(init_values * jnp.ones(dim))
 
     def __call__(self, x):
-        x = x + self.drop_path(self.gamma1.value * self.xca(self.norm1(x)))
-        return x + self.drop_path(self.gamma2.value * self.mlp(self.norm2(x)))
+        x = x + self.drop_path(self.gamma1[...] * self.xca(self.norm1(x)))
+        return x + self.drop_path(self.gamma2[...] * self.mlp(self.norm2(x)))
 
 class LPI(nnx.Module):
     """Local Patch Interaction: two 3x3 depthwise convs with residuals on 2D grid."""
@@ -56,7 +56,7 @@ class LPI(nnx.Module):
 class XCiT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="", embed_dim=384, depth=12, num_heads=8, mlp_ratio=4.0,
@@ -78,8 +78,8 @@ class XCiT(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = x + self.pos_embed.value
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token.value, (B, 1, self.num_features)), x], axis=1)
+        x = x + self.pos_embed[...]
+        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
         G = self.grid
         for blk, lpi in zip(self.blocks, self.lpi):
             cls, tokens = x[:, :1], x[:, 1:]

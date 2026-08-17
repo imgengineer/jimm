@@ -7,6 +7,7 @@ runs after Grain batching.
 """
 import math
 
+import chex
 import cv2  # pyright: ignore[reportMissingImports]
 import numpy as np
 
@@ -19,6 +20,27 @@ _INTERPOLATIONS = {
     "lanczos": cv2.INTER_LANCZOS4,
 }
 _RANDOM_INTERPOLATIONS = ("bilinear", "bicubic")
+
+
+class _RngAdapter:
+    """Expose NumPy RandomState-style methods for Generator-backed transforms."""
+
+    def __init__(self, rng=None):
+        self._rng = rng._rng if isinstance(rng, _RngAdapter) else (
+            np.random if rng is None else rng)
+
+    def rand(self, *size):
+        return self._rng.random(size if size else None)
+
+    def randint(self, *args, **kwargs):
+        integers = getattr(self._rng, "integers", None)
+        if integers is not None:
+            return integers(*args, **kwargs)
+        return self._rng.randint(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._rng, name)
+
 
 # Image conversion, interpolation, and geometric transforms.
 
@@ -52,11 +74,12 @@ __all__ = [
 ]
 
 
-def resolve_interpolation(interpolation="random"):
+def resolve_interpolation(interpolation="random", rng=None):
+    rng = _RngAdapter(rng)
     if isinstance(interpolation, (tuple, list)):
-        interpolation = interpolation[np.random.randint(len(interpolation))]
+        interpolation = interpolation[rng.randint(len(interpolation))]
     if interpolation is None or interpolation == "random":
-        interpolation = _RANDOM_INTERPOLATIONS[np.random.randint(len(_RANDOM_INTERPOLATIONS))]
+        interpolation = _RANDOM_INTERPOLATIONS[rng.randint(len(_RANDOM_INTERPOLATIONS))]
     if isinstance(interpolation, str):
         try:
             return _INTERPOLATIONS[interpolation.lower()]
@@ -113,27 +136,28 @@ def _clip_uint8(array):
 
 
 def random_resized_crop(image, size=224, scale=(0.08, 1.0),
-                        ratio=(3.0 / 4.0, 4.0 / 3.0), interpolation="random"):
+                        ratio=(3.0 / 4.0, 4.0 / 3.0), interpolation="random", rng=None):
     """Timm-compatible random area/aspect-ratio crop using OpenCV resize."""
+    rng = _RngAdapter(rng)
     image = _rgb(image)
     height, width = image.shape[:2]
     area = height * width
     out_h, out_w = _size(size)
     log_ratio = (math.log(ratio[0]), math.log(ratio[1]))
     for _ in range(10):
-        target_area = np.random.uniform(scale[0], scale[1]) * area
-        aspect = math.exp(np.random.uniform(log_ratio[0], log_ratio[1]))
+        target_area = rng.uniform(scale[0], scale[1]) * area
+        aspect = math.exp(rng.uniform(log_ratio[0], log_ratio[1]))
         try:
             crop_w = _as_int(round(math.sqrt(target_area * aspect)))
             crop_h = _as_int(round(math.sqrt(target_area / aspect)))
         except (TypeError, ValueError, OverflowError, ZeroDivisionError):
             crop_w, crop_h = width, height
         if 0 < crop_w <= width and 0 < crop_h <= height:
-            top = np.random.randint(0, max(1, height - crop_h + 1))
-            left = np.random.randint(0, max(1, width - crop_w + 1))
+            top = rng.randint(0, max(1, height - crop_h + 1))
+            left = rng.randint(0, max(1, width - crop_w + 1))
             crop = image[top:top + crop_h, left:left + crop_w]
             return cv2.resize(
-                crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation))
+                crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation, rng=rng))
 
     input_ratio = width / height
     if input_ratio < ratio[0]:
@@ -146,17 +170,18 @@ def random_resized_crop(image, size=224, scale=(0.08, 1.0),
     top = max(0, (height - crop_h) // 2)
     crop = image[top:top + crop_h, left:left + crop_w]
     return cv2.resize(
-        crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation))
+        crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation, rng=rng))
 
 
 def resize_keep_ratio(image, size=224, scale=(0.8, 1.0),
-                      ratio=(0.9, 1.0 / 0.9), interpolation="random"):
+                      ratio=(0.9, 1.0 / 0.9), interpolation="random", rng=None):
+    rng = _RngAdapter(rng)
     image = _rgb(image)
-    target = min(_size(size)) * np.random.uniform(scale[0], scale[1])
-    aspect = math.exp(np.random.uniform(math.log(ratio[0]), math.log(ratio[1])))
+    target = min(_size(size)) * rng.uniform(scale[0], scale[1])
+    aspect = math.exp(rng.uniform(math.log(ratio[0]), math.log(ratio[1])))
     width = max(1, _as_int(round(target * math.sqrt(aspect))))
     height = max(1, _as_int(round(target / math.sqrt(aspect))))
-    return cv2.resize(image, (width, height), interpolation=resolve_interpolation(interpolation))
+    return cv2.resize(image, (width, height), interpolation=resolve_interpolation(interpolation, rng=rng))
 
 
 def _pad_to_size(image, target_h, target_w):
@@ -180,12 +205,13 @@ def center_crop_or_pad(image, size=224):
     return image[top:top + target_h, left:left + target_w].copy()
 
 
-def random_crop_or_pad(image, size=224):
+def random_crop_or_pad(image, size=224, rng=None):
+    rng = _RngAdapter(rng)
     target_h, target_w = _size(size)
     image = _pad_to_size(_rgb(image), target_h, target_w)
     height, width = image.shape[:2]
-    top = np.random.randint(0, max(1, height - target_h + 1))
-    left = np.random.randint(0, max(1, width - target_w + 1))
+    top = rng.randint(0, max(1, height - target_h + 1))
+    left = rng.randint(0, max(1, width - target_w + 1))
     return image[top:top + target_h, left:left + target_w].copy()
 
 
@@ -237,9 +263,10 @@ def _adjust_hue(image, delta):
 
 
 def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
-                 hue=0.0, prob=None, random_order=True):
+                 hue=0.0, prob=None, random_order=True, rng=None):
     """Apply timm-style color jitter with OpenCV without JAX dispatch."""
-    if prob is not None and np.random.rand() >= prob:
+    rng = _RngAdapter(rng)
+    if prob is not None and rng.rand() >= prob:
         return _rgb(image)
     operations = [
         ("brightness", _range(brightness, "brightness")),
@@ -249,48 +276,52 @@ def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
     ]
     operations = [item for item in operations if item[1] != (0.0, 0.0)]
     if random_order:
-        np.random.shuffle(operations)
+        rng.shuffle(operations)
     result = _rgb(image)
     for name, bounds in operations:
         if name == "brightness":
             limit = max(abs(bounds[0]), abs(bounds[1]))
-            result = _adjust_brightness(result, np.random.uniform(-limit, limit))
+            result = _adjust_brightness(result, rng.uniform(-limit, limit))
         elif name == "contrast":
-            result = _adjust_contrast(result, np.random.uniform(*bounds))
+            result = _adjust_contrast(result, rng.uniform(*bounds))
         elif name == "saturation":
-            result = _adjust_saturation(result, np.random.uniform(*bounds))
+            result = _adjust_saturation(result, rng.uniform(*bounds))
         else:
-            result = _adjust_hue(result, np.random.uniform(*bounds))
+            result = _adjust_hue(result, rng.uniform(*bounds))
     return result
 
 
-def random_flip_left_right(image, prob=0.5):
+def random_flip_left_right(image, prob=0.5, rng=None):
+    rng = _RngAdapter(rng)
     image = _rgb(image)
-    if prob <= 0 or np.random.rand() >= prob:
+    if prob <= 0 or rng.rand() >= prob:
         return image
     return cv2.flip(image, 1)
 
 
-def random_flip_up_down(image, prob=0.0):
+def random_flip_up_down(image, prob=0.0, rng=None):
+    rng = _RngAdapter(rng)
     image = _rgb(image)
-    if prob <= 0 or np.random.rand() >= prob:
+    if prob <= 0 or rng.rand() >= prob:
         return image
     return cv2.flip(image, 0)
 
 
-def random_grayscale(image, prob=0.0):
+def random_grayscale(image, prob=0.0, rng=None):
+    rng = _RngAdapter(rng)
     image = _rgb(image)
-    if prob <= 0 or np.random.rand() >= prob:
+    if prob <= 0 or rng.rand() >= prob:
         return image
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     return cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
 
 
-def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0)):
+def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0), rng=None):
+    rng = _RngAdapter(rng)
     image = _rgb(image)
-    if prob <= 0 or np.random.rand() >= prob:
+    if prob <= 0 or rng.rand() >= prob:
         return image
-    radius = _as_float(np.random.uniform(sigma[0], sigma[1]))
+    radius = _as_float(rng.uniform(sigma[0], sigma[1]))
     kernel = max(3, _as_int(round(radius * 6)))
     if kernel % 2 == 0:
         kernel += 1
@@ -298,25 +329,26 @@ def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0)):
 
 
 def random_erasing(array, prob=0.0, sl=0.02, sh=0.33, r1=0.3,
-                   mode="const", count=1, value=0.0):
-    if np.random.rand() >= prob:
+                   mode="const", count=1, value=0.0, rng=None):
+    rng = _RngAdapter(rng)
+    if rng.rand() >= prob:
         return array
     height, width, channels = array.shape
     result = array.copy()
     for _ in range(max(1, _as_int(count))):
         for _ in range(10):
-            target_area = np.random.uniform(sl, sh) * height * width
-            aspect = np.random.uniform(r1, 1.0 / r1)
+            target_area = rng.uniform(sl, sh) * height * width
+            aspect = rng.uniform(r1, 1.0 / r1)
             try:
                 erase_h = _as_int(round(math.sqrt(target_area * aspect)))
                 erase_w = _as_int(round(math.sqrt(target_area / aspect)))
             except (TypeError, ValueError, OverflowError, ZeroDivisionError):
                 erase_h, erase_w = 0, 0
             if 0 < erase_h < height and 0 < erase_w < width:
-                top = np.random.randint(0, height - erase_h)
-                left = np.random.randint(0, width - erase_w)
+                top = rng.randint(0, height - erase_h + 1)
+                left = rng.randint(0, width - erase_w + 1)
                 if mode in ("rand", "pixel"):
-                    fill = np.random.uniform(0.0, 1.0, (erase_h, erase_w, channels))
+                    fill = rng.uniform(0.0, 1.0, (erase_h, erase_w, channels))
                 elif mode == "mean":
                     fill = result.mean(axis=(0, 1), keepdims=True)
                 else:
@@ -331,7 +363,8 @@ def _augmentation_strength(magnitude, hparams):
     return max(0.0, min(_as_float(magnitude), maximum)) / 10.0
 
 
-def _auto_op(image, name, magnitude, hparams):
+def _auto_op(image, name, magnitude, hparams, rng=None):
+    rng = _RngAdapter(rng)
     image = _rgb(image)
     strength = _augmentation_strength(magnitude, hparams)
     if name == "AutoContrast":
@@ -361,22 +394,22 @@ def _auto_op(image, name, magnitude, hparams):
         result[mask] = np.clip(result[mask].astype(np.int16) + amount, 0, 255)
         return result.astype(np.uint8)
     if name in ("Color", "ColorIncreasing"):
-        return _adjust_saturation(image, 1.0 + _random_sign(0.9 * strength))
+        return _adjust_saturation(image, 1.0 + _random_sign(0.9 * strength, rng))
     if name in ("Contrast", "ContrastIncreasing"):
-        return _adjust_contrast(image, 1.0 + _random_sign(0.9 * strength))
+        return _adjust_contrast(image, 1.0 + _random_sign(0.9 * strength, rng))
     if name in ("Brightness", "BrightnessIncreasing"):
-        return _adjust_brightness(image, _random_sign(0.9 * strength))
+        return _adjust_brightness(image, _random_sign(0.9 * strength, rng))
     if name in ("Sharpness", "SharpnessIncreasing"):
         blur = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
         return cv2.addWeighted(image, 1.0 + 0.9 * strength, blur, -0.9 * strength, 0)
     if name == "Desaturate":
-        return random_grayscale(image, 1.0 if strength else 0.0)
+        return random_grayscale(image, 1.0 if strength else 0.0, rng=rng)
     if name in ("GaussianBlur", "GaussianBlurRand"):
-        return gaussian_blur(image, 1.0, (0.1, max(0.2, 2.0 * strength)))
+        return gaussian_blur(image, 1.0, (0.1, max(0.2, 2.0 * strength)), rng=rng)
     if name == "Rotate":
         height, width = image.shape[:2]
         matrix = cv2.getRotationMatrix2D(
-            (width / 2.0, height / 2.0), _random_sign(30.0 * strength), 1.0)
+            (width / 2.0, height / 2.0), _random_sign(30.0 * strength, rng), 1.0)
         return cv2.warpAffine(
             image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
     if name in ("Posterize", "PosterizeOriginal", "PosterizeIncreasing"):
@@ -385,28 +418,28 @@ def _auto_op(image, name, magnitude, hparams):
     if name in ("ShearX", "ShearY", "TranslateX", "TranslateY",
                 "TranslateXRel", "TranslateYRel"):
         height, width = image.shape[:2]
-        shear_x = _random_sign(0.3 * strength) if name == "ShearX" else 0.0
-        shear_y = _random_sign(0.3 * strength) if name == "ShearY" else 0.0
+        shear_x = _random_sign(0.3 * strength, rng) if name == "ShearX" else 0.0
+        shear_y = _random_sign(0.3 * strength, rng) if name == "ShearY" else 0.0
         translate_const = _as_float(hparams.get("translate_const", 250))
         translate_pct = _as_float(hparams.get("translate_pct", 0.45))
         tx = 0.0
         ty = 0.0
         if name == "TranslateX":
-            tx = _random_sign(translate_const * strength)
+            tx = _random_sign(translate_const * strength, rng)
         elif name == "TranslateY":
-            ty = _random_sign(translate_const * strength)
+            ty = _random_sign(translate_const * strength, rng)
         elif name == "TranslateXRel":
-            tx = _random_sign(translate_pct * strength) * width
+            tx = _random_sign(translate_pct * strength, rng) * width
         elif name == "TranslateYRel":
-            ty = _random_sign(translate_pct * strength) * height
+            ty = _random_sign(translate_pct * strength, rng) * height
         matrix = np.array([[1.0, shear_x, tx], [shear_y, 1.0, ty]], dtype=np.float32)
         return cv2.warpAffine(
             image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
     raise ValueError(f"unknown augmentation operation: {name}")
 
 
-def _random_sign(value):
-    return -value if np.random.rand() < 0.5 else value
+def _random_sign(value, rng=None):
+    return -value if _RngAdapter(rng).rand() < 0.5 else value
 
 
 class AugmentOp:
@@ -416,16 +449,17 @@ class AugmentOp:
         self.magnitude = _as_float(magnitude)
         self.hparams = dict(hparams or {})
 
-    def __call__(self, image):
-        if self.prob < 1.0 and np.random.rand() >= self.prob:
+    def __call__(self, image, rng=None):
+        rng = _RngAdapter(rng)
+        if self.prob < 1.0 and rng.rand() >= self.prob:
             return image
         magnitude = self.magnitude
         std = self.hparams.get("magnitude_std", 0.0)
         if std == _as_float("inf"):
-            magnitude = np.random.uniform(0.0, magnitude)
+            magnitude = rng.uniform(0.0, magnitude)
         elif std:
-            magnitude = np.random.normal(magnitude, std)
-        return _auto_op(image, self.name, magnitude, self.hparams)
+            magnitude = rng.normal(magnitude, std)
+        return _auto_op(image, self.name, magnitude, self.hparams, rng=rng)
 
     def __repr__(self):
         return (f"{self.__class__.__name__}(name={self.name!r}, prob={self.prob}, "
@@ -524,14 +558,15 @@ class AutoAugment:
         self.policy = policy
         self.hparams = dict(hparams or {})
 
-    def __call__(self, image):
-        row = self.policy[np.random.randint(len(self.policy))]
+    def __call__(self, image, rng=None):
+        rng = _RngAdapter(rng)
+        row = self.policy[rng.randint(len(self.policy))]
         for op in row:
             if isinstance(op, AugmentOp):
-                image = op(image)
+                image = op(image, rng=rng)
             else:
                 name, probability, magnitude = op
-                image = AugmentOp(name, probability, magnitude, self.hparams)(image)
+                image = AugmentOp(name, probability, magnitude, self.hparams)(image, rng=rng)
         return image
 
     def __repr__(self):
@@ -620,15 +655,16 @@ class RandAugment:
         self.num_layers = _as_int(num_layers)
         self.choice_weights = choice_weights
 
-    def __call__(self, image):
+    def __call__(self, image, rng=None):
+        rng = _RngAdapter(rng)
         count = min(max(self.num_layers, 0), len(self.ops))
         if count == 0:
             return image
-        indices = np.random.choice(
+        indices = rng.choice(
             len(self.ops), count, replace=self.choice_weights is None,
             p=self.choice_weights)
         for index in np.atleast_1d(indices):
-            image = self.ops[_as_int(index)](image)
+            image = self.ops[_as_int(index)](image, rng=rng)
         return image
 
     def __repr__(self):
@@ -672,10 +708,11 @@ class TrivialAugmentWide:
     def __init__(self, hparams=None):
         self.hparams = dict(hparams or {})
 
-    def __call__(self, image):
-        name = _RAND_OPS[np.random.randint(len(_RAND_OPS))]
-        magnitude = _as_float(np.random.uniform(0, 10))
-        return AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=self.hparams)(image)
+    def __call__(self, image, rng=None):
+        rng = _RngAdapter(rng)
+        name = _RAND_OPS[rng.randint(len(_RAND_OPS))]
+        magnitude = _as_float(rng.uniform(0, 10))
+        return AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=self.hparams)(image, rng=rng)
 
 
 def augmix_ops(magnitude=10.0, hparams=None, transforms=None):
@@ -695,15 +732,16 @@ class AugMixAugment:
         self.depth = _as_int(depth)
         self.blended = bool(blended)
 
-    def __call__(self, image):
-        weights = np.random.dirichlet([self.alpha] * self.width)
-        mix = _as_float(np.random.beta(self.alpha, self.alpha))
+    def __call__(self, image, rng=None):
+        rng = _RngAdapter(rng)
+        weights = rng.dirichlet([self.alpha] * self.width)
+        mix = _as_float(rng.beta(self.alpha, self.alpha))
         mixed = np.zeros_like(_float_image(image))
         for weight in weights:
-            depth = self.depth if self.depth > 0 else np.random.randint(1, 4)
+            depth = self.depth if self.depth > 0 else rng.randint(1, 4)
             result = image
-            for index in np.random.choice(len(self.ops), depth, replace=True):
-                result = self.ops[_as_int(index)](result)
+            for index in rng.choice(len(self.ops), depth, replace=True):
+                result = self.ops[_as_int(index)](result, rng=rng)
             mixed += weight * _float_image(result)
         return _uint8_image((1.0 - mix) * _float_image(image) + mix * mixed)
 
@@ -790,6 +828,12 @@ class MixupCutmix:
 
     def __call__(self, images, labels):
         images = np.asarray(images)
+        labels = np.asarray(labels)
+        chex.assert_shape(images, (None, None, None, 3))
+        chex.assert_rank(labels, {1, 2})
+        chex.assert_equal(images.shape[0], labels.shape[0])
+        if labels.ndim == 2:
+            chex.assert_shape(labels, (None, self.num_classes))
         if np.random.rand() >= self.prob:
             return images, labels
         batch, height, width, _ = images.shape

@@ -36,7 +36,7 @@ class TransformerBlock(nnx.Module):
         return x + self.drop_path(self.fc2(hswish(self.fc1(self.norm2(x)))))
 
 class NextViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 3, 8, 3), tf_depths=(0, 1, 2, 2),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

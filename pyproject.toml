@@ -10,6 +10,7 @@ dependencies = [
   "optax",
   "orbax-checkpoint",
   "numpy",
+  "chex",
   "opencv-python-headless>=5.0.0.93",
 ]
 

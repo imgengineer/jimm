@@ -83,7 +83,7 @@ class InceptionC(nnx.Module):
         return jnp.concatenate([self.b1(x), b2a, b2b, b3a, b3b, b4], axis=-1)
 
 class InceptionV4(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool

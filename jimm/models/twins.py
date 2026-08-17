@@ -51,7 +51,7 @@ class TwinsBlock(nnx.Module):
         return x + self.drop_path(self.mlp(self.norm3(x)))
 
 class Twins(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 256, 512), depths=(2, 2, 6, 2), num_heads=(2, 4, 8, 16),
                  window_size=7, num_classes=1000, in_chans=3, global_pool="avg",

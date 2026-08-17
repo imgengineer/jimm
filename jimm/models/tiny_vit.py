@@ -23,7 +23,7 @@ class TinyViTWindowBlock(nnx.Module):
         return window_reverse(t, self.ws, H, W, B)
 
 class TinyViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 576), depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 18),
                  window_size=7, num_classes=1000, in_chans=3, global_pool="avg",

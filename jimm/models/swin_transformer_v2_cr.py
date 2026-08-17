@@ -14,7 +14,7 @@ class SwinV2CrAttention(WindowAttention):
         q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-6)
         k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-6)
         attn = q @ k.transpose(0, 1, 3, 2) / 0.5
-        bias = self.rel_bias_table.value[self.rel_index].transpose(2, 0, 1)
+        bias = self.rel_bias_table[...][self.rel_index].transpose(2, 0, 1)
         attn = attn + bias[None]
         if mask is not None:
             nW = mask.shape[0]
@@ -96,7 +96,7 @@ class SwinTransformerV2CrStage(nnx.Module):
 
 class SwinTransformerV2Cr(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size: int = 224, patch_size: int = 4, in_chans: int = 3, num_classes: int = 1000,
                  global_pool: str = "avg", embed_dim: int = 96, depths=(2, 2, 6, 2),

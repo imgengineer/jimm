@@ -22,7 +22,8 @@ def test_list_models_and_modules():
     assert "vit_base_patch16_224" in models
 
     modules = list_modules()
-    assert len(modules) >= 94
+    assert modules
+    assert all(list_models(module=module) for module in modules)
     assert "resnet" in modules
     assert "swin_transformer" in modules
 

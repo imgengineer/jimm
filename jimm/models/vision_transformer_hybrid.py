@@ -32,7 +32,7 @@ class HybridStem(nnx.Module):
 class VisionTransformerHybrid(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, in_chans=3, num_classes=1000, global_pool="", embed_dim=768,
                  depth=12, num_heads=12, mlp_ratio=4.0, drop_rate=0.0, drop_path_rate=0.0, *, rngs):

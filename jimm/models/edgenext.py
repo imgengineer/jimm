@@ -26,7 +26,7 @@ class SDTEBlock(nnx.Module):
         return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm(x)))))
 
 class EdgeNeXt(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(48, 96, 160, 304), depths=(3, 3, 9, 3), num_classes=1000,
                  in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):

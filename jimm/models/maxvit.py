@@ -51,7 +51,7 @@ class MaxViTAttention(nnx.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         attn = q @ k.transpose(0, 1, 3, 2) * self.scale
-        attn = attn + self.rel_bias.value[self.rel_index].transpose(2, 0, 1)[None]
+        attn = attn + self.rel_bias[...][self.rel_index].transpose(2, 0, 1)[None]
         attn = nnx.softmax(attn, axis=-1)
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
@@ -104,7 +104,7 @@ class MaxViTStage(nnx.Module):
         return x
 
 class MaxViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 5, 2), head_dim=32,
                  window_size=7, num_classes=1000, in_chans=3, global_pool="avg",

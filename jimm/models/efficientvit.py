@@ -51,7 +51,7 @@ class EViTBlock(nnx.Module):
         return x + self.fc2(nnx.gelu(self.fc1(self.norm2(x))))
 
 class EfficientViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 192, 256), depths=(1, 2, 3, 4), attn_depths=(0, 0, 1, 2),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

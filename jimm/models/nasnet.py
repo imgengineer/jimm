@@ -71,7 +71,7 @@ class ReductionCell(nnx.Module):
         return jnp.concatenate([b1, b2], axis=-1)
 
 class NASNetA(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,
                  stem_chs=96, out_chs=168, num_cells=6, *, rngs):

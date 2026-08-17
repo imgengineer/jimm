@@ -90,7 +90,7 @@ def _round_depth(n, mult):
         return n
 
 class EfficientNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, width_mult=1.0, depth_mult=1.0, channel_multiplier=None, depth_multiplier=None,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.2, drop_path_rate=0.0, *, rngs):

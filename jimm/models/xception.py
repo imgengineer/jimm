@@ -38,7 +38,7 @@ class XceptionBlock(nnx.Module):
         return y + sc
 
 class Xception(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool

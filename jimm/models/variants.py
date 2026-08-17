@@ -633,63 +633,63 @@ def convnext_zepto_rms_ols(**kwargs):
 
 @register_model
 def convnextv2_atto(**kwargs):
-    model = convnext.ConvNeXt((2, 2, 6, 2), (40, 80, 160, 320), **kwargs)
+    model = convnextv2.ConvNeXtV2((2, 2, 6, 2), (40, 80, 160, 320), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_base(**kwargs):
-    model = convnext.ConvNeXt((3, 3, 27, 3), (128, 256, 512, 1024), **kwargs)
+    model = convnextv2.ConvNeXtV2((3, 3, 27, 3), (128, 256, 512, 1024), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_femto(**kwargs):
-    model = convnext.ConvNeXt((2, 2, 6, 2), (48, 96, 192, 384), **kwargs)
+    model = convnextv2.ConvNeXtV2((2, 2, 6, 2), (48, 96, 192, 384), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_huge(**kwargs):
-    model = convnext.ConvNeXt((3, 3, 9, 3), (96, 192, 384, 768), **kwargs)
+    model = convnextv2.ConvNeXtV2((3, 3, 9, 3), (96, 192, 384, 768), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_large(**kwargs):
-    model = convnext.ConvNeXt((3, 3, 27, 3), (192, 384, 768, 1536), **kwargs)
+    model = convnextv2.ConvNeXtV2((3, 3, 27, 3), (192, 384, 768, 1536), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_nano(**kwargs):
-    model = convnext.ConvNeXt((2, 2, 8, 2), (80, 160, 320, 640), **kwargs)
+    model = convnextv2.ConvNeXtV2((2, 2, 8, 2), (80, 160, 320, 640), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_pico(**kwargs):
-    model = convnext.ConvNeXt((2, 2, 6, 2), (64, 128, 256, 512), **kwargs)
+    model = convnextv2.ConvNeXtV2((2, 2, 6, 2), (64, 128, 256, 512), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_small(**kwargs):
-    model = convnext.ConvNeXt((3, 3, 27, 3), (96, 192, 384, 768), **kwargs)
+    model = convnextv2.ConvNeXtV2((3, 3, 27, 3), (96, 192, 384, 768), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def convnextv2_tiny(**kwargs):
-    model = convnext.ConvNeXt((3, 3, 9, 3), (96, 192, 384, 768), **kwargs)
+    model = convnextv2.ConvNeXtV2((3, 3, 9, 3), (96, 192, 384, 768), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -1081,49 +1081,49 @@ def dla60x_c(**kwargs):
 
 @register_model
 def dm_nfnet_f0(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dm_nfnet_f1(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dm_nfnet_f2(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dm_nfnet_f3(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dm_nfnet_f4(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dm_nfnet_f5(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def dm_nfnet_f6(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -1151,28 +1151,28 @@ def eca_halonext26ts(**kwargs):
 
 @register_model
 def eca_nfnet_l0(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def eca_nfnet_l1(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def eca_nfnet_l2(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def eca_nfnet_l3(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -1193,7 +1193,7 @@ def eca_resnext26ts(**kwargs):
 
 @register_model
 def eca_vovnet39b(**kwargs):
-    model = vovnet.VoVNet((128, 160, 192, 224), 3, (1, 1, 2, 2), 64, 4, 80, **kwargs)
+    model = vovnet.VoVNet(vovnet._CFGS["ese_vovnet39b"][0], True, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -1655,42 +1655,42 @@ def efficientvit_m5(**kwargs):
 
 @register_model
 def ese_vovnet19b_dw(**kwargs):
-    model = vovnet.VoVNet((128, 160, 192, 224), 3, (1, 1, 2, 2), 64, 4, 80, **kwargs)
+    model = vovnet.VoVNet(vovnet._CFGS["ese_vovnet19b"][0], True, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def ese_vovnet19b_slim(**kwargs):
-    model = vovnet.VoVNet((128, 160, 192, 224), 3, (1, 1, 2, 2), 64, 4, 80, **kwargs)
+    model = vovnet.VoVNet(vovnet._CFGS["ese_vovnet19b"][0], True, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def ese_vovnet19b_slim_dw(**kwargs):
-    model = vovnet.VoVNet((128, 160, 192, 224), 3, (1, 1, 2, 2), 64, 4, 80, **kwargs)
+    model = vovnet.VoVNet(vovnet._CFGS["ese_vovnet19b"][0], True, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def ese_vovnet39b_evos(**kwargs):
-    model = vovnet.VoVNet((128, 160, 192, 224), 3, (1, 1, 2, 2), 64, 4, 80, **kwargs)
+    model = vovnet.VoVNet(vovnet._CFGS["ese_vovnet39b"][0], True, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def ese_vovnet57b(**kwargs):
-    model = vovnet.VoVNet((128, 160, 192, 224), 3, (1, 1, 2, 2), 64, 4, 80, **kwargs)
+    model = vovnet.VoVNet(vovnet._CFGS["vovnet57a"][0], True, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def ese_vovnet99b(**kwargs):
-    model = vovnet.VoVNet((128, 160, 192, 224), 3, (1, 1, 2, 2), 64, 4, 80, **kwargs)
+    model = vovnet.VoVNet(vovnet._CFGS["vovnet57a"][0], True, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -3342,42 +3342,42 @@ def nf_ecaresnet50(**kwargs):
 
 @register_model
 def nf_regnet_b0(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nf_regnet_b1(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nf_regnet_b2(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nf_regnet_b3(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nf_regnet_b4(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nf_regnet_b5(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -3426,35 +3426,35 @@ def nf_seresnet50(**kwargs):
 
 @register_model
 def nfnet_f4(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nfnet_f5(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nfnet_f6(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nfnet_f7(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def nfnet_l0(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -3559,189 +3559,190 @@ def rdnet_large(**kwargs):
 
 @register_model
 def regnetv_040(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetv_064(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetx_004_tv(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetx_006(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetx_040(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetx_064(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetx_080(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetx_120(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetx_160(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 160, 160))
     return model
 
 
 @register_model
 def regnetx_320(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 320, 320))
     return model
 
 
 @register_model
 def regnety_002(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_006(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_008_tv(**kwargs):
-    model = regnet.RegNet(w0=48, wa=27.89, wm=2.09, depth=16, **kwargs)
+    model = regnet.RegNet(
+        *regnet.gen_cfg(16, 48, 27.89, 2.09, 8), se_ratio=0.25, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_040(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_040_sgn(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_064(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_080(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_080_tv(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_120(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_1280(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnety_160(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 160, 160))
     return model
 
 
 @register_model
 def regnety_2560(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 256, 256))
     return model
 
 
 @register_model
 def regnety_320(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 320, 320))
     return model
 
 
 @register_model
 def regnety_640(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetz_005(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetz_040(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
 
 @register_model
 def regnetz_040_h(**kwargs):
-    model = regnet.RegNet(w0=32, wa=16.0, wm=2.0, depth=10, **kwargs)
+    model = regnet.RegNet(*regnet.gen_cfg(10, 32, 16.0, 2.0, 8), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 
@@ -5148,7 +5149,7 @@ def test_mambaout(**kwargs):
 
 @register_model
 def test_nfnet(**kwargs):
-    model = nfnet.NFNet((1, 2, 6, 3), (128, 256, 512, 1536), **kwargs)
+    model = nfnet.NFNet((128, 256, 512, 1536), (1, 2, 6, 3), **kwargs)
     model.default_cfg = _cfg(input_size=(3, 224, 224))
     return model
 

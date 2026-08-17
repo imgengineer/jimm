@@ -304,17 +304,22 @@ def test_data_error_paths(temp_dataset, monkeypatch):
 
     with monkeypatch.context() as mp:
         mp.setattr(data_module, "_decode_image", fail)
-        assert len(ImageFolder(root, in_memory=True)) == 0
+        mp.setattr(data_module, "_read_image", fail)
+        with pytest.raises(ValueError, match="unable to cache image"):
+            ImageFolder(root, in_memory=True)
 
     no_resize = ImageFolder(root, in_memory=True, img_size=0)
     assert no_resize[0]["image"].shape == (48, 48, 3)
+    with pytest.raises(ValueError, match="worker_buffer_size"):
+        data_module.create_loader(root, batch_size=1, worker_buffer_size=0)
 
     ds = ImageFolder(root)
     with monkeypatch.context() as mp:
         mp.setattr(Path, "open", lambda *_args, **_kwargs: (
             (_ for _ in ()).throw(OSError("synthetic failure"))
         ))
-        assert ds[0]["image"] == b""
+        with pytest.raises(OSError, match="unable to read image"):
+            ds[0]
 
     images = np.zeros((2, 8, 8, 3), dtype=np.float32)
     labels = np.array([0, 1], dtype=np.int32)
@@ -356,6 +361,12 @@ def test_decode_transform():
     assert list(out_eval["image"].shape) == [32, 32, 3]
     assert out_eval["image"].dtype == np.float32
     assert out_eval["label"] == 2
+
+    # Grain's per-record RNG makes multi-worker augmentation reproducible.
+    rng_transform = _DecodeTransform(img_size=32, is_training=True, re_prob=0.0)
+    out_rng_a = rng_transform.random_map(sample, np.random.default_rng(123))
+    out_rng_b = rng_transform.random_map(sample, np.random.default_rng(123))
+    assert np.array_equal(out_rng_a["image"], out_rng_b["image"])
 
     # 3. Train transform (random crop & flip)
     t_train = _DecodeTransform(img_size=32, is_training=True)

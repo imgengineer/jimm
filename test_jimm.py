@@ -23,11 +23,13 @@ def check_registry():
     _require({"resnet18", "resnet50", "vit_base_patch16_224"} <= set(names), names)
     _require(list_models("resnet*") == [n for n in names if n.startswith("resnet")])
     _require("resnet" in jimm.list_modules())
+    pretrained_error = False
     try:
         create_model("resnet18", pretrained=True)
         raise AssertionError("pretrained=True should raise")
     except NotImplementedError:
-        pass
+        pretrained_error = True
+    _require(pretrained_error, "pretrained=True did not raise NotImplementedError")
     print("registry OK:", names)
 
 

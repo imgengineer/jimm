@@ -1,4 +1,4 @@
-"""Comprehensive parameterized tests covering all 94 architecture families and 341 model variants in jimm."""
+"""Comprehensive parameterized tests for registered jimm model families and variants."""
 import gc
 import jax
 import jax.numpy as jnp
@@ -13,8 +13,8 @@ MODULES = sorted(list_modules())
 ALL_MODELS = sorted(list_models())
 
 
-def test_all_341_model_entrypoints_instantiation():
-    """Verifies that all 341 registered model entrypoints can be instantiated cleanly."""
+def test_all_registered_model_entrypoints_instantiation():
+    """Verify that every registered model entrypoint instantiates cleanly."""
     for i, name in enumerate(ALL_MODELS):
         m = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
         assert isinstance(m, nnx.Module)
@@ -29,7 +29,7 @@ def test_all_341_model_entrypoints_instantiation():
 
 @pytest.mark.parametrize("module_name", MODULES)
 def test_architecture_family_forward_and_backward(module_name):
-    """Verifies forward features, forward head, reset_classifier, and backward pass across all 94 families."""
+    """Verify forward, classifier reset, and backward paths across model families."""
     models_in_module = jimm.list_models(module=module_name)
     name = models_in_module[0]  # representative architecture model
 
@@ -70,6 +70,13 @@ def test_architecture_family_forward_and_backward(module_name):
     # Clean up memory
     del m, x, logits, grads
     gc.collect()
+
+
+def test_variant_constructor_smoke():
+    for name in ("convnextv2_tiny", "dm_nfnet_f0", "eca_vovnet39b", "regnety_008_tv"):
+        model = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
+        assert model.num_features > 0
+        assert "input_size" in model.default_cfg
 
 
 def test_extra_multi_architecture_modules():

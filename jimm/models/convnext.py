@@ -23,7 +23,7 @@ class ConvNeXtBlock(nnx.Module):
         return x + self.drop_path(y)
 
 class ConvNeXt(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, depths, dims, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, drop_path_rate=0.0, *, rngs):

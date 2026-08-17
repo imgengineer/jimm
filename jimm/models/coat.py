@@ -18,7 +18,7 @@ class CoaTBlock(nnx.Module):
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
 class CoaT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(192, 384, 768, 768), depths=(2, 2, 3, 2), num_heads=(6, 12, 24, 24),
                  img_size=224, in_chans=3, num_classes=1000, global_pool="avg",

@@ -19,8 +19,8 @@ class ConvFormerBlock(nnx.Module):
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
-        x = x + self.drop_path(self.scale1.value * self.dw(x))
-        return x + self.drop_path(self.scale2.value * self.fc2(nnx.gelu(self.fc1(self.norm(x)))))
+        x = x + self.drop_path(self.scale1[...] * self.dw(x))
+        return x + self.drop_path(self.scale2[...] * self.fc2(nnx.gelu(self.fc1(self.norm(x)))))
 
 class AttnFormerBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop_path=0.0, layer_scale=1e-5, *, rngs):
@@ -34,11 +34,11 @@ class AttnFormerBlock(nnx.Module):
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
-        x = x + self.drop_path(self.scale1.value * self.attn(self.norm1(x)))
-        return x + self.drop_path(self.scale2.value * self.fc2(nnx.gelu(self.fc1(self.norm2(x)))))
+        x = x + self.drop_path(self.scale1[...] * self.attn(self.norm1(x)))
+        return x + self.drop_path(self.scale2[...] * self.fc2(nnx.gelu(self.fc1(self.norm2(x)))))
 
 class MetaFormer(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 320, 512), depths=(3, 3, 9, 3), attn_from=2,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

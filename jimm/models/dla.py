@@ -83,7 +83,7 @@ class DlaTree(nnx.Module):
         return self.tree2(x1, children=children)
 
 class DLA(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, levels, channels, block, root_shortcut=False, num_classes=1000,
                  in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

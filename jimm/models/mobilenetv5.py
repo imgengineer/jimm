@@ -27,7 +27,7 @@ class V5Block(nnx.Module):
         return x + y if self.use_sc else y
 
 class MobileNetV5(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(32, 64, 128, 256, 512), depths=(2, 2, 6, 2),
                  num_classes: int = 1000, in_chans: int = 3, global_pool: str = "avg",

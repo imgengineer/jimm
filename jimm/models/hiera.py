@@ -26,7 +26,7 @@ class HieraBlock(nnx.Module):
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
 class Hiera(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, embed_dim=96, num_heads=1, stages=(1, 2, 7, 2),
                  mlp_ratio=4.0, num_classes=1000, in_chans=3, global_pool="avg",

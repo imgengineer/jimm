@@ -78,7 +78,7 @@ class OverlapPatchEmbed(nnx.Module):
 
 class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
                  embed_dims=(64, 128, 320, 512), depths=(3, 4, 6, 3), num_heads=(1, 2, 5, 8),

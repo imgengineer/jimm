@@ -33,7 +33,7 @@ class CPUMBConv(nnx.Module):
         return x + y if self.use_sc else y
 
 class CPUBone(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, width_list=(16, 32, 64, 128, 256), depth_list=(0, 1, 1, 3, 4),
                  head_widths=(1280, 1536), num_classes=1000, in_chans=3, global_pool="avg",

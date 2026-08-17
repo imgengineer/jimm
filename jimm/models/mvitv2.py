@@ -34,7 +34,7 @@ class PooledAttention(nnx.Module):
         attn = q @ k.transpose(0, 1, 3, 2) * self.scale
         # ponytail: rel-pos bias applied only for same-resolution attn (skipped when K/V pooled)
         if self.pool_stride == 1 and attn.shape[-1] == self.rel_index.shape[0]:
-            attn = attn + self.rel_bias.value[self.rel_index].transpose(2, 0, 1)[None]
+            attn = attn + self.rel_bias[...][self.rel_index].transpose(2, 0, 1)[None]
         attn = nnx.softmax(attn, axis=-1)
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
@@ -61,7 +61,7 @@ class MViTBlock(nnx.Module):
 
 class MViTv2(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
                  embed_dim=96, depths=(2, 3, 16, 3), num_heads=(1, 2, 4, 8),

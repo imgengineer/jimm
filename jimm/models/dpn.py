@@ -37,7 +37,8 @@ class DualPathBlock(nnx.Module):
             y = self.c1x1_c(y)
             out1, out2 = y[..., :self.bw], y[..., self.bw:]
         else:
-            assert self.c_bn is not None and self.c1 is not None and self.c2 is not None
+            if self.c_bn is None or self.c1 is None or self.c2 is None:
+                raise RuntimeError("DPN projected branch is missing its bottleneck layers")
             y = nnx.relu(self.c_bn(y))
             out1, out2 = self.c1(y), self.c2(y)
         resid = x_s1 + out1
@@ -45,7 +46,7 @@ class DualPathBlock(nnx.Module):
         return jnp.concatenate([resid, dense], axis=-1)
 
 class DPN(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, k_sec, inc_sec, k_r, groups, small=False, num_init_features=64,
                  b=False, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

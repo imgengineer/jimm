@@ -49,6 +49,9 @@ from .augment import (
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
+_IMAGE_SUFFIXES = frozenset({
+    ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jp2", ".png", ".tif", ".tiff", ".webp",
+})
 
 __all__ = [
     "AugmentOp", "AutoAugment", "AugMixAugment", "ImageFolder", "Loader",
@@ -84,6 +87,14 @@ def _decode_image(raw: bytes) -> np.ndarray:
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
+def _read_image(path: Path) -> np.ndarray:
+    """Read a file directly; OpenCV's file reader tolerates some JPEG truncation."""
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"unable to decode image file {path}")
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+
 class ImageFolder(grain.RandomAccessDataSource):
     """Folder dataset: ``root/class_name/image`` -> image bytes and label."""
 
@@ -105,12 +116,16 @@ class ImageFolder(grain.RandomAccessDataSource):
             try:
                 files = sorted(
                     (path for path in class_dir.iterdir()
-                     if path.is_file() and _is_within(self.root, path)),
+                     if path.is_file()
+                     and path.suffix.lower() in _IMAGE_SUFFIXES
+                     and _is_within(self.root, path)),
                     key=lambda path: path.name,
                 )
             except OSError:
                 files = []
             samples.extend((path, self.class_to_idx[class_dir.name]) for path in files)
+        if not samples:
+            raise ValueError(f"no image files under class directories in {root!r}")
         self.samples = samples
         self._cache = None
         if in_memory:
@@ -118,13 +133,17 @@ class ImageFolder(grain.RandomAccessDataSource):
             for path, label in self.samples:
                 try:
                     with path.open("rb") as file:
-                        image = _decode_image(file.read())
+                        raw = file.read()
+                    try:
+                        image = _decode_image(raw)
+                    except ValueError:
+                        image = _read_image(path)
                     if img_size:
                         image = cv2.resize(
                             image, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
                     self._cache.append((image, label))
-                except (OSError, ValueError):
-                    continue
+                except (OSError, ValueError) as exc:
+                    raise ValueError(f"unable to cache image {path}") from exc
 
     def __len__(self):
         return len(self._cache) if self._cache is not None else len(self.samples)
@@ -137,12 +156,12 @@ class ImageFolder(grain.RandomAccessDataSource):
         try:
             with path.open("rb") as file:
                 content = file.read()
-        except OSError:
-            content = b""
+        except OSError as exc:
+            raise OSError(f"unable to read image {path}") from exc
         return {"image": content, "label": label}
 
 
-class _DecodeTransform(grain.MapTransform):
+class _DecodeTransform(grain.RandomMapTransform):
     """Decode one sample, apply timm-style augmentation, normalize to NHWC."""
 
     def __init__(self, img_size=224, is_training=False, crop_pct=0.875,
@@ -165,17 +184,24 @@ class _DecodeTransform(grain.MapTransform):
         self.hue = hue
         self.grayscale_prob = grayscale_prob
         self.gaussian_blur_prob = gaussian_blur_prob
+        if is_training and train_crop_mode not in ("rrc", "rkrc", "rkrr"):
+            raise ValueError(f"unknown train_crop_mode: {train_crop_mode}")
         self.auto_augment = build_auto_augment(auto_augment)
         self.force_color_jitter = force_color_jitter
         self.re_prob = re_prob
         self.re_mode = re_mode
         self.re_count = re_count
         try:
-            self.resize = int(round(img_size / crop_pct))
+            crop_pct = float(crop_pct)
+            self.resize = int(round(img_size / crop_pct)) if crop_pct > 0 else 256
         except (TypeError, ValueError, OverflowError, ZeroDivisionError):
             self.resize = 256
         self.mean = np.asarray(mean, dtype=np.float32)
         self.std = np.asarray(std, dtype=np.float32)
+        if self.mean.shape != (3,) or self.std.shape != (3,):
+            raise ValueError("mean and std must each contain three channels")
+        if np.any(self.std == 0):
+            raise ValueError("std values must be non-zero")
 
     @staticmethod
     def _coerce_image(raw):
@@ -188,24 +214,30 @@ class _DecodeTransform(grain.MapTransform):
             return image[..., :3]
         return image
 
-    def map(self, element):  # pyright: ignore[reportIncompatibleMethodOverride]
+    def map(self, element):  # type: ignore[override]
+        """Apply the transform with a local RNG for direct callers and tests."""
+        return self.random_map(element, np.random.default_rng())
+
+    def random_map(self, element, rng):  # pyright: ignore[reportIncompatibleMethodOverride]
         image = self._coerce_image(element["image"])
 
         if self.is_training:
             if self.train_crop_mode == "rrc":
                 image = random_resized_crop(
-                    image, self.img_size, self.scale, self.ratio, self.interpolation)
+                    image, self.img_size, self.scale, self.ratio, self.interpolation, rng=rng)
             elif self.train_crop_mode in ("rkrc", "rkrr"):
                 image = resize_keep_ratio(
-                    image, self.img_size, self.scale, self.ratio, self.interpolation)
-                crop = center_crop_or_pad if self.train_crop_mode == "rkrc" else random_crop_or_pad
-                image = crop(image, self.img_size)
+                    image, self.img_size, self.scale, self.ratio, self.interpolation, rng=rng)
+                if self.train_crop_mode == "rkrc":
+                    image = center_crop_or_pad(image, self.img_size)
+                else:
+                    image = random_crop_or_pad(image, self.img_size, rng=rng)
             else:
                 raise ValueError(f"unknown train_crop_mode: {self.train_crop_mode}")
-            image = random_flip_left_right(image, self.hflip)
-            image = random_flip_up_down(image, self.vflip)
+            image = random_flip_left_right(image, self.hflip, rng=rng)
+            image = random_flip_up_down(image, self.vflip, rng=rng)
             if self.auto_augment is not None:
-                image = self.auto_augment(image)
+                image = self.auto_augment(image, rng=rng)
             if self.color_jitter_values is not None and (
                     self.auto_augment is None or self.force_color_jitter):
                 values = self.color_jitter_values
@@ -219,12 +251,12 @@ class _DecodeTransform(grain.MapTransform):
                     hue = self.hue
                 image = color_jitter(
                     image, brightness, contrast, saturation, hue,
-                    prob=self.color_jitter_prob)
-            image = random_grayscale(image, self.grayscale_prob)
-            image = gaussian_blur(image, self.gaussian_blur_prob)
+                    prob=self.color_jitter_prob, rng=rng)
+            image = random_grayscale(image, self.grayscale_prob, rng=rng)
+            image = gaussian_blur(image, self.gaussian_blur_prob, rng=rng)
             array = np.asarray(image, dtype=np.float32) / 255.0
             array = random_erasing(
-                array, self.re_prob, mode=self.re_mode, count=self.re_count)
+                array, self.re_prob, mode=self.re_mode, count=self.re_count, rng=rng)
         else:
             image = cv2.resize(
                 image, (self.resize, self.resize), interpolation=cv2.INTER_LINEAR)
@@ -276,6 +308,14 @@ def create_loader(
         worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
         shard_options=None, in_memory=False):
     """Create a Grain loader with timm-compatible augmentation options."""
+    for name, value in (("batch_size", batch_size), ("img_size", img_size)):
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+    for name, value in (("num_workers", num_workers), ("worker_buffer_size", worker_buffer_size)):
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+    if worker_buffer_size == 0:
+        raise ValueError("worker_buffer_size must be positive")
     source, transform = create_dataset(
         root,
         in_memory=in_memory,

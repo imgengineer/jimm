@@ -36,14 +36,17 @@ class InvertedResidual(nnx.Module):
         return x + y if self.use_residual else y
 
 def round_chs(c, mult):
-    return max(8, int(c * mult + 4) // 8 * 8)
+    try:
+        return max(8, int(c * mult + 4) // 8 * 8)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"invalid channel multiplier: {mult!r}") from exc
 
 class MobileNetV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     # (expand, out_chs, repeats, stride)
-    CFG = [(1, 16, 1, 1), (6, 24, 2, 2), (6, 32, 3, 2), (6, 64, 4, 2),
-           (6, 96, 3, 1), (6, 160, 3, 2), (6, 320, 1, 1)]
+    CFG = ((1, 16, 1, 1), (6, 24, 2, 2), (6, 32, 3, 2), (6, 64, 4, 2),
+           (6, 96, 3, 1), (6, 160, 3, 2), (6, 320, 1, 1))
 
     def __init__(self, width_mult=1.0, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, *, rngs):

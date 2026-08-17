@@ -26,7 +26,7 @@ class RDBlock(nnx.Module):
         return x + self.drop_path(self.out_proj(self.norm(feats)))
 
 class RDNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 6, 2), growth=64,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

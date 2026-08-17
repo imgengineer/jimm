@@ -44,7 +44,7 @@ class FocalBlock(nnx.Module):
         return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm2(x)))))
 
 class FocalNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 6, 2), levels=3,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

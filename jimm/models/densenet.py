@@ -28,7 +28,7 @@ class Transition(nnx.Module):
         return nnx.avg_pool(x, (2, 2), strides=(2, 2))
 
 class DenseNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, growth_rate, block_config, num_classes=1000, in_chans=3,
                  global_pool="avg", drop_rate=0.0, bn_size=4, stem_chs=64, *, rngs):

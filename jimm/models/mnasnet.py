@@ -51,7 +51,7 @@ MNASNET_CFG = [
 SPNAS_CFG = MNASNET_CFG
 
 class MNASNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, cfg=MNASNET_CFG, width_mult=1.0, num_classes=1000, in_chans=3,
                  global_pool="avg", drop_rate=0.0, *, rngs):

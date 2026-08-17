@@ -55,6 +55,9 @@ def test_cross_entropy():
     loss_soft = cross_entropy(logits, soft_labels)
     assert float(loss_soft) > 0.0
 
+    with pytest.raises(AssertionError):
+        cross_entropy(logits, jnp.array([0], dtype=jnp.int32))
+
 
 def test_make_optimizer():
     m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
@@ -76,6 +79,11 @@ def test_train_and_eval_step():
     loss, acc = train_step(m, opt, images, labels, smoothing=0.1)
     assert float(loss) > 0.0
     assert 0.0 <= float(acc) <= 1.0
+
+    soft_labels = nnx.one_hot(labels, 5)
+    soft_loss, soft_acc = train_step(m, opt, images, soft_labels)
+    assert float(soft_loss) > 0.0
+    assert 0.0 <= float(soft_acc) <= 1.0
 
     m.eval()
     v_loss, v_acc = eval_step(m, images, labels)

@@ -32,7 +32,7 @@ class CSPStage(nnx.Module):
         return self.conv_out(jnp.concatenate([self.conv_t1(x1), self.conv_t2(x2)], axis=-1))
 
 class CSPDarkNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 256, 512, 1024), blocks=(2, 4, 8, 4),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
@@ -62,7 +62,7 @@ class DarkNetResBlock(nnx.Module):
         return x + self.conv2(self.conv1(x))
 
 class DarkNet53(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool

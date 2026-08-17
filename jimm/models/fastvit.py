@@ -46,7 +46,7 @@ class AttnStage(nnx.Module):
         return t.reshape(B, H, W, C)
 
 class FastViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(48, 96, 192, 384), depths=(2, 2, 6, 2), attn_depths=(0, 0, 0, 2),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

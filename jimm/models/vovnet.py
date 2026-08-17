@@ -48,7 +48,7 @@ _CFGS = {
 }
 
 class VoVNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, stages_cfg, ese, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, *, rngs):

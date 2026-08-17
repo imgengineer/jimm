@@ -27,7 +27,7 @@ class PreActBottleneck(nnx.Module):
         return y + sc
 
 class ResNetV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, layers, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, *, rngs):

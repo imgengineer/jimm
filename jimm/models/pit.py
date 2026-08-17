@@ -40,7 +40,7 @@ class PoolingLayer(nnx.Module):
 class PiT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="", embed_dim=384, depth=(2, 6, 4), num_heads=6, mlp_ratio=4.0,
@@ -70,7 +70,7 @@ class PiT(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.patch_embed.out_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token.value, (B, 1, x.shape[-1])), x], axis=1)
+        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, x.shape[-1])), x], axis=1)
         H = W = self.res0
         for i, stage in enumerate(self.stages):
             for blk in stage:

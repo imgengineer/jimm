@@ -61,7 +61,7 @@ class DaViTBlock(nnx.Module):
         return x + self.drop_path(self.mlp(self.norm3(x)))
 
 class DaViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(1, 1, 9, 1), num_heads=(3, 6, 12, 24),
                  window_size=7, num_classes=1000, in_chans=3, global_pool="avg",

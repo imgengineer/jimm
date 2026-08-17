@@ -22,7 +22,7 @@ class LevitAttention(nnx.Module):
         q = self.q(x).reshape(B, N, self.num_heads, self.key_dim).transpose(0, 2, 1, 3)
         k = self.k(x).reshape(B, N, self.num_heads, self.key_dim).transpose(0, 2, 1, 3)
         v = self.v(x).reshape(B, N, self.num_heads, self.key_dim).transpose(0, 2, 1, 3)
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale + self.attn_bias.value, axis=-1)
+        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale + self.attn_bias[...], axis=-1)
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, -1)
         return self.proj(x)
 
@@ -55,7 +55,7 @@ class SubsampleStage(nnx.Module):
 
 class LeViT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
                  embed_dims=(128, 256, 384), depths=(4, 4, 4), num_heads=(4, 8, 12),

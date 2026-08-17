@@ -50,7 +50,7 @@ class SamBlock(nnx.Module):
 
 
 class VisionTransformerSAM(nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=1024, patch_size=16, in_chans=3, embed_dim=768, depth=12,
                  num_heads=12, window_size=14, global_interval=3, num_classes=0,

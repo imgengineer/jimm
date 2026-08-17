@@ -37,7 +37,7 @@ class WindowAttention(nnx.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         attn = q @ k.transpose(0, 1, 3, 2) * self.scale
-        bias = self.rel_bias_table.value[self.rel_index].transpose(2, 0, 1)  # (heads, N, N)
+        bias = self.rel_bias_table[...][self.rel_index].transpose(2, 0, 1)  # (heads, N, N)
         attn = attn + bias[None]
         if mask is not None:
             nW = mask.shape[0]
@@ -121,7 +121,7 @@ class SwinStage(nnx.Module):
 
 class SwinTransformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, num_classes=1000,
                  global_pool="avg", embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
@@ -179,7 +179,7 @@ class SwinV2Attention(WindowAttention):
         q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-6)
         k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-6)
         attn = q @ k.transpose(0, 1, 3, 2) / 0.5  # cosine attention, fixed logit scale
-        bias = self.rel_bias_table.value[self.rel_index].transpose(2, 0, 1)
+        bias = self.rel_bias_table[...][self.rel_index].transpose(2, 0, 1)
         attn = attn + bias[None]
         if mask is not None:
             nW = mask.shape[0]

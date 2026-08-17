@@ -6,7 +6,7 @@ from ..registry import register_model, _cfg
 from .xception import SeparableConv, XceptionBlock
 
 class XceptionAligned(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,
                  widths=(64, 128, 256, 728, 1024, 1536, 2048), middle_blocks=8, *, rngs):

@@ -21,7 +21,7 @@ class SelecSLSBlock(nnx.Module):
         return nnx.relu(y + sc)
 
 class SelecSLS(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 288, 544), depths=(2, 3, 7, 3), num_classes=1000,
                  in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

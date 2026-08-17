@@ -49,7 +49,7 @@ class Gemma4Block(nnx.Module):
 
 class Gemma4Vit(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size: int = 224, patch_size: int = 14, in_chans: int = 3, num_classes: int = 1000,
                  global_pool: str = "avg", embed_dim: int = 768, depth: int = 12, num_heads: int = 16,

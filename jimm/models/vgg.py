@@ -18,7 +18,7 @@ class ConvBlock(nnx.Module):
 
 
 class VGG(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, cfg, use_bn=True, num_classes=1000, in_chans=3, drop_rate=0.0, *, rngs):
         self.num_classes = num_classes

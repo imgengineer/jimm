@@ -17,7 +17,7 @@ class ConvMixerBlock(nnx.Module):
         return nnx.gelu(self.bn2(self.pw(x)))
 
 class ConvMixer(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, dim=1536, depth=20, patch_size=7, kernel=9, num_classes=1000,
                  in_chans=3, global_pool="avg", *, rngs):

@@ -38,7 +38,7 @@ class TNTBlock(nnx.Module):
 class TNT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="", embed_dim=384, depth=12, num_heads=6, inner_dim=24,
@@ -64,9 +64,9 @@ class TNT(ClassifierMixin, nnx.Module):
         patches = self.patch_embed(x)  # (B, G, G, embed)
         G = patches.shape[1]
         tokens = patches.reshape(B, -1, self.num_features)
-        tokens = jnp.concatenate([jnp.broadcast_to(self.cls_token.value, (B, 1, self.num_features)),
+        tokens = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)),
                                   tokens], axis=1)
-        tokens = tokens + self.pos_embed.value
+        tokens = tokens + self.pos_embed[...]
         # inner: raw patch pixels -> inner_dim
         B2, H, W, C = x.shape
         p = self.patch_embed.patch_size

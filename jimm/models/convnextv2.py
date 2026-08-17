@@ -15,7 +15,7 @@ class GRN(nnx.Module):
     def __call__(self, x):
         gx = jnp.sqrt(jnp.sum(x ** 2, axis=(1, 2), keepdims=True) + 1e-6)  # (B,1,1,C) spatial L2 norm
         nx = gx / (jnp.mean(gx, axis=-1, keepdims=True) + 1e-6)
-        return self.gamma.value * (x * nx) + self.beta.value + x
+        return self.gamma[...] * (x * nx) + self.beta[...] + x
 
 class ConvNeXtV2Block(nnx.Module):
     def __init__(self, dim, drop_path=0.0, *, rngs):
@@ -33,7 +33,7 @@ class ConvNeXtV2Block(nnx.Module):
         return x + self.drop_path(y)
 
 class ConvNeXtV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, depths, dims, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, drop_path_rate=0.0, *, rngs):

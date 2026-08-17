@@ -44,7 +44,7 @@ class TransformerBlock(nnx.Module):
         return t.reshape(B, H, W, C)
 
 class CSATv2(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, dims=(48, 96, 224, 448), depths=(3, 3, 9, 3), num_classes=1000,
                  in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):

@@ -32,7 +32,7 @@ class MultiScaleBlock(nnx.Module):
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
 class HieraDet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, embed_dim: int = 96, num_heads: int = 1, stages=(1, 2, 7, 2),
                  mlp_ratio: float = 4.0, num_classes: int = 1000, in_chans: int = 3,

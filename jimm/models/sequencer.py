@@ -28,7 +28,7 @@ class SequencerBlock(nnx.Module):
         return x + self.drop_path(y)
 
 class Sequencer2D(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(192, 384, 768), depths=(7, 7, 7), img_size=224,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

@@ -20,15 +20,15 @@ class PoolFormerBlock(nnx.Module):
         # token mixer: 3x3 avg pool - identity (no norm before pooling, per reference)
         y = nnx.avg_pool(x, (self.pool_size, self.pool_size), strides=(1, 1), padding="SAME") - x
         if self.scale1 is not None:
-            y = self.scale1.value * y
+            y = self.scale1[...] * y
         x = x + self.drop_path(y)
         y = self.mlp_fc2(nnx.gelu(self.mlp_fc1(self.norm(x))))
         if self.scale2 is not None:
-            y = self.scale2.value * y
+            y = self.scale2[...] * y
         return x + self.drop_path(y)
 
 class PoolFormer(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, layers, embed_dims, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, drop_path_rate=0.0, *, rngs):

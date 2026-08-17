@@ -63,7 +63,7 @@ class EfficientFormerV2Block(nnx.Module):
             return x + self.drop_path(self.mlp(x))
 
 class EfficientFormerV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, depths=(2, 2, 6, 2), embed_dims=(32, 48, 96, 176), num_vit=2,
                  mlp_ratios=(4, 4, 4, 4), num_classes=1000, in_chans=3, global_pool="avg",

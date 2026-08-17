@@ -21,6 +21,7 @@ import argparse
 import os
 import time
 
+import chex
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -67,6 +68,13 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
 
 def cross_entropy(logits, labels, smoothing=0.0):
     # Mixup/CutMix supplies soft one-hot targets; ordinary batches use class ids.
+    chex.assert_shape(logits, (None, None))
+    chex.assert_rank(labels, {1, 2})
+    chex.assert_equal(logits.shape[0], labels.shape[0])
+    if labels.ndim == logits.ndim:
+        chex.assert_shape(labels, (None, logits.shape[-1]))
+    else:
+        chex.assert_shape(labels, (None,))
     one_hot = labels if labels.ndim == logits.ndim else nnx.one_hot(labels, logits.shape[-1])
     one_hot = one_hot.astype(logits.dtype)
     if labels.ndim != logits.ndim:
@@ -74,7 +82,16 @@ def cross_entropy(logits, labels, smoothing=0.0):
     return optax.softmax_cross_entropy(logits, one_hot).mean()
 
 
+def _accuracy(logits, labels):
+    target = jnp.argmax(labels, axis=-1) if labels.ndim == logits.ndim else labels
+    return jnp.mean(jnp.argmax(logits, -1) == target)
+
+
 def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0.0):
+    if epochs <= 0 or steps_per_epoch <= 0:
+        raise ValueError("epochs and steps_per_epoch must be positive")
+    if lr < 0 or weight_decay < 0 or clip_grad < 0:
+        raise ValueError("lr, weight_decay, and clip_grad must be non-negative")
     total = epochs * steps_per_epoch
     schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0, peak_value=lr,
@@ -87,6 +104,10 @@ def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0
 
 @nnx.jit(static_argnames=("smoothing", "amp"))
 def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False):
+    chex.assert_shape(images, (None, None, None, 3))
+    chex.assert_rank(labels, {1, 2})
+    chex.assert_equal(images.shape[0], labels.shape[0])
+
     def loss_fn(model):
         x = images.astype(jnp.bfloat16) if amp else images
         logits = model(x)
@@ -95,17 +116,20 @@ def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False):
         return cross_entropy(logits, labels, smoothing), logits
     (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
     optimizer.update(model, grads)
-    acc = jnp.mean(jnp.argmax(logits, -1) == labels)
+    acc = _accuracy(logits, labels)
     return loss, acc
 
 
 @nnx.jit(static_argnames=("amp",))
 def eval_step(model, images, labels, amp=False):
+    chex.assert_shape(images, (None, None, None, 3))
+    chex.assert_rank(labels, {1, 2})
+    chex.assert_equal(images.shape[0], labels.shape[0])
     x = images.astype(jnp.bfloat16) if amp else images
     logits = model(x)
     if amp:
         logits = logits.astype(jnp.float32)
-    return cross_entropy(logits, labels), jnp.mean(jnp.argmax(logits, -1) == labels)
+    return cross_entropy(logits, labels), _accuracy(logits, labels)
 
 
 def make_cached_train_step(model, optimizer, amp=False):
@@ -149,8 +173,8 @@ def main(argv=None):
     p.add_argument("--output", default="./output", help="output directory for checkpoints")
     p.add_argument("--fsdp", action="store_true", default=False,
                    help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)")
-    p.add_argument("--amp", action="store_true", default=True,
-                   help="enable AMP half-precision (bfloat16) compute on Tensor Cores (default: True)")
+    p.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True,
+                   help="enable AMP bfloat16 compute on Tensor Cores (default: true)")
     p.add_argument("--auto-augment", default=None,
                    help="timm policy: v0, original, rand-m9-n2, augmix-m3-w3-d-1, or trivialaugment")
     p.add_argument("--vflip", type=float, default=0.0)
@@ -267,33 +291,34 @@ def main(argv=None):
             loss_sum = loss_sum + loss
             acc_sum = acc_sum + acc
 
-        if rank == 0:
-            try:
-                loss_avg = float(loss_sum) / steps_per_epoch
-                acc_avg = float(acc_sum) / steps_per_epoch
-            except Exception:
-                loss_avg, acc_avg = 0.0, 0.0
-            msg = f"epoch {epoch:>3}: loss {loss_avg:.4f} acc {acc_avg:.4f} ({time.time()-t0:.1f}s)"
-            if val_loader is not None and cached_eval_step is not None:
-                v_loss_sum = jnp.zeros(())
-                v_acc_sum = jnp.zeros(())
-                n = 0
-                for batch in val_loader:
-                    v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
-                    v_labels = jax.make_array_from_process_local_data(eval_label_sharding, batch["label"])
-                    l, a = cached_eval_step(v_images, v_labels)
-                    v_loss_sum = v_loss_sum + l
-                    v_acc_sum = v_acc_sum + a
-                    n += 1
+        try:
+            loss_avg = float(loss_sum) / steps_per_epoch
+            acc_avg = float(acc_sum) / steps_per_epoch
+        except Exception:
+            loss_avg, acc_avg = 0.0, 0.0
+        msg = f"epoch {epoch:>3}: loss {loss_avg:.4f} acc {acc_avg:.4f} ({time.time()-t0:.1f}s)"
+        if val_loader is not None and cached_eval_step is not None:
+            # Every host must execute the SPMD validation step; only rank 0 reports it.
+            v_loss_sum = jnp.zeros(())
+            v_acc_sum = jnp.zeros(())
+            n = 0
+            for batch in val_loader:
+                v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
+                v_labels = jax.make_array_from_process_local_data(eval_label_sharding, batch["label"])
+                l, a = cached_eval_step(v_images, v_labels)
+                v_loss_sum = v_loss_sum + l
+                v_acc_sum = v_acc_sum + a
+                n += 1
+            if rank == 0:
                 try:
                     v_loss_avg = float(v_loss_sum) / max(n, 1)
                     v_acc_avg = float(v_acc_sum) / max(n, 1)
                 except Exception:
                     v_loss_avg, v_acc_avg = 0.0, 0.0
                 msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"
+        if rank == 0:
             print(msg, flush=True)
-            
-            # Checkpoint only from primary host (rank 0)
+            # Checkpoint only from primary host (rank 0).
             save_checkpoint(f"{args.output}/{args.model}/epoch_{epoch}", model, optimizer, epoch=epoch)
 
 

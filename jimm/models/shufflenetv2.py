@@ -49,7 +49,7 @@ class ShuffleUnit(nnx.Module):
         return channel_shuffle(jnp.concatenate([x1, y], axis=-1), 2)
 
 class ShuffleNetV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, out_chs, repeats, num_classes=1000, in_chans=3, global_pool="avg", *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool

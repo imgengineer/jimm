@@ -58,7 +58,7 @@ class RegNetBlock(nnx.Module):
         return nnx.relu(y + sc)
 
 class RegNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, widths, depths, groups, num_classes=1000, in_chans=3,
                  global_pool="avg", drop_rate=0.0, se_ratio=0.0, stem_chs=32, *, rngs):

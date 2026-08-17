@@ -51,7 +51,7 @@ class VitBlock(nnx.Module):
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
 class ViTAMIN(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 256, 512), conv_depths=(2, 2), vit_depths=(6, 2),
                  num_heads=(8, 16), num_classes=1000, in_chans=3, global_pool="avg",

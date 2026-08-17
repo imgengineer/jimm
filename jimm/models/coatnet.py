@@ -52,7 +52,7 @@ class RelPosAttention(nnx.Module):
         attn = q @ k.transpose(0, 1, 3, 2) * self.scale
         gh, gw = self.grid
         idx = self.rel_index.reshape(gh, gh, gw, gw).transpose(0, 2, 1, 3).reshape(N, N)
-        attn = attn + self.rel_bias.value[idx].transpose(2, 0, 1)[None]
+        attn = attn + self.rel_bias[...][idx].transpose(2, 0, 1)[None]
         attn = nnx.softmax(attn, axis=-1)
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
@@ -88,7 +88,7 @@ class AttnStage(nnx.Module):
         return t.reshape(B, H, W, C)
 
 class CoAtNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), blocks=(2, 2, 3, 5, 2),
                  head_dim=32, img_size=224, num_classes=1000, in_chans=3,

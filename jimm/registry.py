@@ -16,9 +16,13 @@ def register_model(fn=None, *, default_cfg=None):
     if fn is None:
         return lambda f: register_model(f, default_cfg=default_cfg)
     name = fn.__name__
+    module = fn.__module__.split(".")[-1]
+    previous_module = _model_to_module.get(name)
+    if previous_module is not None and previous_module != module:
+        _module_to_models[previous_module].discard(name)
     _model_entrypoints[name] = fn
-    _model_to_module[name] = fn.__module__.split(".")[-1]
-    _module_to_models[fn.__module__.split(".")[-1]].add(name)
+    _model_to_module[name] = module
+    _module_to_models[module].add(name)
     if default_cfg is not None:
         _model_default_cfgs[name] = default_cfg
     elif hasattr(fn, "default_cfg"):
@@ -70,7 +74,7 @@ def list_models(filter: str | Sequence[str] = "", module: str = "", pretrained: 
 
 
 def list_modules():
-    return sorted(_module_to_models)
+    return sorted(module for module, names in _module_to_models.items() if names)
 
 
 def create_model(name: str, pretrained: bool | str | dict[str, Any] = False, features_only: bool = False,

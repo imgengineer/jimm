@@ -16,7 +16,7 @@ class Fire(nnx.Module):
         return jnp.concatenate([nnx.relu(self.expand1x1(x)), nnx.relu(self.expand3x3(x))], axis=-1)
 
 class SqueezeNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, version="1_0", num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, *, rngs):

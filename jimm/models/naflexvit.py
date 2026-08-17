@@ -20,7 +20,7 @@ class NAFlexBlock(nnx.Module):
 
 class NAFlexViT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size: int = 224, patch_size: int = 16, in_chans: int = 3,
                  num_classes: int = 1000, global_pool: str = "avg", embed_dim: int = 768,
@@ -45,7 +45,7 @@ class NAFlexViT(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = x + self.pos_embed.value
+        x = x + self.pos_embed[...]
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)

@@ -16,7 +16,7 @@ class ScaledStdConv(nnx.Module):
         self.bias = nnx.Param(jnp.zeros(out_chs))
 
     def __call__(self, x):
-        w = self.kernel.value
+        w = self.kernel[...]
         mean = jnp.mean(w, axis=(0, 1, 2), keepdims=True)
         var = jnp.var(w, axis=(0, 1, 2), keepdims=True)
         fan_in = w.shape[0] * w.shape[1] * w.shape[2]
@@ -24,7 +24,7 @@ class ScaledStdConv(nnx.Module):
         return jax.lax.conv_general_dilated(
             x, w, (self.stride, self.stride), "SAME",
             dimension_numbers=("NHWC", "HWIO", "NHWC"),
-            feature_group_count=self.groups) + self.bias.value
+            feature_group_count=self.groups) + self.bias[...]
 
 class NFBlock(nnx.Module):
     """NFNet bottleneck block: residual scaled by beta, activation gamma scaled."""
@@ -54,7 +54,7 @@ class NFBlock(nnx.Module):
         return (y + x) * self.beta
 
 class NFNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(256, 512, 1536, 1536), depths=(1, 2, 6, 3), alpha=0.2,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

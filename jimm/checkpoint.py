@@ -1,4 +1,5 @@
 """orbax-checkpoint save/restore for nnx models (+ optional optimizer state)."""
+import errno
 import os
 
 import orbax.checkpoint as ocp
@@ -23,8 +24,10 @@ def save_checkpoint(path, model, optimizer=None, epoch=0, extra=None):
     path = os.path.abspath(path)
     try:
         os.makedirs(path, exist_ok=True)
-    except OSError:
+    except OSError as exc:
         if not os.path.isdir(path):
+            raise
+        if exc.errno != errno.EEXIST:
             raise
     _checkpointer.save(path, _item(model, optimizer, epoch, extra), force=True)
     _checkpointer.wait_until_finished()
@@ -36,12 +39,13 @@ def _fix_int_keys(d):
     if isinstance(d, dict):
         new_d = {}
         for k, v in d.items():
+            key = k
             if isinstance(k, str) and (k.isdigit() or (k.startswith("-") and k[1:].isdigit())):
                 try:
-                    k = int(k)
+                    key = int(k)
                 except ValueError:
-                    pass
-            new_d[k] = _fix_int_keys(v)
+                    key = k
+            new_d[key] = _fix_int_keys(v)
         return new_d
     return d
 

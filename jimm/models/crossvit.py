@@ -39,7 +39,7 @@ class ViTBlock(nnx.Module):
 
 class CrossViT(ClassifierMixin, nnx.Module):
     _default_global_pool = ""
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="",
                  embed_dims=(384, 768), patch_sizes=(12, 16), depths=(2, 2), num_heads=(6, 12),

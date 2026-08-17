@@ -21,7 +21,7 @@ class MixerBlock(nnx.Module):
 
 class MlpMixer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, num_blocks=8, embed_dim=512,
                  mlp_ratio=(0.5, 4.0), num_classes=1000, in_chans=3, global_pool="avg",
@@ -83,7 +83,7 @@ class ResMLPBlock(nnx.Module):
 
 class ResMLP(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, num_blocks=12, embed_dim=384,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

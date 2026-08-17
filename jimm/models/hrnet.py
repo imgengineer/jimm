@@ -96,7 +96,7 @@ def _run_branch(branch, x):
     return x
 
 class HRNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, widths, s1_blocks=4, s2_blocks=4, s3_modules=4, s4_modules=3, bpm=4,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

@@ -44,7 +44,7 @@ class MobileViTStage(nnx.Module):
         return self.fuse(jnp.concatenate([x, y], axis=-1))
 
 class MobileViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, channels=(32, 64, 96), tf_dims=(144, 192, 240), tf_depths=(2, 4, 3),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

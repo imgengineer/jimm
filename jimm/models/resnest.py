@@ -57,7 +57,7 @@ class ResNeStBottleneck(nnx.Module):
         return nnx.relu(y + self.drop_path(sc))
 
 class ResNeSt(ClassifierMixin, nnx.Module):
-    default_cfg: dict = {}
+    default_cfg: dict | None = None
 
     def __init__(self, layers, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, drop_path_rate=0.0, deep_stem=True, *, rngs):

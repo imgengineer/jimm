@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import cv2  # pyright: ignore[reportMissingImports]
 import grain.python as grain
@@ -22,6 +23,7 @@ from jimm.data import (
     create_loader,
     gaussian_blur,
     random_erasing,
+    random_crop_or_pad,
     random_flip_left_right,
     random_flip_up_down,
     random_grayscale,
@@ -91,6 +93,8 @@ def test_opencv_augmentations():
     assert random_grayscale(img, prob=1.0).shape == img.shape
     assert gaussian_blur(img, prob=1.0, sigma=(0.5, 0.5)).shape == img.shape
     assert center_crop_or_pad(img, 16).shape[:2] == (16, 16)
+    assert center_crop_or_pad(img[:8, :8], 16).shape[:2] == (16, 16)
+    assert random_crop_or_pad(img[:8, :8], 16).shape[:2] == (16, 16)
 
     for config in ("v0", "original", "3a", "rand-m2-n1", "augmix-m2-w2-d1", "trivialaugment"):
         transform = build_auto_augment(config)
@@ -116,6 +120,102 @@ def test_timm_augmentation_api():
         transform = build_auto_augment(config)
         assert transform is not None
         assert transform(img).shape == img.shape
+
+
+def test_augmentation_edge_cases():
+    img = np.arange(32 * 40 * 3, dtype=np.uint8).reshape(32, 40, 3)
+
+    for interpolation in (
+        "nearest", None, ("bilinear", "bicubic"), cv2.INTER_AREA,
+    ):
+        assert data_module.resolve_interpolation(cast(Any, interpolation)) is not None
+    with pytest.raises(ValueError):
+        data_module.resolve_interpolation("unknown")
+    with pytest.raises(ValueError):
+        data_module.interp_mode_to_str(-1)
+    with pytest.raises(ValueError):
+        augment_module._size((1, 2, 3))
+    with pytest.raises(ValueError):
+        augment_module._as_int("bad")
+    with pytest.raises(ValueError):
+        augment_module._as_float("bad")
+    with pytest.raises(ValueError):
+        augment_module._rgb(np.zeros((2, 2), dtype=np.uint8)[..., None])
+    assert augment_module._rgb(np.zeros((2, 2), dtype=np.uint8)).shape == (2, 2, 3)
+    assert augment_module._rgb(np.zeros((2, 2, 4), dtype=np.uint8)).shape == (2, 2, 3)
+
+    assert data_module.resize_keep_ratio(img, size=16).ndim == 3
+    assert augment_module.random_resized_crop(
+        np.zeros((8, 64, 3), dtype=np.uint8), size=16, scale=(2.0, 2.0),
+    ).shape == (16, 16, 3)
+    assert augment_module.random_resized_crop(
+        np.zeros((64, 8, 3), dtype=np.uint8), size=16, scale=(2.0, 2.0),
+    ).shape == (16, 16, 3)
+    assert augment_module.random_crop_or_pad(
+        img, cast(Any, (16, 20))).shape == (16, 20, 3)
+    assert data_module.color_jitter(
+        img, brightness=cast(Any, (0.1, 0.2)),
+        contrast=cast(Any, (0.8, 1.2)), saturation=cast(Any, (0.8, 1.2)),
+        hue=cast(Any, (-0.1, 0.1)), random_order=False,
+    ).shape == img.shape
+    assert augment_module._range(None, "test") == (0.0, 0.0)
+    assert augment_module._hue_range(None) == (0.0, 0.0)
+    with pytest.raises(ValueError):
+        augment_module._range((1.0,), "test")
+    with pytest.raises(ValueError):
+        augment_module._hue_range((1.0,))
+    assert data_module.color_jitter(img, prob=0.0).shape == img.shape
+    assert data_module.random_flip_left_right(img, prob=0.0).shape == img.shape
+    assert data_module.random_flip_up_down(img, prob=0.0).shape == img.shape
+    assert data_module.random_grayscale(img, prob=0.0).shape == img.shape
+    assert data_module.gaussian_blur(img, prob=1.0, sigma=(1.0, 1.0)).shape == img.shape
+
+    for name in (
+        "AutoContrast", "Equalize", "Invert", "Solarize", "SolarizeIncreasing",
+        "SolarizeAdd", "Color", "ColorIncreasing", "Contrast", "ContrastIncreasing",
+        "Brightness", "BrightnessIncreasing", "Sharpness", "SharpnessIncreasing",
+        "Desaturate", "GaussianBlur", "GaussianBlurRand", "Rotate",
+        "Posterize", "PosterizeOriginal", "PosterizeIncreasing", "ShearX", "ShearY",
+        "TranslateX", "TranslateY", "TranslateXRel", "TranslateYRel",
+    ):
+        result = augment_module.AugmentOp(
+            name, prob=1.0, magnitude=5,
+            hparams={"translate_const": 8, "translate_pct": 0.2},
+        )(img)
+        assert result.shape == img.shape
+    assert augment_module.AugmentOp("Invert", prob=0.0)(img) is img
+    assert augment_module.AugmentOp(
+        "Invert", prob=1.0, hparams={"magnitude_std": float("inf")})(img).shape == img.shape
+    assert augment_module.AugmentOp(
+        "Invert", prob=1.0, hparams={"magnitude_std": 1.0})(img).shape == img.shape
+    assert "AugmentOp" in repr(augment_module.AugmentOp("Invert"))
+    assert augment_module.AutoAugment([[('Invert', 1.0, 1.0)]])(img).shape == img.shape
+    with pytest.raises(ValueError):
+        augment_module.AugmentOp("missing", prob=1.0)(img)
+
+    with pytest.raises(ValueError):
+        augment_module.auto_augment_policy("missing")
+    assert augment_module.auto_augment_transform("v0-mstd0.5")(img).shape == img.shape
+    for policy in ("v0r", "original", "originalr", "3a"):
+        assert data_module.auto_augment_policy(policy)
+    with pytest.raises(ValueError):
+        augment_module.auto_augment_transform("v0-unknown1")
+    with pytest.raises(ValueError):
+        augment_module.rand_augment_transform("rand-unknown1")
+    with pytest.raises(ValueError):
+        augment_module.augment_and_mix_transform("augmix-unknown1")
+    assert build_auto_augment("none") is None
+    assert data_module.rand_augment_choices("weights")
+    assert data_module.rand_augment_choices("3aw")
+    assert data_module.rand_augment_ops(transforms={"Invert": 1})
+    assert data_module.augmix_ops(transforms={"Invert": 1})
+    assert repr(augment_module.RandAugment([], 0))
+    assert repr(augment_module.AugMixAugment([], blended=True))
+    assert augment_module.AugMixAugment(
+        data_module.augmix_ops(transforms=["Invert"]), width=1, depth=1)(img).shape == img.shape
+    assert augment_module.RandAugment(
+        data_module.rand_augment_ops(transforms=["Invert"]), 1, [1.0])(img).shape == img.shape
+    assert augment_module.RandAugment([], 0)(img) is img
 
 
 def test_mixup_cutmix(monkeypatch):
@@ -146,6 +246,29 @@ def test_mixup_cutmix(monkeypatch):
     unchanged, unchanged_labels = MixupCutmix(prob=0.0, num_classes=2)(images, labels)
     assert unchanged is images
     assert unchanged_labels is labels
+
+
+def test_mixup_modes_and_edges():
+    images = np.zeros((4, 8, 8, 3), dtype=np.float32)
+    labels = np.arange(4, dtype=np.int32)
+    with pytest.raises(ValueError, match="mode"):
+        MixupCutmix(mode="invalid")
+
+    for mode in ("pair", "elem"):
+        mixed, targets = MixupCutmix(
+            mixup_alpha=1.0, cutmix_alpha=0.0, mode=mode,
+            label_smoothing=0.1, num_classes=4,
+        )(images, labels)
+        assert mixed.shape == images.shape
+        assert targets.shape == (4, 4)
+
+    for mode in ("batch", "elem"):
+        mixed, targets = MixupCutmix(
+            mixup_alpha=0.0, cutmix_alpha=1.0, mode=mode,
+            num_classes=4, cutmix_minmax=(0.25, 0.5),
+        )(images, labels)
+        assert mixed.shape == images.shape
+        assert targets.shape == (4, 4)
 
 
 def test_data_error_paths(temp_dataset, monkeypatch):
@@ -217,6 +340,9 @@ def test_data_error_paths(temp_dataset, monkeypatch):
 
 
 def test_decode_transform():
+    with pytest.raises(ValueError, match="unable to decode"):
+        data_module._decode_image(b"not an image")
+
     # 1. Create a test sample
     img = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
     ok, encoded = cv2.imencode(
@@ -242,8 +368,35 @@ def test_decode_transform():
         img_size=32, is_training=True, hflip=0.0,
         color_jitter_prob=0.0, re_prob=0.0,
     )
+    t_rkrc = _DecodeTransform(img_size=32, is_training=True, train_crop_mode="rkrc")
+    t_rkrr = _DecodeTransform(img_size=32, is_training=True, train_crop_mode="rkrr")
+    assert t_rkrc.map(sample)["image"].shape == (32, 32, 3)
+    assert t_rkrr.map(sample)["image"].shape == (32, 32, 3)
+    t_aug = _DecodeTransform(
+        img_size=32, is_training=True, auto_augment="3a", color_jitter=cast(Any, None),
+        re_prob=0.0,
+    )
+    assert t_aug.map(sample)["image"].shape == (32, 32, 3)
+    t_force = _DecodeTransform(
+        img_size=32, is_training=True, auto_augment="3a",
+        force_color_jitter=True,
+        color_jitter=cast(Any, (0.1, 0.1, 0.1, 0.1)), re_prob=0.0,
+    )
+    assert t_force.map(sample)["image"].shape == (32, 32, 3)
+    with pytest.raises(ValueError, match="color_jitter"):
+        _DecodeTransform(
+            img_size=32, is_training=True,
+            color_jitter=cast(Any, (0.1, 0.1)),
+        ).map(sample)
+    with pytest.raises(ValueError, match="unknown train_crop_mode"):
+        _DecodeTransform(img_size=32, is_training=True, train_crop_mode="bad").map(sample)
+
     out_array = t_plain.map({"image": np.asarray(img), "label": 1})
     out_array2 = t_plain.map({"image": img, "label": 1})
+    gray = np.zeros((64, 64), dtype=np.uint8)
+    rgba = np.zeros((64, 64, 4), dtype=np.uint8)
+    assert t_plain.map({"image": gray, "label": 1})["image"].shape == (32, 32, 3)
+    assert t_plain.map({"image": rgba, "label": 1})["image"].shape == (32, 32, 3)
     assert out_array["image"].shape == out_array2["image"].shape == (32, 32, 3)
 
 

@@ -20,6 +20,8 @@ _INTERPOLATIONS = {
 }
 _RANDOM_INTERPOLATIONS = ("bilinear", "bicubic")
 
+# Image conversion, interpolation, and geometric transforms.
+
 
 def _as_int(value):
     try:
@@ -157,38 +159,37 @@ def resize_keep_ratio(image, size=224, scale=(0.8, 1.0),
     return cv2.resize(image, (width, height), interpolation=resolve_interpolation(interpolation))
 
 
-def center_crop_or_pad(image, size=224):
-    image = _rgb(image)
-    target_h, target_w = _size(size)
+def _pad_to_size(image, target_h, target_w):
     height, width = image.shape[:2]
-    if height < target_h or width < target_w:
-        top = max(0, (target_h - height) // 2)
-        bottom = max(0, target_h - height - top)
-        left = max(0, (target_w - width) // 2)
-        right = max(0, target_w - width - left)
-        image = cv2.copyMakeBorder(
-            image, top, bottom, left, right, cv2.BORDER_REFLECT_101)
-        height, width = image.shape[:2]
+    if height >= target_h and width >= target_w:
+        return image
+    top = max(0, (target_h - height) // 2)
+    bottom = max(0, target_h - height - top)
+    left = max(0, (target_w - width) // 2)
+    right = max(0, target_w - width - left)
+    return cv2.copyMakeBorder(
+        image, top, bottom, left, right, cv2.BORDER_REFLECT_101)
+
+
+def center_crop_or_pad(image, size=224):
+    target_h, target_w = _size(size)
+    image = _pad_to_size(_rgb(image), target_h, target_w)
+    height, width = image.shape[:2]
     top = max(0, (height - target_h) // 2)
     left = max(0, (width - target_w) // 2)
     return image[top:top + target_h, left:left + target_w].copy()
 
 
 def random_crop_or_pad(image, size=224):
-    image = _rgb(image)
     target_h, target_w = _size(size)
+    image = _pad_to_size(_rgb(image), target_h, target_w)
     height, width = image.shape[:2]
-    if height < target_h or width < target_w:
-        top = max(0, (target_h - height) // 2)
-        bottom = max(0, target_h - height - top)
-        left = max(0, (target_w - width) // 2)
-        right = max(0, target_w - width - left)
-        image = cv2.copyMakeBorder(
-            image, top, bottom, left, right, cv2.BORDER_REFLECT_101)
-        height, width = image.shape[:2]
     top = np.random.randint(0, max(1, height - target_h + 1))
     left = np.random.randint(0, max(1, width - target_w + 1))
     return image[top:top + target_h, left:left + target_w].copy()
+
+
+# Pixel-level transforms.
 
 
 def _range(value, name):
@@ -325,9 +326,14 @@ def random_erasing(array, prob=0.0, sl=0.02, sh=0.33, r1=0.3,
     return result
 
 
+def _augmentation_strength(magnitude, hparams):
+    maximum = _as_float(hparams.get("magnitude_max", 10))
+    return max(0.0, min(_as_float(magnitude), maximum)) / 10.0
+
+
 def _auto_op(image, name, magnitude, hparams):
     image = _rgb(image)
-    strength = max(0.0, min(_as_float(magnitude), _as_float(hparams.get("magnitude_max", 10)))) / 10.0
+    strength = _augmentation_strength(magnitude, hparams)
     if name == "AutoContrast":
         return _adjust_contrast(image, 1.0 + strength)
     if name == "Equalize":
@@ -426,6 +432,7 @@ class AugmentOp:
                 f"magnitude={self.magnitude})")
 
 
+# Searched AutoAugment policies and automated policy builders.
 _V0_POLICY = [
     [("Equalize", .8, 1), ("ShearY", .8, 4)], [("Color", .4, 9), ("Equalize", .6, 3)],
     [("Color", .4, 1), ("Rotate", .6, 8)], [("Solarize", .8, 3), ("Equalize", .4, 7)],
@@ -442,10 +449,14 @@ _V0_POLICY = [
     [("Color", .8, 6), ("Rotate", .4, 5)],
 ]
 _ORIGINAL_POLICY = [
-    [("PosterizeOriginal", .4, 8), ("Rotate", .6, 9)], [("Solarize", .6, 5), ("AutoContrast", .6, 5)],
-    [("Equalize", .8, 8), ("Equalize", .6, 3)], [("PosterizeOriginal", .6, 7), ("PosterizeOriginal", .6, 6)],
-    [("Equalize", .4, 7), ("Solarize", .2, 4)], [("Equalize", .4, 4), ("Rotate", .8, 8)],
-    [("Solarize", .6, 3), ("Equalize", .6, 7)], [("PosterizeOriginal", .8, 5), ("Equalize", 1.0, 2)],
+    [("PosterizeOriginal", .4, 8), ("Rotate", .6, 9)],
+    [("Solarize", .6, 5), ("AutoContrast", .6, 5)],
+    [("Equalize", .8, 8), ("Equalize", .6, 3)],
+    [("PosterizeOriginal", .6, 7), ("PosterizeOriginal", .6, 6)],
+    [("Equalize", .4, 7), ("Solarize", .2, 4)],
+    [("Equalize", .4, 4), ("Rotate", .8, 8)],
+    [("Solarize", .6, 3), ("Equalize", .6, 7)],
+    [("PosterizeOriginal", .8, 5), ("Equalize", 1.0, 2)],
     [("Rotate", .2, 3), ("Solarize", .6, 8)], [("Equalize", .6, 8), ("PosterizeOriginal", .4, 6)],
     [("Rotate", .8, 8), ("Color", .4, 0)], [("Rotate", .4, 9), ("Equalize", .6, 2)],
     [("Equalize", .0, 7), ("Equalize", .8, 8)], [("Invert", .6, 4), ("Equalize", 1.0, 8)],
@@ -579,6 +590,11 @@ def _weighted_transforms(transforms):
     return list(names), weights
 
 
+def _set_magnitude_std(config, value):
+    value = _as_float(value)
+    config["magnitude_std"] = math.inf if value > 100 else value
+
+
 def rand_augment_choices(name, increasing=True):
     if name == "weights":
         return _RAND_WEIGHTED_0
@@ -625,8 +641,7 @@ def rand_augment_transform(config_str="rand-m9-n2", hparams=None, transforms=Non
     config = dict(hparams or {})
     for part in config_str.split("-")[1:]:
         if part.startswith("mstd"):
-            value = _as_float(part[4:])
-            config["magnitude_std"] = math.inf if value > 100 else value
+            _set_magnitude_std(config, part[4:])
         elif part.startswith("mmax"):
             config["magnitude_max"] = _as_float(part[4:])
         elif part.startswith("inc"):
@@ -702,8 +717,7 @@ def augment_and_mix_transform(config_str="augmix-m3-w3", hparams=None, transform
     config = dict(hparams or {})
     for part in config_str.split("-")[1:]:
         if part.startswith("mstd"):
-            value = _as_float(part[4:])
-            config["magnitude_std"] = math.inf if value > 100 else value
+            _set_magnitude_std(config, part[4:])
         elif part.startswith("m"):
             magnitude = _as_float(part[1:])
         elif part.startswith("w"):
@@ -786,16 +800,22 @@ class MixupCutmix:
             return images, labels
         targets = _one_hot(labels, self.num_classes)
         if self.label_smoothing:
-            targets = targets * (1.0 - self.label_smoothing) + self.label_smoothing / self.num_classes
-        indices = np.arange(batch - 1, -1, -1) if self.mode == "pair" else np.random.permutation(batch)
+            targets = targets * (1.0 - self.label_smoothing)
+            targets += self.label_smoothing / self.num_classes
+        indices = (
+            np.arange(batch - 1, -1, -1)
+            if self.mode == "pair" else np.random.permutation(batch)
+        )
         if self.mode == "elem":
             mixed = images.copy()
             lambdas = np.empty(batch, dtype=np.float32)
             for index in range(batch):
                 lam = _as_float(np.random.beta(alpha, alpha))
                 if use_cutmix:
-                    top, left, bottom, right, lam = _cutmix_box(height, width, lam, self.cutmix_minmax)
-                    mixed[index, top:bottom, left:right] = images[indices[index], top:bottom, left:right]
+                    top, left, bottom, right, lam = _cutmix_box(
+                        height, width, lam, self.cutmix_minmax)
+                    mixed[index, top:bottom, left:right] = images[
+                        indices[index], top:bottom, left:right]
                 else:
                     mixed[index] = lam * images[index] + (1.0 - lam) * images[indices[index]]
                 lambdas[index] = lam
@@ -803,8 +823,10 @@ class MixupCutmix:
         lam = _as_float(np.random.beta(alpha, alpha))
         mixed = images.copy()
         if use_cutmix:
-            top, left, bottom, right, lam = _cutmix_box(height, width, lam, self.cutmix_minmax)
-            mixed[:, top:bottom, left:right] = images[indices, top:bottom, left:right]
+            top, left, bottom, right, lam = _cutmix_box(
+                height, width, lam, self.cutmix_minmax)
+            mixed[:, top:bottom, left:right] = images[
+                indices, top:bottom, left:right]
         else:
             mixed = lam * images + (1.0 - lam) * images[indices]
         return mixed, lam * targets + (1.0 - lam) * targets[indices]

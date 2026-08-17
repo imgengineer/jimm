@@ -177,16 +177,19 @@ class _DecodeTransform(grain.MapTransform):
         self.mean = np.asarray(mean, dtype=np.float32)
         self.std = np.asarray(std, dtype=np.float32)
 
-    def map(self, element):  # type: ignore[override]
-        raw = element["image"]
+    @staticmethod
+    def _coerce_image(raw):
         if isinstance(raw, bytes):
-            image = _decode_image(raw)
-        else:
-            image = np.asarray(raw, dtype=np.uint8)
-            if image.ndim == 2:
-                image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-            elif image.shape[-1] == 4:
-                image = image[..., :3]
+            return _decode_image(raw)
+        image = np.asarray(raw, dtype=np.uint8)
+        if image.ndim == 2:
+            return cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        if image.ndim == 3 and image.shape[-1] == 4:
+            return image[..., :3]
+        return image
+
+    def map(self, element):  # pyright: ignore[reportIncompatibleMethodOverride]
+        image = self._coerce_image(element["image"])
 
         if self.is_training:
             if self.train_crop_mode == "rrc":
@@ -262,15 +265,16 @@ class Loader:
         return quotient if self._drop or remainder == 0 else quotient + 1
 
 
-def create_loader(root, batch_size, img_size=224, is_training=False, crop_pct=0.875,
-                  scale=(0.08, 1.0), ratio=(3.0 / 4.0, 4.0 / 3.0),
-                  interpolation="random", train_crop_mode="rrc", hflip=0.5,
-                  vflip=0.0, color_jitter=0.4, color_jitter_prob=None, hue=0.0,
-                  grayscale_prob=0.0, gaussian_blur_prob=0.0, auto_augment=None,
-                  force_color_jitter=False, re_prob=0.2, re_mode="const",
-                  re_count=1, mean=IMAGENET_MEAN, std=IMAGENET_STD,
-                  num_workers=0, worker_buffer_size=1, enable_profiling=False,
-                  seed=0, shuffle=None, shard_options=None, in_memory=False):
+def create_loader(
+        root, batch_size, img_size=224, is_training=False, crop_pct=0.875,
+        scale=(0.08, 1.0), ratio=(3.0 / 4.0, 4.0 / 3.0),
+        interpolation="random", train_crop_mode="rrc", hflip=0.5,
+        vflip=0.0, color_jitter=0.4, color_jitter_prob=None, hue=0.0,
+        grayscale_prob=0.0, gaussian_blur_prob=0.0, auto_augment=None,
+        force_color_jitter=False, re_prob=0.2, re_mode="const", re_count=1,
+        mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=0,
+        worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
+        shard_options=None, in_memory=False):
     """Create a Grain loader with timm-compatible augmentation options."""
     source, transform = create_dataset(
         root,

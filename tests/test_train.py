@@ -10,8 +10,10 @@ import numpy as np
 import pytest
 from flax import nnx
 
+from jimm.augment import MixupCutmix
 from jimm.registry import create_model
 from jimm.train import (
+    _mixup_cutmix_jax,
     cross_entropy,
     eval_step,
     fsdp_shard_model,
@@ -101,6 +103,13 @@ def test_train_and_eval_step():
     assert float(cached_loss) > 0.0
     assert 0.0 <= float(cached_acc) <= 1.0
 
+    mixup = MixupCutmix(mixup_alpha=0.8, cutmix_alpha=1.0, num_classes=5)
+    mixed_train = make_cached_train_step(m, opt, mixup=mixup)
+    mixed_loss, mixed_acc = mixed_train(
+        images, labels, 0.1, rng=jax.random.PRNGKey(0))
+    assert float(mixed_loss) > 0.0
+    assert 0.0 <= float(mixed_acc) <= 1.0
+
     plain_cached_train = make_cached_train_step(m, opt)
     plain_loss, plain_acc = plain_cached_train(images, labels, 0.0)
     assert float(plain_loss) > 0.0
@@ -116,6 +125,25 @@ def test_train_and_eval_step():
     plain_v_loss, plain_v_acc = plain_cached_eval(images, labels)
     assert float(plain_v_loss) > 0.0
     assert 0.0 <= float(plain_v_acc) <= 1.0
+
+
+def test_jax_mixup_cutmix_modes():
+    images = jnp.ones((4, 8, 8, 3), dtype=jnp.float32)
+    labels = jnp.array([0, 1, 2, 3], dtype=jnp.int32)
+    for mode in ("batch", "pair", "elem"):
+        for cutmix in (False, True):
+            config = MixupCutmix(
+                mixup_alpha=0.8 if not cutmix else 0.0,
+                cutmix_alpha=1.0 if cutmix else 0.0,
+                prob=1.0,
+                mode=mode,
+                num_classes=4,
+            )
+            mixed_images, mixed_labels = _mixup_cutmix_jax(
+                images, labels, jax.random.PRNGKey(0), config)
+            assert mixed_images.shape == images.shape
+            assert mixed_labels.shape == (4, 4)
+            np.testing.assert_allclose(np.asarray(mixed_labels).sum(axis=1), 1.0)
 
 
 def test_fsdp_shard_model():

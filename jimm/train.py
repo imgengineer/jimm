@@ -88,6 +88,113 @@ def _accuracy(logits, labels):
     return jnp.mean(jnp.argmax(logits, -1) == target)
 
 
+def _mixup_cutmix_jax(images, labels, rng, config):
+    """Apply batch Mixup/CutMix on device without a NumPy round trip."""
+    if config.prob <= 0 or (config.mixup_alpha <= 0 and config.cutmix_alpha <= 0):
+        return images, labels
+
+    batch, height, width, _ = images.shape
+    targets = labels if labels.ndim == 2 else jax.nn.one_hot(labels, config.num_classes)
+    mixed_targets = targets
+    if config.label_smoothing:
+        mixed_targets = targets * (1.0 - config.label_smoothing)
+        mixed_targets += config.label_smoothing / config.num_classes
+
+    apply_key, switch_key, alpha_key, box_key, perm_key = jax.random.split(rng, 5)
+    apply = True if config.prob >= 1 else jax.random.uniform(apply_key) < config.prob
+    if config.cutmix_alpha > 0 and config.mixup_alpha > 0:
+        use_cutmix = jax.random.uniform(switch_key) < config.switch_prob
+    else:
+        use_cutmix = config.cutmix_alpha > 0
+    alpha = jnp.maximum(
+        jnp.where(use_cutmix, config.cutmix_alpha, config.mixup_alpha), 1e-6)
+    indices = (
+        jnp.arange(batch - 1, -1, -1)
+        if config.mode == "pair" else jax.random.permutation(perm_key, batch)
+    )
+
+    def mixup(_):
+        if config.mode == "elem":
+            lam = jax.random.beta(alpha_key, alpha, alpha, shape=(batch,))
+            image_lam = lam[:, None, None, None]
+            label_lam = lam[:, None]
+        else:
+            lam = jax.random.beta(alpha_key, alpha, alpha)
+            image_lam = lam
+            label_lam = lam
+        mixed_images = image_lam * images + (1.0 - image_lam) * images[indices]
+        mixed_labels = label_lam * mixed_targets + (1.0 - label_lam) * mixed_targets[indices]
+        return mixed_images, mixed_labels
+
+    def cutmix(_):
+        box_keys = jax.random.split(box_key, 4)
+        if config.mode == "elem":
+            lam = jax.random.beta(alpha_key, alpha, alpha, shape=(batch,))
+            if config.cutmix_minmax is None:
+                ratio = jnp.sqrt(jnp.maximum(0.0, 1.0 - lam))
+                box_h = jnp.rint(height * ratio).astype(jnp.int32)
+                box_w = jnp.rint(width * ratio).astype(jnp.int32)
+            else:
+                low, high = config.cutmix_minmax
+                box_h = jnp.rint(
+                    height * jax.random.uniform(box_keys[0], (batch,), minval=low, maxval=high)
+                ).astype(jnp.int32)
+                box_w = jnp.rint(
+                    width * jax.random.uniform(box_keys[1], (batch,), minval=low, maxval=high)
+                ).astype(jnp.int32)
+            center_y = jax.random.randint(box_keys[2], (batch,), 0, height)
+            center_x = jax.random.randint(box_keys[3], (batch,), 0, width)
+            top = jnp.maximum(0, center_y - box_h // 2)
+            left = jnp.maximum(0, center_x - box_w // 2)
+            bottom = jnp.minimum(height, center_y + box_h // 2)
+            right = jnp.minimum(width, center_x + box_w // 2)
+            yy = jnp.arange(height)[None, :, None]
+            xx = jnp.arange(width)[None, None, :]
+            mask = (
+                (yy >= top[:, None, None]) & (yy < bottom[:, None, None])
+                & (xx >= left[:, None, None]) & (xx < right[:, None, None])
+            )
+            actual_lam = 1.0 - (bottom - top) * (right - left) / (height * width)
+            mixed_images = jnp.where(mask[..., None], images[indices], images)
+            mixed_labels = actual_lam[:, None] * mixed_targets + (1.0 - actual_lam[:, None]) * mixed_targets[indices]
+            return mixed_images, mixed_labels
+
+        lam = jax.random.beta(alpha_key, alpha, alpha)
+        if config.cutmix_minmax is None:
+            ratio = jnp.sqrt(jnp.maximum(0.0, 1.0 - lam))
+            box_h = jnp.rint(height * ratio).astype(jnp.int32)
+            box_w = jnp.rint(width * ratio).astype(jnp.int32)
+        else:
+            low, high = config.cutmix_minmax
+            box_h = jnp.rint(height * jax.random.uniform(box_keys[0], minval=low, maxval=high)).astype(jnp.int32)
+            box_w = jnp.rint(width * jax.random.uniform(box_keys[1], minval=low, maxval=high)).astype(jnp.int32)
+        center_y = jax.random.randint(box_keys[2], (), 0, height)
+        center_x = jax.random.randint(box_keys[3], (), 0, width)
+        top = jnp.maximum(0, center_y - box_h // 2)
+        left = jnp.maximum(0, center_x - box_w // 2)
+        bottom = jnp.minimum(height, center_y + box_h // 2)
+        right = jnp.minimum(width, center_x + box_w // 2)
+        yy = jnp.arange(height)[:, None]
+        xx = jnp.arange(width)[None, :]
+        mask = (
+            (yy >= top) & (yy < bottom) & (xx >= left) & (xx < right)
+        )
+        actual_lam = 1.0 - (bottom - top) * (right - left) / (height * width)
+        mixed_images = jnp.where(mask[None, ..., None], images[indices], images)
+        mixed_labels = actual_lam * mixed_targets + (1.0 - actual_lam) * mixed_targets[indices]
+        return mixed_images, mixed_labels
+
+    def identity(_):
+        return images, targets
+
+    return jax.lax.cond(
+        apply,
+        lambda _: jax.lax.cond(use_cutmix, cutmix, mixup, None),
+        identity,
+        None,
+    )
+
+
 def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0.0):
     if epochs <= 0 or steps_per_epoch <= 0:
         raise ValueError("epochs and steps_per_epoch must be positive")
@@ -103,11 +210,16 @@ def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0
                          wrt=nnx.Param)
 
 
-@nnx.jit(static_argnames=("smoothing", "amp"))
-def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False):
+@nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
+def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False,
+               mixup=None, rng=None):
     chex.assert_shape(images, (None, None, None, 3))
     chex.assert_rank(labels, {1, 2})
     chex.assert_equal(images.shape[0], labels.shape[0])
+    if mixup is not None:
+        if rng is None:
+            raise ValueError("rng is required when mixup or cutmix is enabled")
+        images, labels = _mixup_cutmix_jax(images, labels, rng, mixup)
 
     def loss_fn(model):
         x = images.astype(jnp.bfloat16) if amp else images
@@ -133,9 +245,10 @@ def eval_step(model, images, labels, amp=False):
     return cross_entropy(logits, labels), _accuracy(logits, labels)
 
 
-def make_cached_train_step(model, optimizer, amp=False):
-    """Create one cached JIT train step with AMP bound at construction time."""
-    return nnx.cached_partial(functools.partial(train_step, amp=amp), model, optimizer)
+def make_cached_train_step(model, optimizer, amp=False, mixup=None):
+    """Create one cached JIT train step with AMP and batch mixing bound."""
+    return nnx.cached_partial(
+        functools.partial(train_step, amp=amp, mixup=mixup), model, optimizer)
 
 
 def make_cached_eval_step(model, amp=False):
@@ -217,8 +330,7 @@ def main(argv=None):
     mesh = jax.sharding.Mesh(total_devices, ('data',))
     P = jax.sharding.PartitionSpec
     data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
-    train_label_sharding = jax.sharding.NamedSharding(
-        mesh, P('data', None) if mixup is not None else P('data',))
+    train_label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
     eval_label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
 
     # 3. Instantiate model and data pipeline (loader first: step count drives the LR schedule)
@@ -261,7 +373,9 @@ def main(argv=None):
 
     # Construct cached train & eval steps (freezes the respective mode graph traversal)
     model.train()
-    cached_train_step = make_cached_train_step(model, optimizer, amp=args.amp)
+    cached_train_step = make_cached_train_step(
+        model, optimizer, amp=args.amp, mixup=mixup)
+    train_rng = jax.random.PRNGKey(rank) if mixup is not None else None
     model.eval()
     cached_eval_step = make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
     model.train()
@@ -271,14 +385,15 @@ def main(argv=None):
         losses, accuracies = [], []
         for _ in range(steps_per_epoch):
             batch = next(it)
-            images, labels = batch["image"], batch["label"]
-            if mixup is not None:
-                images, labels = mixup(images, labels)
-            # Distribute process-local batch across devices using SPMD data sharding
-            images = jax.make_array_from_process_local_data(data_sharding, images)
-            labels = jax.make_array_from_process_local_data(train_label_sharding, labels)
-            
-            loss, acc = cached_train_step(images, labels, args.smoothing)
+            # Distribute process-local batch across devices before batch mixing.
+            images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
+            labels = jax.make_array_from_process_local_data(train_label_sharding, batch["label"])
+            if train_rng is not None:
+                train_rng, step_rng = jax.random.split(train_rng)
+                loss, acc = cached_train_step(
+                    images, labels, args.smoothing, rng=step_rng)
+            else:
+                loss, acc = cached_train_step(images, labels, args.smoothing)
             losses.append(loss)
             accuracies.append(acc)
 

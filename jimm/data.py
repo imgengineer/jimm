@@ -339,7 +339,7 @@ class _DecodeTransform(grain.RandomMapTransform):
         """Apply the transform with a local RNG for direct callers and tests."""
         return self.random_map(element, np.random.default_rng())
 
-    def random_map(self, element, rng):  # pyright: ignore[reportIncompatibleMethodOverride]
+    def random_map(self, element, rng):  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
         image = self._coerce_image(element["image"])
 
         if self.is_training:

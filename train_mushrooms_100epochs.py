@@ -1,7 +1,7 @@
 """High-performance 100-Epoch training using jimm.data and native AMP mixed precision."""
 import time
 import json
-import numpy as np
+import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -50,7 +50,8 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
 
     # 3. Create Cached Step Functions with Native AMP (bfloat16) on Tensor Cores
     model.train()
-    cached_train_step = make_cached_train_step(model, opt, amp=amp)
+    cached_train_step = make_cached_train_step(model, opt, amp=amp, mixup=mixup)
+    train_rng = jax.random.PRNGKey(42) if mixup is not None else None
     model.eval()
     cached_eval_step = make_cached_eval_step(model, amp=amp)
     model.train()
@@ -68,13 +69,13 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
 
         for _ in range(steps_per_epoch):
             batch = next(it)
-            images, labels = batch["image"], batch["label"]
-            if mixup is not None:
-                images, labels = mixup(np.asarray(images), np.asarray(labels))
-            images = jnp.asarray(images)
-            labels = jnp.asarray(labels)
-
-            l, a = cached_train_step(images, labels, smoothing)
+            images = jnp.asarray(batch["image"])
+            labels = jnp.asarray(batch["label"])
+            if train_rng is not None:
+                train_rng, step_rng = jax.random.split(train_rng)
+                l, a = cached_train_step(images, labels, smoothing, rng=step_rng)
+            else:
+                l, a = cached_train_step(images, labels, smoothing)
             losses.append(l)
             accuracies.append(a)
 

@@ -1,9 +1,8 @@
-"""Grain data pipeline with OpenCV or optional AlbumentationsX augmentation.
+"""Grain data pipeline with timm-style OpenCV augmentations.
 
 Images are decoded to RGB NumPy arrays with OpenCV and yielded as normalized
 float32 NHWC batches. Grain handles sharding and batching.
 """
-import importlib
 from pathlib import Path
 
 import cv2  # pyright: ignore[reportMissingImports]
@@ -50,12 +49,6 @@ from .augment import (
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
-
-
-def _build_albumentationsx_transform(**kwargs):
-    backend = importlib.import_module("jimm.albumentations_backend")
-    return backend.build_albumentationsx_transform(**kwargs)
-
 
 __all__ = [
     "AugmentOp", "AutoAugment", "AugMixAugment", "ImageFolder", "Loader",
@@ -158,8 +151,7 @@ class _DecodeTransform(grain.MapTransform):
                  vflip=0.0, color_jitter=0.4, color_jitter_prob=None, hue=0.0,
                  grayscale_prob=0.0, gaussian_blur_prob=0.0, auto_augment=None,
                  force_color_jitter=False, re_prob=0.2, re_mode="const",
-                 re_count=1, mean=IMAGENET_MEAN, std=IMAGENET_STD,
-                 augmentation_backend="opencv"):
+                 re_count=1, mean=IMAGENET_MEAN, std=IMAGENET_STD):
         self.img_size = img_size
         self.is_training = is_training
         self.scale = scale
@@ -173,14 +165,7 @@ class _DecodeTransform(grain.MapTransform):
         self.hue = hue
         self.grayscale_prob = grayscale_prob
         self.gaussian_blur_prob = gaussian_blur_prob
-        if augmentation_backend not in ("opencv", "albumentationsx"):
-            raise ValueError(
-                "augmentation_backend must be 'opencv' or 'albumentationsx'")
-        self.augmentation_backend = augmentation_backend
-        self.auto_augment = (
-            build_auto_augment(auto_augment)
-            if augmentation_backend == "opencv" else None
-        )
+        self.auto_augment = build_auto_augment(auto_augment)
         self.force_color_jitter = force_color_jitter
         self.re_prob = re_prob
         self.re_mode = re_mode
@@ -191,31 +176,6 @@ class _DecodeTransform(grain.MapTransform):
             self.resize = 256
         self.mean = np.asarray(mean, dtype=np.float32)
         self.std = np.asarray(std, dtype=np.float32)
-        self._albumentationsx = None
-        if augmentation_backend == "albumentationsx":
-            self._albumentationsx = _build_albumentationsx_transform(
-                img_size=img_size,
-                is_training=is_training,
-                crop_pct=crop_pct,
-                scale=scale,
-                ratio=ratio,
-                interpolation=resolve_interpolation(interpolation),
-                train_crop_mode=train_crop_mode,
-                hflip=hflip,
-                vflip=vflip,
-                color_jitter=color_jitter,
-                color_jitter_prob=color_jitter_prob,
-                hue=hue,
-                grayscale_prob=grayscale_prob,
-                gaussian_blur_prob=gaussian_blur_prob,
-                auto_augment=auto_augment,
-                force_color_jitter=force_color_jitter,
-                re_prob=re_prob,
-                re_mode=re_mode,
-                re_count=re_count,
-                mean=self.mean,
-                std=self.std,
-            )
 
     @staticmethod
     def _coerce_image(raw):
@@ -228,14 +188,8 @@ class _DecodeTransform(grain.MapTransform):
             return image[..., :3]
         return image
 
-    def map(self, element):  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+    def map(self, element):  # pyright: ignore[reportIncompatibleMethodOverride]
         image = self._coerce_image(element["image"])
-        if self._albumentationsx is not None:
-            array = self._albumentationsx(image=image)["image"]
-            return {
-                "image": np.asarray(array, dtype=np.float32),
-                "label": np.int32(element["label"]),
-            }
 
         if self.is_training:
             if self.train_crop_mode == "rrc":
@@ -320,12 +274,8 @@ def create_loader(
         force_color_jitter=False, re_prob=0.2, re_mode="const", re_count=1,
         mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=0,
         worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
-        shard_options=None, in_memory=False, augmentation_backend="opencv"):
-    """Create a Grain loader with timm-compatible augmentation options.
-
-    ``augmentation_backend="albumentationsx"`` uses the optional official
-    AlbumentationsX Compose pipeline; the default uses the built-in OpenCV path.
-    """
+        shard_options=None, in_memory=False):
+    """Create a Grain loader with timm-compatible augmentation options."""
     source, transform = create_dataset(
         root,
         in_memory=in_memory,
@@ -350,7 +300,6 @@ def create_loader(
         re_count=re_count,
         mean=mean,
         std=std,
-        augmentation_backend=augmentation_backend,
     )
     shuffle = is_training if shuffle is None else shuffle
     if shard_options is None:

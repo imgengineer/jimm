@@ -1,16 +1,12 @@
 """Unit tests for jimm.data."""
-import importlib
 import os
 import shutil
-import sys
 import tempfile
-import types
 from pathlib import Path
 from typing import Any, cast
 
 import cv2  # pyright: ignore[reportMissingImports]
 import grain.python as grain
-albu_backend = importlib.import_module("jimm.albumentations_backend")
 import jimm.augment as augment_module
 import jimm.data as data_module
 import numpy as np
@@ -343,67 +339,7 @@ def test_data_error_paths(temp_dataset, monkeypatch):
     assert unchanged_labels is labels
 
 
-def test_albumentationsx_backend_builder(monkeypatch):
-    class FakeTransform:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-    class FakeCompose(FakeTransform):
-        def __call__(self, **data):
-            return data
-
-    fake = types.ModuleType("albumentations")
-    setattr(fake, "Compose", FakeCompose)
-    for name in (
-        "RandomResizedCrop", "Resize", "CenterCrop", "RandomCrop",
-        "HorizontalFlip", "VerticalFlip", "OneOf", "SomeOf", "ColorJitter",
-        "RandomBrightnessContrast", "ToGray", "GaussianBlur", "CoarseDropout",
-        "Normalize",
-    ):
-        setattr(fake, name, FakeTransform)
-    monkeypatch.setitem(sys.modules, "albumentations", fake)
-
-    pipeline = data_module._build_albumentationsx_transform(
-        img_size=16, is_training=True, crop_pct=0.875,
-        scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=cv2.INTER_LINEAR,
-        train_crop_mode="rrc", hflip=0.5, vflip=0.0, color_jitter=0.2,
-        color_jitter_prob=None, hue=0.0, grayscale_prob=0.1,
-        gaussian_blur_prob=0.1, auto_augment="rand-m2-n1",
-        force_color_jitter=False, re_prob=0.2, re_mode="const", re_count=1,
-        mean=data_module.IMAGENET_MEAN, std=data_module.IMAGENET_STD,
-    )
-    assert isinstance(pipeline, FakeCompose)
-    assert pipeline(image=np.zeros((16, 16, 3), dtype=np.uint8))["image"].shape == (16, 16, 3)
-
-    eval_pipeline = data_module._build_albumentationsx_transform(
-        img_size=16, is_training=False, crop_pct=0.875,
-        scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=cv2.INTER_LINEAR,
-        train_crop_mode="rrc", hflip=0.0, vflip=0.0, color_jitter=None,
-        color_jitter_prob=None, hue=0.0, grayscale_prob=0.0,
-        gaussian_blur_prob=0.0, auto_augment=None, force_color_jitter=False,
-        re_prob=0.0, re_mode="const", re_count=1,
-        mean=data_module.IMAGENET_MEAN, std=data_module.IMAGENET_STD,
-    )
-    assert isinstance(eval_pipeline, FakeCompose)
-
-    for config in ("3a", "trivialaugment"):
-        assert albu_backend._auto_augment(fake, config) is not None
-    assert albu_backend._auto_augment(fake, None) is None
-    assert albu_backend._as_range(0.2, name="test") == (0.8, 1.2)
-    with pytest.raises(ValueError):
-        albu_backend._as_range((0.1,), name="test")
-
-
-def test_albumentationsx_missing_dependency(monkeypatch):
-    monkeypatch.setitem(sys.modules, "albumentations", None)
-    with pytest.raises(ImportError):
-        albu_backend._load_albumentations()
-
-
 def test_decode_transform():
-    with pytest.raises(ValueError, match="augmentation_backend"):
-        _DecodeTransform(augmentation_backend="missing")
     with pytest.raises(ValueError, match="unable to decode"):
         data_module._decode_image(b"not an image")
 

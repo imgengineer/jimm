@@ -472,3 +472,19 @@ def test_create_dataset_and_loader(temp_dataset):
     memory_loader.close()
     val_loader.close()
     sharded_loader.close()
+
+
+def test_multiworker_loader_parses_grain_flags(temp_dataset):
+    loader = create_loader(
+        f"{temp_dataset}/train",
+        batch_size=2,
+        img_size=16,
+        is_training=True,
+        num_workers=1,
+        worker_buffer_size=1,
+        seed=0,
+    )
+    try:
+        assert next(iter(loader))["image"].shape == (2, 16, 16, 3)
+    finally:
+        loader.close()

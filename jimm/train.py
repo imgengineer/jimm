@@ -396,6 +396,7 @@ def main(argv=None):
                 loss, acc = cached_train_step(images, labels, args.smoothing)
             losses.append(loss)
             accuracies.append(acc)
+            del batch, images, labels
 
         try:
             loss_avg, acc_avg = (
@@ -417,6 +418,7 @@ def main(argv=None):
                 l, a = cached_eval_step(v_images, v_labels)
                 v_losses.append(l)
                 v_accuracies.append(a)
+                del batch, v_images, v_labels
             if rank == 0:
                 try:
                     v_loss_avg, v_acc_avg = (

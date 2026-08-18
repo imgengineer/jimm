@@ -10,6 +10,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from absl import flags
 import cv2  # pyright: ignore[reportMissingImports]
 import grain.python as grain
 import jax
@@ -58,6 +59,12 @@ _IMAGE_SUFFIXES = frozenset({
     ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jp2", ".png", ".tif", ".tiff", ".webp",
 })
 _IMAGE_CACHE_ROOT = Path(os.environ.get("JIMM_CACHE_DIR", "~/.cache/jimm/image-cache")).expanduser()
+
+
+def _ensure_absl_flags_parsed():
+    if not flags.FLAGS.is_parsed():
+        flags.FLAGS.mark_as_parsed()
+
 
 __all__ = [
     "AugmentOp", "AutoAugment", "AugMixAugment", "ImageFolder", "Loader",
@@ -470,6 +477,7 @@ def create_loader(
         worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
         shard_options=None, in_memory=False):
     """Create a Grain loader with timm-compatible augmentation options."""
+    _ensure_absl_flags_parsed()
     for name, value in (("batch_size", batch_size), ("img_size", img_size)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
             raise ValueError(f"{name} must be a positive integer")

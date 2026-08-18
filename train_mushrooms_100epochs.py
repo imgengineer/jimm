@@ -78,6 +78,7 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
                 l, a = cached_train_step(images, labels, smoothing)
             losses.append(l)
             accuracies.append(a)
+            del batch
 
         try:
             train_loss = float(jnp.mean(jnp.stack(losses)))
@@ -96,6 +97,7 @@ def train_single_model(model_name: str, data_dir: str, num_classes: int = 9,
             v_losses.append(l * weight)
             v_accuracies.append(a * weight)
             n_val += weight
+            del v_batch
 
         try:
             val_loss = float(jnp.sum(jnp.stack(v_losses))) / max(n_val, 1)

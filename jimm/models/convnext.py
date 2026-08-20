@@ -34,8 +34,6 @@ class ConvNeXt(ClassifierMixin, nnx.Module):
         stages, k = [], 0
         for i, (n, dim) in enumerate(zip(depths, dims)):
             blocks = []
-            if i > 0:
-                blocks.append("D")  # downsample between stages
             for _ in range(n):
                 blocks.append(ConvNeXtBlock(dim, dpr[k], rngs=rngs))
                 k += 1
@@ -56,8 +54,6 @@ class ConvNeXt(ClassifierMixin, nnx.Module):
             if i > 0:
                 x = self.downsamples[i - 1](x)
             for blk in stage:
-                if blk == "D":
-                    continue
                 x = blk(x)
         return x
 

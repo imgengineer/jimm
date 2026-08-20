@@ -2,7 +2,7 @@
 
 **jimm** is a comprehensive JAX / Flax NNX implementation of the popular [`timm` (pytorch-image-models)](https://github.com/huggingface/pytorch-image-models) library.
 
-It provides **1,344 registered model architectures across 94 model families** (100% coverage of timm's 1,309 entrypoints), mirroring `timm`'s API surface with a pure JAX native design.
+It provides **1,344 registered model architectures across 93 model families** (100% coverage of timm's 1,309 entrypoints), mirroring `timm`'s API surface with a pure JAX native design.
 
 ---
 
@@ -241,7 +241,7 @@ print("Restored epoch:", epoch)
 
 ---
 
-## Supported Architectures (341 Models across 94 Families)
+## Supported Architectures (1,344 Models across 93 Families)
 
 | Family | Key Variants | Description |
 | --- | --- | --- |
@@ -300,13 +300,13 @@ pytest tests/ -n auto --cov=jimm
 
 ```bash
 # Run core test suite (representative models across all families + SPMD + FSDP + data + checkpointing)
-python test_jimm.py
+python scripts/test_jimm.py
 
 # Run backpropagation numerical gradient & convergence verification
-python test_backprop.py
+python scripts/test_backprop.py
 
-# Or run exhaustive check across all 341 models
-python test_jimm.py --all
+# Or run exhaustive check across all registered models
+python scripts/test_jimm.py --all
 ```
 
 ---
@@ -319,10 +319,17 @@ jimm/
   registry.py       create_model, list_models, list_modules, register_model
   layers.py         DropPath, PatchEmbed, Mlp, SqueezeExcite, ConvBNAct, global_pool
   data.py           Grain ImageFolder & DataLoader pipeline
+  augment.py        timm-style OpenCV augmentation ops & policies
   train.py          Optax optimizer, loss functions, JIT train/eval steps
   checkpoint.py     Orbax async checkpointer save/restore
-  models/           94 Architecture implementation files (341 registered variants)
-test_jimm.py        End-to-end test suite
+  features.py       features_only multi-scale feature extractor
+  weights.py        PyTorch/SafeTensors weight conversion & loading
+  models/           94 architecture implementation files + variants.py
+                    (1,344 registered variants across 93 families)
+tests/              pytest unit test suite
+scripts/            Standalone verification & training scripts
+  test_jimm.py      End-to-end self-check suite
+  test_backprop.py  Backpropagation gradient/convergence checks
 pyproject.toml      uv project configuration & dependencies
 ```
 

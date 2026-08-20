@@ -9,25 +9,30 @@ from .swin_transformer import WindowAttention, window_partition, window_reverse
 class SwinV2CrAttention(WindowAttention):
     def __call__(self, x, mask=None):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-6)
         k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-6)
-        attn = q @ k.transpose(0, 1, 3, 2) / 0.5
-        bias = self.rel_bias_table[...][self.rel_index].transpose(2, 0, 1)
-        attn = attn + bias[None]
+        q = q * (2.0 * jnp.sqrt(jnp.asarray(self.head_dim, dtype=q.dtype)))
+        bias = self.rel_bias_table[...][self.rel_index[...]].transpose(2, 0, 1)
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.reshape(B // nW, nW, self.num_heads, N, N) + mask[:, None, :, :]
-            attn = attn.reshape(B, self.num_heads, N, N)
-        attn = nnx.softmax(attn, axis=-1)
-        x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+            window_bias = jnp.broadcast_to(
+                mask[None, :, None, :, :], (B // nW, nW, 1, N, N)
+            ).reshape(B, 1, N, N)
+            bias = bias[None] + window_bias
+        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
 class SwinV2CrBlock(nnx.Module):
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift=0,
                  mlp_ratio=4.0, drop=0.0, drop_path=0.0, *, rngs):
         self.dim, self.res = dim, input_resolution
+        if min(input_resolution) <= window_size:
+            # if window size is larger than the input resolution, skip windowing
+            # (same clamp as timm's SwinTransformerBlock)
+            shift = 0
+            window_size = min(input_resolution)
         self.ws, self.shift = window_size, shift
         self.attn = SwinV2CrAttention(dim, window_size, num_heads, rngs=rngs)
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -48,7 +53,8 @@ class SwinV2CrBlock(nnx.Module):
             mask_windows = window_partition(img_mask, window_size).reshape(-1, window_size * window_size)
             m = mask_windows[:, None, :] - mask_windows[:, :, None]
             attn_mask = jnp.where(m != 0, -100.0, 0.0)
-        self.attn_mask = attn_mask
+        # nnx.Variable: raw array attributes break nnx.cached_partial graph flattening
+        self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
 
     def __call__(self, x):
         B, H, W, C = x.shape
@@ -56,7 +62,8 @@ class SwinV2CrBlock(nnx.Module):
         if self.shift > 0:
             x = jnp.roll(x, (-self.shift, -self.shift), axis=(1, 2))
         x = window_partition(x, self.ws)
-        x = self.attn(x, self.attn_mask)
+        mask = self.attn_mask[...] if self.attn_mask is not None else None
+        x = self.attn(x, mask)
         x = window_reverse(x, self.ws, H, W, B)
         if self.shift > 0:
             x = jnp.roll(x, (self.shift, self.shift), axis=(1, 2))

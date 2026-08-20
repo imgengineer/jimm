@@ -26,10 +26,10 @@ class SHViTBlock(nnx.Module):
         xr = self.dw(xr)
         # single-head attention branch
         t = xa.reshape(B, H * W, self.attn_chs)
-        qkv = self.qkv(t).reshape(B, H * W, 3, self.attn_chs).transpose(2, 0, 1, 3)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        attn = nnx.softmax(q @ k.transpose(0, 2, 1) * (self.attn_chs ** -0.5), axis=-1)
-        xa = self.proj(attn @ v).reshape(B, H, W, -1)
+        qkv = self.qkv(t).reshape(B, H * W, 3, self.attn_chs)
+        q, k, v = (qkv[:, :, i, None, :] for i in range(3))
+        xa = self.proj(nnx.dot_product_attention(q, k, v).reshape(B, H * W, self.attn_chs))
+        xa = xa.reshape(B, H, W, -1)
         x = jnp.concatenate([xa, xr], axis=-1)
         return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm(x)))))
 

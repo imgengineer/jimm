@@ -65,8 +65,7 @@ class FeatureExtractor(nnx.Module):
                 if i > 0 and i - 1 < len(m.downsamples):
                     curr = m.downsamples[i - 1](curr)
                 for blk in stage:
-                    if blk != "D":
-                        curr = blk(curr)
+                    curr = blk(curr)
                 feats.append(curr)
         # Transformer style (patch_embed + blocks)
         elif hasattr(m, "patch_embed") and hasattr(m, "blocks"):

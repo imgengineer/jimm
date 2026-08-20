@@ -9,7 +9,6 @@ class HieraBlock(nnx.Module):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.qkv = nnx.Linear(dim, dim * 3, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
@@ -18,10 +17,9 @@ class HieraBlock(nnx.Module):
 
     def __call__(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(self.norm1(x)).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        qkv = self.qkv(self.norm1(x)).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
         x = x + self.drop_path(self.proj(out))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 

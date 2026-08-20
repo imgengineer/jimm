@@ -19,7 +19,9 @@ class OutlookAttention(nnx.Module):
         self.scale = self.head_dim ** -0.5
 
         self.v = nnx.Linear(dim, dim, use_bias=qkv_bias, rngs=rngs)
-        self.attn = nnx.Linear(dim, kernel_size ** 4 * num_heads, use_bias=qkv_bias, rngs=rngs)
+        # per-head k*k window-attention logits; projecting k**4 * num_heads and
+        # slicing (as a literal port would do) would compute 8/9 dead weights
+        self.attn = nnx.Linear(dim, kernel_size ** 2 * num_heads, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
 
     def __call__(self, x):
@@ -40,8 +42,7 @@ class OutlookAttention(nnx.Module):
                 patches.append(v_pad[:, i:i + H, j:j + W, :, :])
         v_win = jnp.stack(patches, axis=3) # (B, H, W, k*k, num_heads, head_dim)
 
-        attn = self.attn(x) # (B, H, W, k*k*k*k * num_heads) -> simplified to (B, H, W, num_heads, k*k)
-        attn = attn.reshape(B, H, W, self.num_heads, -1)[:, :, :, :, :k * k]
+        attn = self.attn(x).reshape(B, H, W, self.num_heads, k * k)  # (B, H, W, num_heads, k*k)
         attn = nnx.softmax(attn * self.scale, axis=-1) # (B, H, W, num_heads, k*k)
 
         out = jnp.sum(v_win * attn[:, :, :, :, :, None].transpose(0, 1, 2, 4, 3, 5), axis=3)
@@ -68,7 +69,6 @@ class TransformerBlock(nnx.Module):
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
@@ -85,7 +85,6 @@ class ClassAttention(nnx.Module):
     def __init__(self, dim, num_heads=12, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.q = nnx.Linear(dim, dim, rngs=rngs)
         self.k = nnx.Linear(dim, dim, rngs=rngs)
         self.v = nnx.Linear(dim, dim, rngs=rngs)

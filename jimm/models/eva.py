@@ -9,7 +9,6 @@ class EvaAttention(nnx.Module):
     def __init__(self, dim, num_heads, qkv_bias=True, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.qkv = nnx.Linear(dim, dim * 3, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
 

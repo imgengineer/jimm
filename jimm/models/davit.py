@@ -9,7 +9,6 @@ class SpatialWindowAttention(nnx.Module):
     def __init__(self, dim, num_heads, window_size, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.ws = window_size
         self.qkv = nnx.Linear(dim, dim * 3, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
@@ -18,10 +17,9 @@ class SpatialWindowAttention(nnx.Module):
         B, H, W, C = x.shape
         t = window_partition(x, self.ws)
         Bw, N, _ = t.shape
-        qkv = self.qkv(t).reshape(Bw, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
-        t = (attn @ v).transpose(0, 2, 1, 3).reshape(Bw, N, C)
+        qkv = self.qkv(t).reshape(Bw, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        t = nnx.dot_product_attention(q, k, v).reshape(Bw, N, C)
         return window_reverse(self.proj(t), self.ws, H, W, B)
 
 class ChannelAttention(nnx.Module):
@@ -30,7 +28,6 @@ class ChannelAttention(nnx.Module):
     def __init__(self, dim, num_heads, window_size, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.ws = window_size
         self.qkv = nnx.Linear(dim, dim * 3, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
@@ -39,10 +36,9 @@ class ChannelAttention(nnx.Module):
         B, H, W, C = x.shape
         t = window_partition(x, self.ws)
         Bw, N, _ = t.shape
-        qkv = self.qkv(t).reshape(Bw, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 4, 1)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # (Bw, heads, head_dim, N)
-        attn = nnx.softmax(q.transpose(0, 1, 3, 2) @ k * self.scale, axis=-1)
-        t = (attn @ v.transpose(0, 1, 3, 2)).transpose(0, 3, 1, 2).reshape(Bw, N, C)
+        qkv = self.qkv(t).reshape(Bw, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        t = nnx.dot_product_attention(q, k, v).reshape(Bw, N, C)
         return window_reverse(self.proj(t), self.ws, H, W, B)
 
 class DaViTBlock(nnx.Module):

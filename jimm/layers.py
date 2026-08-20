@@ -1,5 +1,4 @@
 """Shared layers, NHWC convention (mirrors timm.models.layers)."""
-import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -12,16 +11,17 @@ class DropPath(nnx.Module):
     NHWC conv maps and BNC token sequences). deterministic is toggled by model.train()/eval()."""
 
     def __init__(self, rate: float = 0.0, *, rngs):
+        if not 0.0 <= rate <= 1.0:
+            raise ValueError(f"rate must be between 0 and 1, got {rate}")
         self.rate = rate
-        self.rngs = rngs["dropout"].fork() if rate > 0 else None
         self.deterministic = False
+        # Flatten non-batch axes so the official Dropout's broadcast_dims=(1,)
+        # produces one mask per sample for both feature maps and token sequences.
+        self.drop = nnx.Dropout(rate, broadcast_dims=(1,), rngs=rngs)
 
     def __call__(self, x):
-        if self.rngs is None or self.deterministic:
-            return x
-        keep = 1.0 - self.rate
-        mask = jax.random.bernoulli(self.rngs(), keep, (x.shape[0],))
-        return x * mask.reshape((x.shape[0],) + (1,) * (x.ndim - 1)) / keep
+        shape = x.shape
+        return self.drop(x.reshape((shape[0], -1)), deterministic=self.deterministic).reshape(shape)
 
 
 class PatchEmbed(nnx.Module):

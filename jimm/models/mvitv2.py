@@ -11,7 +11,6 @@ class PooledAttention(nnx.Module):
     def __init__(self, dim, num_heads, pool_stride=1, grid=14, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.pool_stride = pool_stride
         self.qkv = nnx.Linear(dim, dim * 3, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
@@ -22,21 +21,21 @@ class PooledAttention(nnx.Module):
         coords = jnp.stack(jnp.meshgrid(jnp.arange(gh), jnp.arange(gw), indexing="ij"))
         cf = coords.reshape(2, -1)
         rel = (cf[:, :, None] - cf[:, None, :]).transpose(1, 2, 0) + jnp.array([gh - 1, gw - 1])
-        self.rel_index = rel[:, :, 0] * (2 * gw - 1) + rel[:, :, 1]  # (gh*gw, gh*gw)
+        # nnx.Variable: raw array attributes break nnx.cached_partial graph flattening
+        self.rel_index = nnx.Variable(rel[:, :, 0] * (2 * gw - 1) + rel[:, :, 1])  # (gh*gw, gh*gw)
 
     def __call__(self, x, H, W):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         if self.pool_stride > 1:
-            k = self._pool(k, H, W)
-            v = self._pool(v, H, W)
-        attn = q @ k.transpose(0, 1, 3, 2) * self.scale
+            k = self._pool(k.transpose(0, 2, 1, 3), H, W).transpose(0, 2, 1, 3)
+            v = self._pool(v.transpose(0, 2, 1, 3), H, W).transpose(0, 2, 1, 3)
+        bias = None
         # ponytail: rel-pos bias applied only for same-resolution attn (skipped when K/V pooled)
-        if self.pool_stride == 1 and attn.shape[-1] == self.rel_index.shape[0]:
-            attn = attn + self.rel_bias[...][self.rel_index].transpose(2, 0, 1)[None]
-        attn = nnx.softmax(attn, axis=-1)
-        x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        if self.pool_stride == 1 and k.shape[1] == self.rel_index[...].shape[0]:
+            bias = self.rel_bias[...][self.rel_index[...]].transpose(2, 0, 1)
+        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
 
     def _pool(self, t, H, W):

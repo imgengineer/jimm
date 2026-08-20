@@ -35,7 +35,6 @@ class MaxViTAttention(nnx.Module):
     def __init__(self, dim, num_heads, window_size, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.ws = window_size
         self.qkv = nnx.Linear(dim, dim * 3, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
@@ -44,16 +43,15 @@ class MaxViTAttention(nnx.Module):
         coords = jnp.stack(jnp.meshgrid(jnp.arange(window_size), jnp.arange(window_size), indexing="ij"))
         cf = coords.reshape(2, -1)
         rel = (cf[:, :, None] - cf[:, None, :]).transpose(1, 2, 0) + window_size - 1
-        self.rel_index = rel[:, :, 0] * (2 * window_size - 1) + rel[:, :, 1]
+        # nnx.Variable: raw array attributes break nnx.cached_partial graph flattening
+        self.rel_index = nnx.Variable(rel[:, :, 0] * (2 * window_size - 1) + rel[:, :, 1])
 
     def __call__(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        attn = q @ k.transpose(0, 1, 3, 2) * self.scale
-        attn = attn + self.rel_bias[...][self.rel_index].transpose(2, 0, 1)[None]
-        attn = nnx.softmax(attn, axis=-1)
-        x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        bias = self.rel_bias[...][self.rel_index[...]].transpose(2, 0, 1)
+        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
 
 class MaxViTBlock(nnx.Module):

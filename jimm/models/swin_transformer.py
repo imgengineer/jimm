@@ -19,7 +19,6 @@ class WindowAttention(nnx.Module):
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, drop=0.0, *, rngs):
         self.ws, self.num_heads = window_size, num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
         self.qkv = nnx.Linear(dim, dim * 3, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
         self.drop = nnx.Dropout(drop, rngs=rngs)
@@ -30,21 +29,22 @@ class WindowAttention(nnx.Module):
         coords_flat = coords.reshape(2, -1)
         rel = coords_flat[:, :, None] - coords_flat[:, None, :]
         rel = rel.transpose(1, 2, 0) + window_size - 1
-        self.rel_index = rel[:, :, 0] * (2 * window_size - 1) + rel[:, :, 1]
+        rel_index = rel[:, :, 0] * (2 * window_size - 1) + rel[:, :, 1]
+        # nnx.Variable: raw array attributes break nnx.cached_partial graph flattening
+        self.rel_index = nnx.Variable(rel_index)
 
     def __call__(self, x, mask=None):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        attn = q @ k.transpose(0, 1, 3, 2) * self.scale
-        bias = self.rel_bias_table[...][self.rel_index].transpose(2, 0, 1)  # (heads, N, N)
-        attn = attn + bias[None]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
+        bias = self.rel_bias_table[...][self.rel_index[...]].transpose(2, 0, 1)  # (heads, N, N)
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.reshape(B // nW, nW, self.num_heads, N, N) + mask[:, None, :, :]
-            attn = attn.reshape(B, self.num_heads, N, N)
-        attn = nnx.softmax(attn, axis=-1)
-        x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+            window_bias = jnp.broadcast_to(
+                mask[None, :, None, :, :], (B // nW, nW, 1, N, N)
+            ).reshape(B, 1, N, N)
+            bias = bias[None] + window_bias
+        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
 class SwinBlock(nnx.Module):
@@ -53,6 +53,11 @@ class SwinBlock(nnx.Module):
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift=0,
                  mlp_ratio=4.0, drop=0.0, drop_path=0.0, *, rngs):
         self.dim, self.res = dim, input_resolution
+        if min(input_resolution) <= window_size:
+            # if window size is larger than the input resolution, skip windowing
+            # (same clamp as timm's SwinTransformerBlock)
+            shift = 0
+            window_size = min(input_resolution)
         self.ws, self.shift = window_size, shift
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = self.attn_cls(dim, window_size, num_heads, rngs=rngs)
@@ -73,7 +78,8 @@ class SwinBlock(nnx.Module):
             mask_windows = window_partition(img_mask, window_size).reshape(-1, window_size * window_size)
             m = mask_windows[:, None, :] - mask_windows[:, :, None]
             attn_mask = jnp.where(m != 0, -100.0, 0.0)
-        self.attn_mask = attn_mask
+        # nnx.Variable: raw array attributes break nnx.cached_partial graph flattening
+        self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
 
     def __call__(self, x):
         B, H, W, C = x.shape
@@ -82,7 +88,8 @@ class SwinBlock(nnx.Module):
         if self.shift > 0:
             x = jnp.roll(x, (-self.shift, -self.shift), axis=(1, 2))
         x = window_partition(x, self.ws)
-        x = self.attn(x, self.attn_mask)
+        mask = self.attn_mask[...] if self.attn_mask is not None else None
+        x = self.attn(x, mask)
         x = window_reverse(x, self.ws, H, W, B)
         if self.shift > 0:
             x = jnp.roll(x, (self.shift, self.shift), axis=(1, 2))
@@ -174,19 +181,21 @@ def swin_base_patch4_window7_224(**kwargs):
 class SwinV2Attention(WindowAttention):
     def __call__(self, x, mask=None):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-6)
         k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-6)
-        attn = q @ k.transpose(0, 1, 3, 2) / 0.5  # cosine attention, fixed logit scale
-        bias = self.rel_bias_table[...][self.rel_index].transpose(2, 0, 1)
-        attn = attn + bias[None]
+        # nnx.dot_product_attention divides by sqrt(head_dim); rescale q to
+        # preserve SwinV2's fixed cosine logit scale of 1 / 0.5.
+        q = q * (2.0 * jnp.sqrt(jnp.asarray(self.head_dim, dtype=q.dtype)))
+        bias = self.rel_bias_table[...][self.rel_index[...]].transpose(2, 0, 1)
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.reshape(B // nW, nW, self.num_heads, N, N) + mask[:, None, :, :]
-            attn = attn.reshape(B, self.num_heads, N, N)
-        attn = nnx.softmax(attn, axis=-1)
-        x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
+            window_bias = jnp.broadcast_to(
+                mask[None, :, None, :, :], (B // nW, nW, 1, N, N)
+            ).reshape(B, 1, N, N)
+            bias = bias[None] + window_bias
+        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
 class SwinV2Block(SwinBlock):
@@ -198,7 +207,8 @@ class SwinV2Block(SwinBlock):
         if self.shift > 0:
             x = jnp.roll(x, (-self.shift, -self.shift), axis=(1, 2))
         x = window_partition(x, self.ws)
-        x = self.attn(x, self.attn_mask)
+        mask = self.attn_mask[...] if self.attn_mask is not None else None
+        x = self.attn(x, mask)
         x = window_reverse(x, self.ws, H, W, B)
         if self.shift > 0:
             x = jnp.roll(x, (self.shift, self.shift), axis=(1, 2))

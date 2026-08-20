@@ -4904,14 +4904,14 @@ def swiftformer_l3(**kwargs):
 
 @register_model
 def swin_base_patch4_window12_384(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=384, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=384, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32), window_size=12, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 384, 384))
     return model
 
 
 @register_model
 def swin_large_patch4_window12_384(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=384, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=384, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48), window_size=12, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 384, 384))
     return model
 
@@ -4946,35 +4946,40 @@ def swin_s3_tiny_224(**kwargs):
 
 @register_model
 def swinv2_base_window12_192(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32),
+                                             window_size=12, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 192, 192))
     return model
 
 
 @register_model
 def swinv2_base_window12to16_192to256(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32),
+                                             window_size=12, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 192, 192))
     return model
 
 
 @register_model
 def swinv2_base_window12to24_192to384(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32),
+                                             window_size=12, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 192, 192))
     return model
 
 
 @register_model
 def swinv2_base_window16_256(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32),
+                                             window_size=16, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 256, 256))
     return model
 
 
 @register_model
 def swinv2_base_window8_256(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32),
+                                             window_size=8, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 256, 256))
     return model
 
@@ -5051,35 +5056,40 @@ def swinv2_cr_tiny_ns_224(**kwargs):
 
 @register_model
 def swinv2_large_window12_192(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48),
+                                             window_size=12, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 192, 192))
     return model
 
 
 @register_model
 def swinv2_large_window12to16_192to256(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48),
+                                             window_size=12, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 192, 192))
     return model
 
 
 @register_model
 def swinv2_large_window12to24_192to384(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=192, embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48),
+                                             window_size=12, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 192, 192))
     return model
 
 
 @register_model
 def swinv2_small_window16_256(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=96, depths=(2, 2, 18, 2), num_heads=(3, 6, 12, 24), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=96, depths=(2, 2, 18, 2), num_heads=(3, 6, 12, 24),
+                                             window_size=16, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 256, 256))
     return model
 
 
 @register_model
 def swinv2_tiny_window16_256(**kwargs):
-    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24), **kwargs)
+    model = swin_transformer.SwinTransformer(img_size=256, embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
+                                             window_size=16, block_cls=swin_transformer.SwinV2Block, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 256, 256))
     return model
 

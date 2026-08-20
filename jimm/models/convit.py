@@ -23,14 +23,14 @@ class GPSA(nnx.Module):
         rel = (cf[:, :, None] - cf[:, None, :]).transpose(1, 2, 0) / gh  # (gh*gw, gh*gw, 2)
         # pad a zero row/col for the cls token
         rel = jnp.pad(rel, ((1, 0), (1, 0), (0, 0)))
-        self.rel_coords = rel  # (N, N, 2) with cls
+        self.rel_coords = nnx.Variable(rel)  # (N, N, 2) with cls
 
     def __call__(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         content = q @ k.transpose(0, 1, 3, 2) * self.scale
-        pos = self.pos_proj(self.rel_coords).transpose(2, 0, 1)  # (heads, N, N)
+        pos = self.pos_proj(self.rel_coords[...]).transpose(2, 0, 1)  # (heads, N, N)
         gate = nnx.sigmoid(self.gate[...])
         attn = nnx.softmax(gate * pos[None] + (1 - gate) * content, axis=-1)
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)

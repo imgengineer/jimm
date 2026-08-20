@@ -196,6 +196,12 @@ def _mixup_cutmix_jax(images, labels, rng, config):
 
 
 def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0.0):
+    """AdamW (warmup + cosine decay) with timm-style weight-decay grouping.
+
+    Following timm's default (`param_groups_weight_decay`), weight decay only
+    applies to parameters with ndim >= 2 (conv/linear kernels); 1-D parameters
+    (biases, norm scales) are exempt.
+    """
     if epochs <= 0 or steps_per_epoch <= 0:
         raise ValueError("epochs and steps_per_epoch must be positive")
     if lr < 0 or weight_decay < 0 or clip_grad < 0:
@@ -206,7 +212,9 @@ def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0
         warmup_steps=min(5 * steps_per_epoch, 10000, max(total // 10, 1)),
         decay_steps=total, end_value=lr * 1e-2)
     tx = optax.clip_by_global_norm(clip_grad) if clip_grad > 0 else optax.identity()
-    return nnx.Optimizer(model, optax.chain(tx, optax.adamw(schedule, weight_decay=weight_decay)),
+    decay_mask = lambda params: jax.tree.map(lambda p: p.ndim >= 2, params)  # noqa: E731
+    adamw = optax.adamw(schedule, weight_decay=weight_decay, mask=decay_mask)
+    return nnx.Optimizer(model, optax.chain(tx, adamw),
                          wrt=nnx.Param)
 
 

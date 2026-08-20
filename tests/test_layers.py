@@ -58,6 +58,10 @@ def test_drop_path():
     x_train = dp(x)
     assert x_train.shape == x.shape
     assert bool(jnp.isfinite(x_train).all())
+    assert bool(jnp.all(x_train == x_train[:, :1, :1, :1]))  # one mask per sample
+
+    dp1 = DropPath(1.0, rngs=rngs)
+    assert jnp.all(dp1(x) == 0)
 
     # Works on 3D token sequences (B, N, C) without IndexError
     tokens = jnp.ones((4, 16, 32), dtype=jnp.float32)

@@ -24,7 +24,6 @@ class Attention2d(nnx.Module):
     def __init__(self, dim, key_dim=16, num_heads=8, *, rngs):
         self.num_heads = num_heads
         self.head_dim = key_dim
-        self.scale = key_dim ** -0.5
         self.q = nnx.Linear(dim, num_heads * key_dim, rngs=rngs)
         self.k = nnx.Linear(dim, num_heads * key_dim, rngs=rngs)
         self.v = nnx.Linear(dim, num_heads * key_dim, rngs=rngs)
@@ -32,11 +31,10 @@ class Attention2d(nnx.Module):
 
     def __call__(self, x):
         B, N, C = x.shape
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        attn = nnx.softmax(q @ k.transpose(0, 1, 3, 2) * self.scale, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, -1)
+        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
+        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim)
+        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim)
+        out = nnx.dot_product_attention(q, k, v).reshape(B, N, -1)
         return self.proj(out)
 
 class EfficientFormerV2Block(nnx.Module):

@@ -2,11 +2,8 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin
+from ..layers import ClassifierMixin, relu6
 from ..registry import register_model, _cfg
-
-def relu6(x):
-    return jnp.minimum(jnp.maximum(x, 0), 6)
 
 class ConvBN(nnx.Module):
     """1x1 conv + BN (expansion layer)."""

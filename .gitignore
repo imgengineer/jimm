@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .cache/
 .coverage
+.pytest_cache/
 dist/
 build/
 output/

@@ -70,6 +70,44 @@ def test_make_optimizer():
     assert isinstance(opt2, nnx.Optimizer)
 
 
+def test_make_optimizer_weight_decay_excludes_1d_params():
+    """timm-style grouping: ndim<=1 params (bias/norm) get no weight decay."""
+
+    @nnx.jit
+    def zero_grad_step(model, optimizer):
+        grads = nnx.grad(lambda m: jnp.zeros((), jnp.float32))(model)
+        optimizer.update(model, grads)
+
+    def run(weight_decay):
+        m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
+        init = jax.tree.map(lambda p: jnp.array(p), nnx.state(m, nnx.Param).to_pure_dict())
+        opt = make_optimizer(m, lr=1e-3, weight_decay=weight_decay,
+                             epochs=1, steps_per_epoch=10)
+        # step 0 is a no-op (warmup lr=0); step 1 applies lr=peak
+        zero_grad_step(m, opt)
+        zero_grad_step(m, opt)
+        return init, nnx.state(m, nnx.Param).to_pure_dict()
+
+    init, after_no_wd = run(0.0)
+    _, after_wd = run(0.1)
+
+    # zero grads + wd=0 -> nothing moves
+    for path, leaf in jax.tree_util.tree_flatten_with_path(after_no_wd)[0]:
+        ref = {tuple(p): l for p, l in jax.tree_util.tree_flatten_with_path(init)[0]}[tuple(path)]
+        assert float(jnp.abs(jnp.asarray(leaf) - jnp.asarray(ref)).max()) == 0.0
+
+    flat_init = {tuple(p): l for p, l in jax.tree_util.tree_flatten_with_path(init)[0]}
+    saw_kernel = False
+    for path, leaf in jax.tree_util.tree_flatten_with_path(after_wd)[0]:
+        ref = flat_init[tuple(path)]
+        diff = float(jnp.abs(jnp.asarray(leaf) - jnp.asarray(ref)).max())
+        if leaf.ndim >= 2:
+            saw_kernel = saw_kernel or diff > 0
+        else:
+            assert diff == 0.0, f"1-D param at {path} received weight decay"
+    assert saw_kernel, "no kernel received weight decay"
+
+
 def test_train_and_eval_step():
     m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
     m.train()

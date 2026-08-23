@@ -488,3 +488,17 @@ def test_multiworker_loader_parses_grain_flags(temp_dataset):
         assert next(iter(loader))["image"].shape == (2, 16, 16, 3)
     finally:
         loader.close()
+
+
+def test_decode_truncated_jpeg():
+    # Encode a dummy JPEG image and strip the trailing \xff\xd9 EOI marker
+    img = np.ones((32, 32, 3), dtype=np.uint8) * 128
+    _, encoded = cv2.imencode(".jpg", img)
+    raw = encoded.tobytes()
+    assert raw.endswith(b"\xff\xd9")
+    truncated_raw = raw[:-2]
+    # Verify _decode_image successfully recovers the truncated image
+    decoded = data_module._decode_image(truncated_raw)
+    assert decoded.shape == (32, 32, 3)
+    assert isinstance(decoded, np.ndarray)
+

@@ -93,8 +93,14 @@ def _is_within(root: Path, path: Path) -> bool:
 
 
 def _decode_image(raw: bytes) -> np.ndarray:
+    if not raw:
+        raise ValueError("unable to decode empty image bytes")
     encoded = np.frombuffer(raw, dtype=np.uint8)
     image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    if image is None:
+        # Fallback: Truncated JPEG recovery (append missing EOI marker \xff\xd9)
+        if raw.startswith(b"\xff\xd8"):
+            image = cv2.imdecode(np.frombuffer(raw + b"\xff\xd9", dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError("unable to decode image bytes")
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)

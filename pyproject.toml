@@ -2,11 +2,11 @@
 name = "jimm"
 version = "0.1.0"
 description = "JAX Image Models - timm-style API on JAX/Flax nnx"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-  "jax[cuda13]",
+  "jax[cuda13]>=0.11.1",
   "grain",
-  "flax",
+  "flax>=0.12.9",
   "optax",
   "orbax-checkpoint",
   "numpy",
@@ -26,4 +26,3 @@ dev = ["pytest>=9.1.1", "pytest-cov>=7.1.0", "pytest-xdist>=3.8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = ["ignore::DeprecationWarning:flax.*"]

@@ -41,7 +41,7 @@ def test_checkpoint_save_and_load_roundtrip():
                 return jnp.zeros_like(a)
             return a
 
-        nnx.update(m, jax.tree.map(_zero, nnx.state(m).to_pure_dict()))
+        nnx.update(m, jax.tree.map(_zero, nnx.to_pure_dict(nnx.state(m))))
         out_corrupt = np.asarray(m(x))
         assert not np.allclose(out_corrupt, out_before, rtol=1e-3, atol=1e-3)
 

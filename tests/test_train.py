@@ -13,6 +13,7 @@ from flax import nnx
 from jimm.augment import MixupCutmix
 from jimm.registry import create_model
 from jimm.train import (
+    StepMetrics,
     _mixup_cutmix_jax,
     cross_entropy,
     eval_step,
@@ -22,7 +23,9 @@ from jimm.train import (
     make_cached_eval_step,
     make_cached_train_step,
     make_optimizer,
+    prefetch_to_device,
     train_step,
+    train_step_with_metrics,
 )
 
 
@@ -80,25 +83,25 @@ def test_make_optimizer_weight_decay_excludes_1d_params():
 
     def run(weight_decay):
         m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
-        init = jax.tree.map(lambda p: jnp.array(p), nnx.state(m, nnx.Param).to_pure_dict())
+        init = jax.tree.map(lambda p: jnp.array(p), nnx.to_pure_dict(nnx.state(m, nnx.Param)))
         opt = make_optimizer(m, lr=1e-3, weight_decay=weight_decay,
                              epochs=1, steps_per_epoch=10)
         # step 0 is a no-op (warmup lr=0); step 1 applies lr=peak
         zero_grad_step(m, opt)
         zero_grad_step(m, opt)
-        return init, nnx.state(m, nnx.Param).to_pure_dict()
+        return init, nnx.to_pure_dict(nnx.state(m, nnx.Param))
 
     init, after_no_wd = run(0.0)
     _, after_wd = run(0.1)
 
     # zero grads + wd=0 -> nothing moves
-    for path, leaf in jax.tree_util.tree_flatten_with_path(after_no_wd)[0]:
-        ref = {tuple(p): l for p, l in jax.tree_util.tree_flatten_with_path(init)[0]}[tuple(path)]
+    for path, leaf in jax.tree.flatten_with_path(after_no_wd)[0]:
+        ref = {tuple(p): l for p, l in jax.tree.flatten_with_path(init)[0]}[tuple(path)]
         assert float(jnp.abs(jnp.asarray(leaf) - jnp.asarray(ref)).max()) == 0.0
 
-    flat_init = {tuple(p): l for p, l in jax.tree_util.tree_flatten_with_path(init)[0]}
+    flat_init = {tuple(p): l for p, l in jax.tree.flatten_with_path(init)[0]}
     saw_kernel = False
-    for path, leaf in jax.tree_util.tree_flatten_with_path(after_wd)[0]:
+    for path, leaf in jax.tree.flatten_with_path(after_wd)[0]:
         ref = flat_init[tuple(path)]
         diff = float(jnp.abs(jnp.asarray(leaf) - jnp.asarray(ref)).max())
         if leaf.ndim >= 2:
@@ -264,3 +267,40 @@ def test_main_training_cli(temp_dataset, monkeypatch):
             ])
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def test_prefetch_to_device():
+    mesh = jax.sharding.Mesh(jax.devices(), ("data",))
+    P = jax.sharding.PartitionSpec
+    data_sharding = jax.sharding.NamedSharding(mesh, P("data", None, None, None))
+    label_sharding = jax.sharding.NamedSharding(mesh, P("data",))
+
+    dummy_batches = [
+        {"image": np.ones((2, 16, 16, 3), dtype=np.float32), "label": np.array([0, 1], dtype=np.int32)},
+        {"image": np.ones((2, 16, 16, 3), dtype=np.float32) * 2, "label": np.array([1, 0], dtype=np.int32)},
+    ]
+
+    stream = prefetch_to_device(iter(dummy_batches), data_sharding, label_sharding, prefetch_size=2)
+    items = list(stream)
+    assert len(items) == 2
+    for images, labels in items:
+        assert isinstance(images, jax.Array)
+        assert isinstance(labels, jax.Array)
+        assert images.shape == (2, 16, 16, 3)
+        assert labels.shape == (2,)
+
+
+def test_train_step_with_metrics():
+    m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
+    m.train()
+    opt = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
+
+    images = jnp.ones((2, 224, 224, 3), dtype=jnp.float32)
+    labels = jnp.array([0, 1], dtype=jnp.int32)
+
+    metrics = train_step_with_metrics(m, opt, images, labels, smoothing=0.1)
+    assert isinstance(metrics, StepMetrics)
+    assert float(metrics.loss) > 0.0
+    assert 0.0 <= float(metrics.accuracy) <= 1.0
+    assert float(metrics.grad_norm) >= 0.0
+

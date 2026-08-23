@@ -42,8 +42,8 @@ uv sync
 
 Dependencies in `pyproject.toml`:
 
-- `jax[cuda13]`
-- `flax >= 0.12.0`
+- `jax[cuda13] >= 0.11.1`
+- `flax >= 0.12.9`
 - `grain`
 - `optax`
 - `orbax-checkpoint`

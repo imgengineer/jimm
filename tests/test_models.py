@@ -50,7 +50,7 @@ def test_architecture_family_forward_and_backward(module_name):
 
     grads = nnx.grad(loss_fn)(m)
     leaves = jax.tree.leaves(jax.tree.map(lambda v: getattr(v, "value", v),
-                                          nnx.state(grads).to_pure_dict()))
+                                          nnx.to_pure_dict(nnx.state(grads))))
     assert len(leaves) > 0, f"{name}: no parameter gradient leaves"
     n_bad = sum(1 for g in leaves if not bool(jnp.isfinite(g).all()))
     assert n_bad == 0, f"{name}: {n_bad} non-finite gradients in backward pass"

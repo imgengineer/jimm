@@ -14,3 +14,4 @@ datasets/
 checkpoints/
 *.json
 cov.json
+.pi/

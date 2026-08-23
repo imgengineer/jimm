@@ -5,6 +5,8 @@ Supports:
   - Single-node multi-GPU data-parallel training (DDP with SPMD Data Mesh)
   - Multi-node multi-GPU distributed data-parallel training (Multi-host JAX + Grain Sharding)
   - FSDP (Fully Sharded Data Parallel / ZeRO-3 parameter and optimizer state sharding)
+  - MaxText / MaxDiffusion style async Host-to-Device prefetching (double buffering)
+  - XLA compilation timing, steady-state throughput (img/s, step_time) & JAX profiler integration
 
 Examples:
   # Standard DDP on all available GPUs on the node:
@@ -16,11 +18,16 @@ Examples:
   # Multi-node training (e.g. Node 0 of 2 nodes, 8 GPUs each):
   python -m jimm.train --model convnext_tiny --data-dir /path/to/imagenet \\
       --dist-coordinator-address 192.168.1.100:12345 --dist-num-processes 2 --dist-process-id 0
+
+  # Profile execution with JAX profiler / Perfetto:
+  python -m jimm.train --model resnet50 --data-dir /path/to/imagenet --profile-step 5 --profile-dir ./profiles
 """
 import argparse
+import collections
 import functools
 import os
 import time
+from typing import NamedTuple
 
 import chex
 import jax
@@ -32,6 +39,13 @@ from flax import nnx
 from .checkpoint import save_checkpoint, wait_for_checkpoints
 from .data import MixupCutmix, create_loader
 from .registry import create_model
+
+
+class StepMetrics(NamedTuple):
+    """Structured metrics returned by training step."""
+    loss: jax.Array
+    accuracy: jax.Array
+    grad_norm: jax.Array
 
 
 def init_distributed(coordinator_address=None, num_processes=None, process_id=None):
@@ -65,6 +79,38 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
                 continue
             sharding = jax.sharding.NamedSharding(mesh, spec)
             node.set_value(jax.device_put(val, sharding))
+
+
+def prefetch_to_device(data_iter, data_sharding, label_sharding, prefetch_size=2):
+    """Asynchronously prefetches and shards host data onto devices (double buffering).
+
+    MaxText/MaxDiffusion pattern: overlaps host CPU data loading/decoding & Host-to-Device (H2D)
+    transfer with on-device accelerator execution, preventing GPU/TPU idle starvation bubbles.
+    """
+    queue = collections.deque()
+
+    def _put(batch):
+        images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
+        labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
+        return images, labels
+
+    # Prime the queue
+    for _ in range(prefetch_size):
+        try:
+            batch = next(data_iter)
+            queue.append(_put(batch))
+        except StopIteration:
+            break
+
+    # Yield and keep buffer populated
+    while queue:
+        item = queue.popleft()
+        try:
+            batch = next(data_iter)
+            queue.append(_put(batch))
+        except StopIteration:
+            pass
+        yield item
 
 
 def cross_entropy(logits, labels, smoothing=0.0):
@@ -195,7 +241,8 @@ def _mixup_cutmix_jax(images, labels, rng, config):
     )
 
 
-def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0.0):
+def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0.0,
+                   warmup_ratio=0.1, min_lr_ratio=0.01):
     """AdamW (warmup + cosine decay) with timm-style weight-decay grouping.
 
     Following timm's default (`param_groups_weight_decay`), weight decay only
@@ -207,10 +254,11 @@ def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0
     if lr < 0 or weight_decay < 0 or clip_grad < 0:
         raise ValueError("lr, weight_decay, and clip_grad must be non-negative")
     total = epochs * steps_per_epoch
+    warmup_steps = min(5 * steps_per_epoch, 10000, max(int(total * warmup_ratio), 1))
     schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0, peak_value=lr,
-        warmup_steps=min(5 * steps_per_epoch, 10000, max(total // 10, 1)),
-        decay_steps=total, end_value=lr * 1e-2)
+        warmup_steps=warmup_steps,
+        decay_steps=total, end_value=lr * min_lr_ratio)
     tx = optax.clip_by_global_norm(clip_grad) if clip_grad > 0 else optax.identity()
     decay_mask = lambda params: jax.tree.map(lambda p: p.ndim >= 2, params)  # noqa: E731
     adamw = optax.adamw(schedule, weight_decay=weight_decay, mask=decay_mask)
@@ -235,10 +283,37 @@ def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False,
         if amp:
             logits = logits.astype(jnp.float32)
         return cross_entropy(logits, labels, smoothing), logits
+
     (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
     optimizer.update(model, grads)
     acc = _accuracy(logits, labels)
     return loss, acc
+
+
+@nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
+def train_step_with_metrics(model, optimizer, images, labels, smoothing=0.0, amp=False,
+                            mixup=None, rng=None):
+    """Executes a training step, computing pre-clipping grad_norm for monitoring."""
+    chex.assert_shape(images, (None, None, None, 3))
+    chex.assert_rank(labels, {1, 2})
+    chex.assert_equal(images.shape[0], labels.shape[0])
+    if mixup is not None:
+        if rng is None:
+            raise ValueError("rng is required when mixup or cutmix is enabled")
+        images, labels = _mixup_cutmix_jax(images, labels, rng, mixup)
+
+    def loss_fn(model):
+        x = images.astype(jnp.bfloat16) if amp else images
+        logits = model(x)
+        if amp:
+            logits = logits.astype(jnp.float32)
+        return cross_entropy(logits, labels, smoothing), logits
+
+    (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
+    grad_norm = optax.tree.norm(grads) if hasattr(optax, "tree") and hasattr(optax.tree, "norm") else optax.global_norm(grads)
+    optimizer.update(model, grads)
+    acc = _accuracy(logits, labels)
+    return StepMetrics(loss=loss, accuracy=acc, grad_norm=grad_norm)
 
 
 @nnx.jit(static_argnames=("amp",))
@@ -278,10 +353,12 @@ def main(argv=None):
     p.add_argument("--smoothing", type=float, default=0.1)
     p.add_argument("--drop-path", type=float, default=0.0)
     p.add_argument("--workers", type=int, default=4, help="data loader worker count per host")
+    p.add_argument("--prefetch", type=int, default=2, help="batches to prefetch to device (double buffering)")
     p.add_argument("--clip-grad", type=float, default=1.0,
                    help="global-norm gradient clipping (0 = disabled)")
     p.add_argument("--steps-per-epoch", type=int, default=None,
                    help="cap train steps per epoch (default: full epoch)")
+    p.add_argument("--log-interval", type=int, default=50, help="steps interval for logging throughput metrics")
     p.add_argument("--output", default="./output", help="output directory for checkpoints")
     p.add_argument("--fsdp", action="store_true", default=False,
                    help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)")
@@ -296,7 +373,11 @@ def main(argv=None):
     p.add_argument("--cutmix-alpha", type=float, default=0.0)
     p.add_argument("--mixup-prob", type=float, default=1.0)
     p.add_argument("--mixup-mode", choices=("batch", "pair", "elem"), default="batch")
-    
+
+    # Profiler & Diagnostics
+    p.add_argument("--profile-step", type=int, default=None, help="step index to trigger JAX profiler trace")
+    p.add_argument("--profile-dir", type=str, default=None, help="directory to store JAX profile traces")
+
     # Multi-node / distributed options
     p.add_argument("--dist-coordinator-address", type=str, default=None,
                    help="IP:port of master coordinator for multi-node training (e.g. 192.168.1.1:12345)")
@@ -311,17 +392,19 @@ def main(argv=None):
     world_size = jax.process_count()
     local_devices = jax.local_devices()
     total_devices = jax.devices()
+    global_batch_size = args.batch_size * world_size
 
     if rank == 0:
-        print(f"=== JAX Distributed Training Setup ===")
+        print(f"=== JAX Distributed Training Setup (MaxText / MaxDiffusion Pipeline) ===")
         print(f"  Parallel mode:       {'FSDP (ZeRO-3 Sharded)' if args.fsdp else 'DDP (Replicated Weights)'}")
         print(f"  Hosts (processes):   {world_size}")
         print(f"  Total devices:       {len(total_devices)} (devices: {[d.id for d in total_devices]})")
         print(f"  Local devices/host:  {len(local_devices)}")
         print(f"  Process-local batch: {args.batch_size}")
-        print(f"  Global batch size:   {args.batch_size * world_size}")
+        print(f"  Global batch size:   {global_batch_size}")
         print(f"  Architecture:        {args.model} (classes: {args.num_classes})")
-        print(f"=======================================")
+        print(f"  AMP (bfloat16):      {args.amp}")
+        print(f"=========================================================================")
 
     mixup = None
     if args.mixup_alpha > 0 or args.cutmix_alpha > 0:
@@ -341,7 +424,7 @@ def main(argv=None):
     train_label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
     eval_label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
 
-    # 3. Instantiate model and data pipeline (loader first: step count drives the LR schedule)
+    # 3. Instantiate model and data pipeline
     model = create_model(args.model, num_classes=args.num_classes,
                          drop_path_rate=args.drop_path, rngs=nnx.Rngs(0))
     model.train()
@@ -362,7 +445,6 @@ def main(argv=None):
         num_workers=args.workers, seed=rank,
     )
     train_loader.start_prefetch()
-    it = iter(train_loader)
     steps_per_epoch = args.steps_per_epoch or max(1, len(train_loader))
 
     optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs,
@@ -379,7 +461,7 @@ def main(argv=None):
                                    img_size=args.img_size, is_training=False,
                                    num_workers=args.workers)
 
-    # Construct cached train & eval steps (freezes the respective mode graph traversal)
+    # Construct cached train & eval steps
     model.train()
     cached_train_step = make_cached_train_step(
         model, optimizer, amp=args.amp, mixup=mixup)
@@ -388,68 +470,129 @@ def main(argv=None):
     cached_eval_step = make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
     model.train()
 
-    for epoch in range(args.epochs):
-        t0 = time.time()
-        losses, accuracies = [], []
-        for _ in range(steps_per_epoch):
-            batch = next(it)
-            # Distribute process-local batch across devices before batch mixing.
-            images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
-            labels = jax.make_array_from_process_local_data(train_label_sharding, batch["label"])
-            if train_rng is not None:
-                train_rng, step_rng = jax.random.split(train_rng)
-                loss, acc = cached_train_step(
-                    images, labels, args.smoothing, rng=step_rng)
-            else:
-                loss, acc = cached_train_step(images, labels, args.smoothing)
-            losses.append(loss)
-            accuracies.append(acc)
-            del batch, images, labels
+    # Async Host-to-Device prefetch pipeline (MaxText pattern)
+    device_data_stream = prefetch_to_device(
+        iter(train_loader), data_sharding, train_label_sharding,
+        prefetch_size=max(1, args.prefetch),
+    )
 
-        try:
-            loss_avg, acc_avg = (
-                float(value)
-                for value in jax.device_get((
-                    jnp.mean(jnp.stack(losses)),
-                    jnp.mean(jnp.stack(accuracies)),
-                ))
-            )
-        except Exception:
-            loss_avg, acc_avg = 0.0, 0.0
-        msg = f"epoch {epoch:>3}: loss {loss_avg:.4f} acc {acc_avg:.4f} ({time.time()-t0:.1f}s)"
-        if val_loader is not None and cached_eval_step is not None:
-            # Every host must execute the SPMD validation step; only rank 0 reports it.
-            v_losses, v_accuracies = [], []
-            for batch in val_loader:
-                v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
-                v_labels = jax.make_array_from_process_local_data(eval_label_sharding, batch["label"])
-                l, a = cached_eval_step(v_images, v_labels)
-                v_losses.append(l)
-                v_accuracies.append(a)
-                del batch, v_images, v_labels
-            if rank == 0:
-                try:
-                    v_loss_avg, v_acc_avg = (
-                        float(value)
-                        for value in jax.device_get((
-                            jnp.mean(jnp.stack(v_losses)),
-                            jnp.mean(jnp.stack(v_accuracies)),
-                        ))
+    global_step = 0
+    compiled_first_step = False
+
+    try:
+        for epoch in range(args.epochs):
+            t_epoch_start = time.time()
+            losses, accuracies = [], []
+            t_steady_start = None
+            steady_steps = 0
+
+            for step in range(steps_per_epoch):
+                # Start JAX profiler trace if requested
+                if args.profile_dir and global_step == args.profile_step:
+                    if rank == 0:
+                        print(f"  [Profiler] Starting JAX trace at global step {global_step} -> {args.profile_dir}")
+                    jax.profiler.start_trace(args.profile_dir)
+
+                t_step_start = time.time()
+                images, labels = next(device_data_stream)
+
+                if train_rng is not None:
+                    train_rng, step_rng = jax.random.split(train_rng)
+                    loss, acc = cached_train_step(
+                        images, labels, args.smoothing, rng=step_rng)
+                else:
+                    loss, acc = cached_train_step(images, labels, args.smoothing)
+
+                if not compiled_first_step:
+                    # Block on first step to accurately measure XLA compilation time
+                    loss.block_until_ready()
+                    compile_time = time.time() - t_step_start
+                    if rank == 0:
+                        print(f"  [XLA] Step 0 compiled and executed in {compile_time:.2f}s", flush=True)
+                    compiled_first_step = True
+                    t_steady_start = time.time()
+                else:
+                    steady_steps += 1
+
+                losses.append(loss)
+                accuracies.append(acc)
+                del images, labels
+
+                # Periodic step logging (MaxText style)
+                if (step + 1) % args.log_interval == 0 and rank == 0 and t_steady_start is not None and steady_steps > 0:
+                    elapsed_steady = time.time() - t_steady_start
+                    step_time_ms = (elapsed_steady / steady_steps) * 1000.0
+                    img_per_sec = (global_batch_size * steady_steps) / max(elapsed_steady, 1e-6)
+                    step_loss = float(loss)
+                    step_acc = float(acc)
+                    print(
+                        f"epoch {epoch:>3} [{step+1:>4}/{steps_per_epoch}]: "
+                        f"loss {step_loss:.4f} acc {step_acc:.4f} | "
+                        f"{img_per_sec:7.1f} img/s ({step_time_ms:.1f}ms/step)",
+                        flush=True,
                     )
-                except Exception:
-                    v_loss_avg, v_acc_avg = 0.0, 0.0
-                msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"
-        if rank == 0:
-            print(msg, flush=True)
-            # Checkpoint only from primary host (rank 0).
-            save_checkpoint(
-                f"{args.output}/{args.model}/epoch_{epoch}", model, optimizer,
-                epoch=epoch, wait=False)
 
-    train_loader.close()
-    if val_loader is not None:
-        val_loader.close()
-    wait_for_checkpoints()
+                # Stop JAX profiler trace
+                if args.profile_dir and global_step == args.profile_step + 1:
+                    jax.profiler.stop_trace()
+                    if rank == 0:
+                        print(f"  [Profiler] JAX trace completed and written to {args.profile_dir}")
+
+                global_step += 1
+
+            try:
+                loss_avg, acc_avg = (
+                    float(value)
+                    for value in jax.device_get((
+                        jnp.mean(jnp.stack(losses)),
+                        jnp.mean(jnp.stack(accuracies)),
+                    ))
+                )
+            except Exception:
+                loss_avg, acc_avg = 0.0, 0.0
+
+            epoch_time = time.time() - t_epoch_start
+            epoch_img_per_sec = (global_batch_size * steps_per_epoch) / max(epoch_time, 1e-6)
+            msg = (
+                f"epoch {epoch:>3} summary: loss {loss_avg:.4f} acc {acc_avg:.4f} "
+                f"| {epoch_img_per_sec:7.1f} img/s ({epoch_time:.2f}s)"
+            )
+
+            if val_loader is not None and cached_eval_step is not None:
+                # Every host must execute the SPMD validation step; only rank 0 reports it.
+                v_losses, v_accuracies = [], []
+                for batch in val_loader:
+                    v_images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
+                    v_labels = jax.make_array_from_process_local_data(eval_label_sharding, batch["label"])
+                    l, a = cached_eval_step(v_images, v_labels)
+                    v_losses.append(l)
+                    v_accuracies.append(a)
+                    del batch, v_images, v_labels
+                if rank == 0:
+                    try:
+                        v_loss_avg, v_acc_avg = (
+                            float(value)
+                            for value in jax.device_get((
+                                jnp.mean(jnp.stack(v_losses)),
+                                jnp.mean(jnp.stack(v_accuracies)),
+                            ))
+                        )
+                    except Exception:
+                        v_loss_avg, v_acc_avg = 0.0, 0.0
+                    msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"
+
+            if rank == 0:
+                print(msg, flush=True)
+                # Checkpoint only from primary host (rank 0).
+                save_checkpoint(
+                    f"{args.output}/{args.model}/epoch_{epoch}", model, optimizer,
+                    epoch=epoch, wait=False)
+
+    finally:
+        train_loader.close()
+        if val_loader is not None:
+            val_loader.close()
+        wait_for_checkpoints()
 
 
 if __name__ == "__main__":

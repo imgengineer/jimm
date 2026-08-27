@@ -1,7 +1,7 @@
 """EfficientFormer-V2 in flax nnx, NHWC. Mirrors timm.models.efficientformer_v2."""
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class ConvMlp(nnx.Module):
@@ -55,13 +55,12 @@ class EfficientFormerV2Block(nnx.Module):
             B, H, W, C = x.shape
             t = x.reshape(B, H * W, C)
             t = t + self.drop_path(self.attn(self.norm1(t)))
-            t = t + self.drop_path(self.mlp_fc2(nnx.gelu(self.mlp_fc1(self.norm2(t)))))
+            t = t + self.drop_path(self.mlp_fc2(gelu(self.mlp_fc1(self.norm2(t)))))
             return t.reshape(B, H, W, C)
         else:
             return x + self.drop_path(self.mlp(x))
 
 class EfficientFormerV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, depths=(2, 2, 6, 2), embed_dims=(32, 48, 96, 176), num_vit=2,
                  mlp_ratios=(4, 4, 4, 4), num_classes=1000, in_chans=3, global_pool="avg",

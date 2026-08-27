@@ -1,7 +1,7 @@
 """MambaOut in flax nnx, NHWC. Mirrors timm.models.mambaout (ConvNeXt-style, no SSM)."""
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class MambaOutBlock(nnx.Module):
@@ -17,11 +17,10 @@ class MambaOutBlock(nnx.Module):
     def __call__(self, x):
         y = self.dw(x)
         y = self.norm(y)
-        y = self.fc2(nnx.gelu(self.fc1(y)))
+        y = self.fc2(gelu(self.fc1(y)))
         return x + self.drop_path(y)
 
 class MambaOut(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(3, 3, 9, 3), num_classes=1000,
                  in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):

@@ -2,7 +2,7 @@
 
 **jimm** is a comprehensive JAX / Flax NNX implementation of the popular [`timm` (pytorch-image-models)](https://github.com/huggingface/pytorch-image-models) library.
 
-It provides **1,344 registered model architectures across 93 model families** (100% coverage of timm's 1,309 entrypoints), mirroring `timm`'s API surface with a pure JAX native design.
+It provides **1,344 registered model architectures across 94 model families** (100% coverage of timm's 1,309 entrypoints), mirroring `timm`'s API surface with a pure JAX native design.
 
 ---
 
@@ -47,7 +47,7 @@ Dependencies in `pyproject.toml`:
 - `grain`
 - `optax`
 - `orbax-checkpoint`
-- `pillow`
+- `opencv-python-headless`
 - `numpy`
 
 ---
@@ -241,7 +241,7 @@ print("Restored epoch:", epoch)
 
 ---
 
-## Supported Architectures (1,344 Models across 93 Families)
+## Supported Architectures (1,344 Models across 94 Families)
 
 | Family | Key Variants | Description |
 | --- | --- | --- |
@@ -284,7 +284,7 @@ print("Restored epoch:", epoch)
 
 ## Testing & Verification
 
-### Unit Test Suite & Code Coverage (>99.6% Coverage)
+### Unit Test Suite & Code Coverage (~98.5% Statement Coverage)
 
 Run the full pytest suite with code coverage across all core modules and 94 architecture families:
 
@@ -299,7 +299,7 @@ pytest tests/ -n auto --cov=jimm
 ### Self-Check Regression Suite
 
 ```bash
-# Run core test suite (representative models across all families + SPMD + FSDP + data + checkpointing)
+# Run forward smoke checks on representative models
 python scripts/test_jimm.py
 
 # Run backpropagation numerical gradient & convergence verification
@@ -323,12 +323,12 @@ jimm/
   train.py          Optax optimizer, loss functions, JIT train/eval steps
   checkpoint.py     Orbax async checkpointer save/restore
   features.py       features_only multi-scale feature extractor
-  weights.py        PyTorch/SafeTensors weight conversion & loading
+  weights.py        PyTorch-style state-dict conversion and .npz loading
   models/           94 architecture implementation files + variants.py
-                    (1,344 registered variants across 93 families)
+                    (1,344 registered variants across 94 families)
 tests/              pytest unit test suite
-scripts/            Standalone verification & training scripts
-  test_jimm.py      End-to-end self-check suite
+scripts/            Standalone verification scripts
+  test_jimm.py      Registered-model forward smoke checks
   test_backprop.py  Backpropagation gradient/convergence checks
 pyproject.toml      uv project configuration & dependencies
 ```

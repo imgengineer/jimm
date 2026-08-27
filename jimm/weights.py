@@ -5,7 +5,7 @@ Converts standard PyTorch/timm weight formats into JAX/Flax NNX native layout:
   - Linear weights: PyTorch (Out, In) -> JAX (In, Out)
   - Parameter paths: PyTorch hierarchical keys -> Flax NNX attribute trees
 """
-import os
+from pathlib import Path
 from typing import Any
 
 from flax import nnx
@@ -50,7 +50,7 @@ def _convert_tensor(k: str, v: np.ndarray | Any) -> np.ndarray:
     if a.ndim == 4:
         return a.transpose(2, 3, 1, 0)
     # 2D Linear: PyTorch (O, I) -> JAX (I, O)
-    if a.ndim == 2 and ("kernel" in k or "fc" in k or "head" in k or "proj" in k or "mlp" in k):
+    if a.ndim == 2 and _convert_key(k)[-1] == "kernel":
         return a.T
     return a
 
@@ -60,7 +60,7 @@ def load_state_dict(
     state_dict: dict[str, Any],
     strict: bool = False,
 ) -> tuple[list[str], list[str]]:
-    """Load a dictionary of parameter arrays (PyTorch or SafeTensors format) into an NNX model.
+    """Load a dictionary of PyTorch-style parameter arrays into an NNX model.
 
     Args:
         model: Live Flax NNX model instance.
@@ -72,6 +72,7 @@ def load_state_dict(
     """
     loaded: list[str] = []
     missing: list[str] = []
+    updates: list[tuple[str, nnx.Variable, Any]] = []
 
     for k, v in state_dict.items():
         parts = _convert_key(k)
@@ -82,11 +83,7 @@ def load_state_dict(
         failed = False
         for p in parts[:-1]:
             if p.isdigit():
-                try:
-                    idx = int(p)
-                except ValueError:
-                    failed = True
-                    break
+                idx = int(p)
                 if isinstance(curr, (list, nnx.List)) and idx < len(curr):
                     curr = curr[idx]
                 else:
@@ -106,23 +103,23 @@ def load_state_dict(
         if hasattr(curr, attr):
             node = getattr(curr, attr)
             if isinstance(node, nnx.Variable):
-                val = converted_v
-                if hasattr(node, "shape") and node.shape == val.shape:
-                    node.set_value(jnp.asarray(val))
-                    loaded.append(k)
-                elif not hasattr(node, "shape"):
-                    node.set_value(jnp.asarray(val))
-                    loaded.append(k)
+                target = node.get_value()
+                value = jnp.asarray(converted_v, dtype=getattr(target, "dtype", None))
+                if not hasattr(target, "shape") or target.shape == value.shape:
+                    updates.append((k, node, value))
                 else:
                     missing.append(k)
             else:
-                setattr(curr, attr, jnp.asarray(converted_v))
-                loaded.append(k)
+                missing.append(k)
         else:
             missing.append(k)
 
     if strict and missing:
         raise RuntimeError(f"Failed to load {len(missing)} keys strictly: {missing[:10]}...")
+
+    for key, node, value in updates:
+        node.set_value(value)
+        loaded.append(key)
 
     return loaded, missing
 
@@ -140,9 +137,11 @@ def load_pretrained(
     Returns:
         Tuple of (loaded_keys, missing_keys).
     """
-    if os.path.exists(checkpoint_path):
-        if checkpoint_path.endswith(".npz"):
-            with np.load(checkpoint_path) as data:
-                state_dict = {k: data[k] for k in data.files}
-            return load_state_dict(model, state_dict)
-    raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    checkpoint = Path(checkpoint_path).expanduser()
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    if not checkpoint.is_file() or checkpoint.suffix.lower() != ".npz":
+        raise ValueError(f"Unsupported checkpoint format: {checkpoint_path} (expected .npz)")
+    with np.load(checkpoint) as data:
+        state_dict = {k: data[k] for k in data.files}
+    return load_state_dict(model, state_dict)

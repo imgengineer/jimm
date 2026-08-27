@@ -14,7 +14,9 @@ from jimm.augment import MixupCutmix
 from jimm.registry import create_model
 from jimm.train import (
     StepMetrics,
+    _mean_metrics,
     _mixup_cutmix_jax,
+    _validate_batch,
     cross_entropy,
     eval_step,
     fsdp_shard_model,
@@ -60,8 +62,37 @@ def test_cross_entropy():
     loss_soft = cross_entropy(logits, soft_labels)
     assert float(loss_soft) > 0.0
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="labels shape"):
         cross_entropy(logits, jnp.array([0], dtype=jnp.int32))
+    with pytest.raises(ValueError, match="logits must be 2-D"):
+        cross_entropy(logits[None], labels)
+    with pytest.raises(ValueError, match="labels shape"):
+        cross_entropy(logits, jnp.ones((2, 2)))
+    with pytest.raises(ValueError, match="integer class ids"):
+        cross_entropy(logits, labels.astype(jnp.float32))
+    with pytest.raises(ValueError, match="floating-point targets"):
+        cross_entropy(logits, nnx.one_hot(labels, 3).astype(jnp.int32))
+    with pytest.raises(ValueError, match="smoothing"):
+        cross_entropy(logits, labels, smoothing=1.1)
+
+
+def test_batch_validation_and_metric_aggregation():
+    images = jnp.ones((2, 8, 8, 3))
+    labels = jnp.array([0, 1])
+    _validate_batch(images, labels)
+    with pytest.raises(ValueError, match="NHWC"):
+        _validate_batch(images[..., :1], labels)
+    with pytest.raises(ValueError, match="batch size"):
+        _validate_batch(images, labels[:1])
+
+    assert _mean_metrics([1.0, 3.0], [0.2, 0.6]) == pytest.approx((2.0, 0.4))
+    assert _mean_metrics([1.0, 3.0], [0.2, 0.6], [3, 1]) == pytest.approx((1.5, 0.3))
+    with pytest.raises(ValueError, match="non-empty"):
+        _mean_metrics([], [])
+    with pytest.raises(ValueError, match="one positive"):
+        _mean_metrics([1.0], [0.5], [0])
+    with pytest.raises(FloatingPointError, match="non-finite"):
+        _mean_metrics([jnp.nan], [0.5])
 
 
 def test_make_optimizer():
@@ -71,6 +102,21 @@ def test_make_optimizer():
 
     opt2 = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10, clip_grad=1.0)
     assert isinstance(opt2, nnx.Optimizer)
+
+    one_step = make_optimizer(
+        m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=1)
+    assert isinstance(one_step, nnx.Optimizer)
+
+    for kwargs in (
+        {"lr": float("nan")},
+        {"warmup_ratio": -1},
+        {"min_lr_ratio": 2},
+    ):
+        options = dict(
+            lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
+        options.update(kwargs)
+        with pytest.raises(ValueError):
+            make_optimizer(m, **options)
 
 
 def test_make_optimizer_weight_decay_excludes_1d_params():
@@ -187,6 +233,22 @@ def test_jax_mixup_cutmix_modes():
             np.testing.assert_allclose(np.asarray(mixed_labels).sum(axis=1), 1.0)
 
 
+def test_jax_mixup_identity_applies_label_smoothing():
+    images = jnp.ones((4, 8, 8, 3), dtype=jnp.float32)
+    labels = jnp.array([0, 1, 2, 3], dtype=jnp.int32)
+    config = MixupCutmix(
+        mixup_alpha=0.8, cutmix_alpha=0.0, prob=0.5,
+        mode="batch", label_smoothing=0.1, num_classes=4)
+    # PRNGKey(0) draws uniform ~0.948 >= prob, so this batch takes the
+    # identity (skip-mixing) branch.
+    mixed_images, mixed_labels = _mixup_cutmix_jax(
+        images, labels, jax.random.PRNGKey(0), config)
+    # Batches that skip mixing must still receive smoothed soft targets.
+    expected = np.eye(4) * 0.9 + 0.1 / 4
+    np.testing.assert_allclose(np.asarray(mixed_labels), expected)
+    np.testing.assert_allclose(np.asarray(mixed_images), images)
+
+
 def test_fsdp_shard_model():
     mesh = jax.sharding.Mesh(jax.devices(), ("data",))
     m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
@@ -229,6 +291,13 @@ def test_init_distributed(monkeypatch):
 def test_main_training_cli(temp_dataset, monkeypatch):
     out_dir = tempfile.mkdtemp()
     try:
+        profile_calls = []
+        monkeypatch.setattr(
+            jax.profiler, "start_trace",
+            lambda path: profile_calls.append(("start", path)))
+        monkeypatch.setattr(
+            jax.profiler, "stop_trace",
+            lambda: profile_calls.append(("stop", None)))
         # Run 1 quick epoch CLI on synthetic dataset
         main([
             "--model", "resnet18",
@@ -238,10 +307,17 @@ def test_main_training_cli(temp_dataset, monkeypatch):
             "--img-size", "32",
             "--num-classes", "2",
             "--workers", "0",
+            "--steps-per-epoch", "1",
+            "--profile-step", "0",
+            "--profile-dir", f"{out_dir}/profiles",
             "--output", out_dir,
         ])
-        # Check checkpoint exists
-        assert os.path.exists(f"{out_dir}/resnet18/epoch_0")
+        assert profile_calls == [
+            ("start", f"{out_dir}/profiles"),
+            ("stop", None),
+        ]
+        # Check checkpoint exists (step-numbered manager layout)
+        assert os.path.exists(f"{out_dir}/resnet18/0")
 
         # Run with --fsdp
         main([
@@ -269,6 +345,51 @@ def test_main_training_cli(temp_dataset, monkeypatch):
         shutil.rmtree(out_dir, ignore_errors=True)
 
 
+@pytest.mark.parametrize("options", [
+    ["--prefetch", "0"],
+    ["--log-interval", "0"],
+    ["--steps-per-epoch", "0"],
+    ["--max-to-keep", "0"],
+    ["--workers", "-1"],
+    ["--profile-step", "0"],
+    ["--profile-dir", "profiles"],
+    ["--profile-step", "-1", "--profile-dir", "profiles"],
+    ["--lr", "nan"],
+    ["--mixup-alpha", "-1"],
+    ["--smoothing", "1.1"],
+    ["--drop-path", "1"],
+    ["--dist-num-processes", "2"],
+    ["--dist-coordinator-address", "localhost:1", "--dist-num-processes", "2",
+     "--dist-process-id", "2"],
+])
+def test_main_rejects_invalid_cli(options):
+    with pytest.raises(SystemExit, match="2"):
+        main(["--data-dir", "unused", *options])
+
+
+def test_main_training_cli_resume(temp_dataset, capsys):
+    out_dir = tempfile.mkdtemp()
+    try:
+        common = [
+            "--model", "resnet18",
+            "--data-dir", temp_dataset,
+            "--batch-size", "4",
+            "--img-size", "32",
+            "--num-classes", "2",
+            "--workers", "0",
+            "--output", out_dir,
+        ]
+        main(common + ["--epochs", "2", "--max-to-keep", "1"])
+        assert os.path.exists(f"{out_dir}/resnet18/1")
+
+        # Resume continues from the latest checkpoint instead of restarting.
+        main(common + ["--epochs", "3", "--resume"])
+        assert "[Resume] Restored checkpoint at epoch 1" in capsys.readouterr().out
+        assert os.path.exists(f"{out_dir}/resnet18/2")
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
 def test_prefetch_to_device():
     mesh = jax.sharding.Mesh(jax.devices(), ("data",))
     P = jax.sharding.PartitionSpec
@@ -289,6 +410,10 @@ def test_prefetch_to_device():
         assert images.shape == (2, 16, 16, 3)
         assert labels.shape == (2,)
 
+    with pytest.raises(ValueError, match="prefetch_size"):
+        list(prefetch_to_device(
+            iter(dummy_batches), data_sharding, label_sharding, prefetch_size=0))
+
 
 def test_train_step_with_metrics():
     m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
@@ -303,4 +428,3 @@ def test_train_step_with_metrics():
     assert float(metrics.loss) > 0.0
     assert 0.0 <= float(metrics.accuracy) <= 1.0
     assert float(metrics.grad_norm) >= 0.0
-

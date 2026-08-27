@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc, ClassifierMixin
+from ..layers import DropPath, global_pool_nhwc, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class GRN(nnx.Module):
@@ -29,11 +29,10 @@ class ConvNeXtV2Block(nnx.Module):
     def __call__(self, x):
         y = self.dwconv(x)
         y = self.norm(y)
-        y = self.pw2(self.grn(nnx.gelu(self.pw1(y))))
+        y = self.pw2(self.grn(gelu(self.pw1(y))))
         return x + self.drop_path(y)
 
 class ConvNeXtV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, depths, dims, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, drop_path_rate=0.0, *, rngs):

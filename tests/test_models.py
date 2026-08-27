@@ -53,7 +53,9 @@ def test_architecture_family_forward_and_backward(module_name):
                                           nnx.to_pure_dict(nnx.state(grads))))
     assert len(leaves) > 0, f"{name}: no parameter gradient leaves"
     n_bad = sum(1 for g in leaves if not bool(jnp.isfinite(g).all()))
+    n_nonzero = sum(1 for g in leaves if bool(jnp.any(g != 0)))
     assert n_bad == 0, f"{name}: {n_bad} non-finite gradients in backward pass"
+    assert n_nonzero > 0, f"{name}: all parameter gradients are zero"
 
     # 3. Eval mode & feature extractor check
     m.eval()
@@ -77,6 +79,7 @@ def test_variant_constructor_smoke():
         model = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
         assert model.num_features > 0
         assert "input_size" in model.default_cfg
+    assert create_model("tinynet_a", num_classes=0, rngs=nnx.Rngs(0)).num_features == 1104
 
 
 def test_extra_multi_architecture_modules():

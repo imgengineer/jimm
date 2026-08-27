@@ -22,7 +22,6 @@ class VisBlock(nnx.Module):
 
 class Visformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="avg", embed_dim=384, depth=12, num_heads=6, mlp_ratio=4.0,

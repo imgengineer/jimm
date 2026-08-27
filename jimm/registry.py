@@ -138,8 +138,8 @@ def create_model(
         name: Registered model architecture entrypoint (e.g. 'resnet50', 'convnext_tiny').
         pretrained: Load pretrained weights:
           - False: Random initialization.
-          - True: Load weights from official default URL if available.
-          - str: Path to local `.npz` / `.safetensors` weight file or custom URL.
+          - True: Load the registered default `.npz` file if available.
+          - str: Path to a local `.npz` weight file.
           - dict: State dictionary of converted array weights.
         features_only: If True, returns a `FeatureExtractor` wrapper returning multi-scale feature maps.
         out_indices: Specific intermediate stage indices to extract when `features_only=True`.
@@ -155,7 +155,7 @@ def create_model(
     if features_only:
         kwargs.setdefault("num_classes", 0)
 
-    model = _model_entrypoints[name](rngs=rngs or nnx.Rngs(0), **kwargs)
+    model = _model_entrypoints[name](rngs=rngs if rngs is not None else nnx.Rngs(0), **kwargs)
 
     # Attach or cache default configuration
     if not getattr(model, "default_cfg", None):
@@ -172,12 +172,12 @@ def create_model(
             weights.load_state_dict(model, pretrained)
         elif isinstance(pretrained, bool) and pretrained:
             cfg = get_default_cfg(name)
-            url = cfg.get("url") if isinstance(cfg, dict) else None
-            if url:
-                weights.load_pretrained(model, url)
+            checkpoint = cfg.get("url") if isinstance(cfg, dict) else None
+            if checkpoint:
+                weights.load_pretrained(model, checkpoint)
             else:
                 raise NotImplementedError(
-                    f"No default pretrained weight URL for {name!r}; train from scratch, "
+                    f"No default pretrained weights for {name!r}; train from scratch, "
                     "restore an orbax checkpoint with jimm.checkpoint.load_checkpoint, "
                     "or pass pretrained='path/to/weights.npz'."
                 )

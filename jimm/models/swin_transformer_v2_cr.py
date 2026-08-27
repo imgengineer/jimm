@@ -103,7 +103,6 @@ class SwinTransformerV2CrStage(nnx.Module):
 
 class SwinTransformerV2Cr(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict | None = None
 
     def __init__(self, img_size: int = 224, patch_size: int = 4, in_chans: int = 3, num_classes: int = 1000,
                  global_pool: str = "avg", embed_dim: int = 96, depths=(2, 2, 6, 2),

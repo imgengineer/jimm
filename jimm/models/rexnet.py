@@ -1,5 +1,4 @@
 """ReXNet in flax nnx, NHWC. Mirrors timm.models.rexnet (swish + SE inverted residuals)."""
-import jax
 from flax import nnx
 
 from ..layers import SqueezeExcite, ClassifierMixin
@@ -8,10 +7,7 @@ from .mobilenetv2 import ConvBN, round_chs
 
 class ReXBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand, use_se, *, rngs):
-        try:
-            mid = int(round(in_chs * expand))
-        except Exception:
-            mid = in_chs * 6
+        mid = int(round(in_chs * expand))
         self.use_residual = stride == 1 and in_chs == out_chs
         self.expand = ConvBN(in_chs, mid, rngs=rngs) if expand != 1 else None
         self.dw = nnx.Conv(mid, mid, (3, 3), strides=(stride, stride), use_bias=False,
@@ -41,7 +37,6 @@ REXNET_CFG = [
 ]
 
 class ReXNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, width_mult=1.0, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, *, rngs):

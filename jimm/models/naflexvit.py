@@ -20,7 +20,6 @@ class NAFlexBlock(nnx.Module):
 
 class NAFlexViT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict | None = None
 
     def __init__(self, img_size: int = 224, patch_size: int = 16, in_chans: int = 3,
                  num_classes: int = 1000, global_pool: str = "avg", embed_dim: int = 768,

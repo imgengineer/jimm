@@ -46,7 +46,6 @@ class DualPathBlock(nnx.Module):
         return jnp.concatenate([resid, dense], axis=-1)
 
 class DPN(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, k_sec, inc_sec, k_r, groups, small=False, num_init_features=64,
                  b=False, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

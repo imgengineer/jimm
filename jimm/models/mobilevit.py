@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin
+from ..layers import ConvBNAct, DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 from .mobilenetv2 import InvertedResidual
 from .vision_transformer import Attention
@@ -18,7 +18,7 @@ class MViTTransformerBlock(nnx.Module):
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
-        return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm2(x)))))
+        return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm2(x)))))
 
 class MobileViTStage(nnx.Module):
     """conv to dim -> unfold patches -> transformer -> fold back -> fuse."""
@@ -44,7 +44,6 @@ class MobileViTStage(nnx.Module):
         return self.fuse(jnp.concatenate([x, y], axis=-1))
 
 class MobileViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(32, 64, 96), tf_dims=(144, 192, 240), tf_depths=(2, 4, 3),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

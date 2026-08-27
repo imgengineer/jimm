@@ -1,7 +1,7 @@
 """FastViT in flax nnx, NHWC. Mirrors timm.models.fastvit (RepMixer + attention stages)."""
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
 
@@ -42,11 +42,10 @@ class AttnStage(nnx.Module):
         t = x.reshape(B, H * W, C)
         for norm1, attn, norm2, fc1, fc2, dp in self.blocks:
             t = t + dp(attn(norm1(t)))
-            t = t + dp(fc2(nnx.gelu(fc1(norm2(t)))))
+            t = t + dp(fc2(gelu(fc1(norm2(t)))))
         return t.reshape(B, H, W, C)
 
 class FastViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(48, 96, 192, 384), depths=(2, 2, 6, 2), attn_depths=(0, 0, 0, 2),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

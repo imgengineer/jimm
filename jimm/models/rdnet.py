@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class RDBlock(nnx.Module):
@@ -21,12 +21,11 @@ class RDBlock(nnx.Module):
     def __call__(self, x):
         feats = x
         for dw, mix in zip(self.dws, self.mixs):
-            y = mix(nnx.gelu(dw(feats)))
+            y = mix(gelu(dw(feats)))
             feats = jnp.concatenate([feats, y], axis=-1)
         return x + self.drop_path(self.out_proj(self.norm(feats)))
 
 class RDNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 6, 2), growth=64,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

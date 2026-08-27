@@ -1,7 +1,7 @@
 """ConvMixer in flax nnx, NHWC. Mirrors timm.models.convmixer."""
 from flax import nnx
 
-from ..layers import global_pool_nhwc, ClassifierMixin
+from ..layers import global_pool_nhwc, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class ConvMixerBlock(nnx.Module):
@@ -12,12 +12,11 @@ class ConvMixerBlock(nnx.Module):
         self.bn2 = nnx.BatchNorm(dim, rngs=rngs)
 
     def __call__(self, x):
-        y = nnx.gelu(self.bn1(self.dw(x)))
+        y = gelu(self.bn1(self.dw(x)))
         x = x + y
-        return nnx.gelu(self.bn2(self.pw(x)))
+        return gelu(self.bn2(self.pw(x)))
 
 class ConvMixer(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, dim=1536, depth=20, patch_size=7, kernel=9, num_classes=1000,
                  in_chans=3, global_pool="avg", *, rngs):
@@ -29,7 +28,7 @@ class ConvMixer(ClassifierMixin, nnx.Module):
         self.fc = nnx.Linear(dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = nnx.gelu(self.stem_bn(self.stem(x)))
+        x = gelu(self.stem_bn(self.stem(x)))
         for blk in self.blocks:
             x = blk(x)
         return x

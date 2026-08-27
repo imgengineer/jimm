@@ -1,6 +1,7 @@
 """Unit tests for jimm.layers."""
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from flax import nnx
 
@@ -12,9 +13,18 @@ from jimm.layers import (
     PatchEmbed,
     SqueezeExcite,
     global_pool_nhwc,
+    gelu,
     hswish,
     relu6,
 )
+
+
+def test_gelu_exact_erf():
+    # timm/PyTorch nn.GELU() semantics, not the tanh approximation.
+    x = jnp.array([-2.0, -0.5, 0.0, 0.5, 2.0], dtype=jnp.float32)
+    expected = 0.5 * x * (1.0 + jax.scipy.special.erf(x / jnp.sqrt(2.0)))
+    np.testing.assert_allclose(gelu(x), expected, rtol=1e-5, atol=1e-6)
+    assert not jnp.allclose(gelu(x), nnx.gelu(x))  # tanh approximation differs
 
 
 def test_global_pool_nhwc():

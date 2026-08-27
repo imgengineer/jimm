@@ -128,7 +128,6 @@ class SwinStage(nnx.Module):
 
 class SwinTransformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, num_classes=1000,
                  global_pool="avg", embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),

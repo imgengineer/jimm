@@ -6,7 +6,6 @@ Layout Convention:
   - Dense token sequences follow BNC: (Batch, Num_Tokens, Channels).
   - DropPath and BatchNorm modes automatically switch via `model.train()` and `model.eval()`.
 """
-from typing import Any
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -19,9 +18,19 @@ __all__ = [
     "ConvBNAct",
     "ClassifierMixin",
     "global_pool_nhwc",
+    "gelu",
     "hswish",
     "relu6",
 ]
+
+
+def gelu(x: jax.Array) -> jax.Array:
+    """Exact erf-based GELU, matching timm/PyTorch ``nn.GELU()``.
+
+    ``nnx.gelu`` defaults to the tanh approximation, which breaks numerical
+    parity when loading timm/PyTorch checkpoints.
+    """
+    return nnx.gelu(x, approximate=False)
 
 
 class DropPath(nnx.Module):
@@ -89,7 +98,7 @@ class Mlp(nnx.Module):
         self.drop = nnx.Dropout(drop, rngs=rngs)
 
     def __call__(self, x: jax.Array) -> jax.Array:
-        return self.drop(self.fc2(self.drop(nnx.gelu(self.fc1(x)))))
+        return self.drop(self.fc2(self.drop(gelu(self.fc1(x)))))
 
 
 # Native Flax NNX activation aliases
@@ -101,7 +110,7 @@ _ACTS = {
     "relu6": nnx.relu6,
     "hswish": nnx.hard_swish,
     "silu": nnx.silu,
-    "gelu": nnx.gelu,
+    "gelu": gelu,
     "sigmoid": nnx.sigmoid,
     "identity": None,
 }
@@ -189,6 +198,7 @@ class ClassifierMixin:
 
     _classifier_attr: str = "fc"
     _default_global_pool: str = "avg"
+    default_cfg: dict | None = None
 
     num_features: int
     head_drop: nnx.Dropout

@@ -1,7 +1,7 @@
 """FocalNet in flax nnx, NHWC. Mirrors timm.models.focalnet (focal modulation)."""
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class FocalModulation(nnx.Module):
@@ -18,11 +18,11 @@ class FocalModulation(nnx.Module):
 
     def __call__(self, x):
         h = self.in_proj(x)
-        ctx = nnx.gelu(h)
+        ctx = gelu(h)
         ctxs = []
         for dw in self.dw:
             ctx = dw(ctx)
-            ctx = nnx.gelu(ctx)
+            ctx = gelu(ctx)
             ctxs.append(ctx)
         gates = self.gate_proj(x)  # (B,H,W,levels+1)
         agg = gates[..., :1] * h
@@ -41,10 +41,9 @@ class FocalBlock(nnx.Module):
 
     def __call__(self, x):
         x = x + self.drop_path(self.mod(self.norm1(x)))
-        return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm2(x)))))
+        return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm2(x)))))
 
 class FocalNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 6, 2), levels=3,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

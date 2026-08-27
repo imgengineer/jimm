@@ -34,3 +34,27 @@ def test_features_only_vit():
     assert len(feats) == 2
     assert feats[0].shape == (2, 197, 768)
     assert feats[1].shape == (2, 197, 768)
+
+
+def test_features_out_of_range_raises():
+    m = jimm.create_model("resnet50", features_only=True, out_indices=(0, 99), rngs=nnx.Rngs(0))
+    x = jnp.ones((2, 224, 224, 3), jnp.float32)
+    with pytest.raises(ValueError, match="out of range"):
+        m(x)
+
+
+def test_feature_info_get_timm_semantics():
+    from jimm.features import FeatureInfo
+
+    info = [
+        {"num_chs": 64, "reduction": 2},
+        {"num_chs": 256, "reduction": 4},
+        {"num_chs": 512, "reduction": 8},
+    ]
+    fi = FeatureInfo(info, out_indices=(0, 2))
+    # idx=None lists every stage; an idx indexes the selected stages.
+    assert fi.get("num_chs") == [64, 256, 512]
+    assert fi.get("num_chs", 0) == 64
+    assert fi.get("num_chs", 1) == 512
+    assert fi.channels() == [64, 512]
+    assert fi.reduction() == [2, 8]

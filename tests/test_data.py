@@ -67,6 +67,43 @@ def test_image_folder(temp_dataset):
         shutil.rmtree(empty_dir, ignore_errors=True)
 
 
+def test_in_memory_cache_resizes_to_img_size(temp_dataset):
+    # create_dataset must forward img_size so the decode cache stores
+    # img_size x img_size images instead of full-resolution sources.
+    source, transform = create_dataset(
+        f"{temp_dataset}/train", in_memory=True, img_size=32)
+    assert source._cache is not None
+    shapes = {tuple(shape) for _, _, shape, _ in source._cache.records}
+    assert shapes == {(32, 32, 3)}  # fixture images are 48x48
+    sample = transform.map(source[0])
+    assert sample["image"].shape == (32, 32, 3)
+
+
+def test_create_loader_drop_remainder(temp_dataset):
+    loader = create_loader(
+        f"{temp_dataset}/val", batch_size=5, img_size=32,
+        is_training=False, num_workers=0, drop_remainder=True)
+    try:
+        batches = list(loader)
+        assert len(batches) == len(loader) == 4  # 24 // 5, tail dropped
+        assert sum(len(b["label"]) for b in batches) == 20
+    finally:
+        loader.close()
+
+    default_loader = create_loader(
+        f"{temp_dataset}/val", batch_size=5, img_size=32,
+        is_training=False, num_workers=0)
+    try:
+        assert len(list(default_loader)) == 5  # default keeps the tail batch
+    finally:
+        default_loader.close()
+
+    with pytest.raises(ValueError, match="drop_remainder"):
+        create_loader(
+            f"{temp_dataset}/val", batch_size=5, img_size=32,
+            is_training=False, num_workers=0, drop_remainder="yes")
+
+
 def test_augmentations(monkeypatch):
     img = np.arange(48 * 48 * 3, dtype=np.uint8).reshape(48, 48, 3)
     cropped = random_resized_crop(img, size=16, scale=(1.0, 1.0), ratio=(1.0, 1.0))
@@ -204,6 +241,8 @@ def test_augmentation_edge_cases():
         augment_module.rand_augment_transform("rand-unknown1")
     with pytest.raises(ValueError):
         augment_module.augment_and_mix_transform("augmix-unknown1")
+    with pytest.raises(ValueError, match="weights"):
+        data_module.rand_augment_ops(transforms={"Invert": 0})
     assert build_auto_augment("none") is None
     assert data_module.rand_augment_choices("weights")
     assert data_module.rand_augment_choices("3aw")
@@ -245,7 +284,7 @@ def test_mixup_cutmix(monkeypatch):
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
     unchanged, unchanged_labels = MixupCutmix(prob=0.0, num_classes=2)(images, labels)
     assert unchanged is images
-    assert unchanged_labels is labels
+    assert unchanged_labels.shape == (2, 2)
 
 
 def test_mixup_modes_and_edges():
@@ -253,6 +292,27 @@ def test_mixup_modes_and_edges():
     labels = np.arange(4, dtype=np.int32)
     with pytest.raises(ValueError, match="mode"):
         MixupCutmix(mode="invalid")
+    for kwargs in (
+        {"mixup_alpha": -1}, {"cutmix_alpha": float("nan")}, {"prob": 2},
+        {"switch_prob": -1}, {"label_smoothing": 1.1}, {"num_classes": 0},
+        {"cutmix_minmax": (0.8, 0.2)}, {"cutmix_minmax": (0.2,)},
+    ):
+        with pytest.raises(ValueError):
+            MixupCutmix(**kwargs)
+
+    mix = MixupCutmix(num_classes=4)
+    with pytest.raises(ValueError, match="images"):
+        mix(images[..., :2], labels)
+    with pytest.raises(ValueError, match="labels"):
+        mix(images, labels[:2])
+    with pytest.raises(ValueError, match="soft labels"):
+        mix(images, np.zeros((4, 3), dtype=np.float32))
+    with pytest.raises(ValueError, match="integer class ids"):
+        mix(images, labels.astype(np.float32))
+    with pytest.raises(ValueError, match="between 0 and 3"):
+        mix(images, np.array([0, 1, 2, -1]))
+    with pytest.raises(ValueError, match="finite"):
+        mix(images, np.full((4, 4), np.nan))
 
     for mode in ("pair", "elem"):
         mixed, targets = MixupCutmix(
@@ -290,9 +350,16 @@ def test_data_error_paths(temp_dataset, monkeypatch):
     monkeypatch.setattr(np.random, "rand", lambda: 0.0)
     assert data_module.color_jitter(img).shape == img.shape
 
-    with pytest.raises(ValueError, match="no class subdirectories"):
+    with pytest.raises(ValueError, match="unable to scan dataset root"):
         ImageFolder(Path(temp_dataset) / "missing")
-    assert _DecodeTransform(img_size=8, crop_pct=0).resize == 256
+    for crop_pct in (0, float("nan"), "bad"):
+        with pytest.raises(ValueError, match="crop_pct"):
+            _DecodeTransform(img_size=8, crop_pct=cast(Any, crop_pct))
+    for kwargs in ({"hflip": 2}, {"re_prob": float("nan")}, {"vflip": "bad"}):
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            _DecodeTransform(img_size=8, **kwargs)
+    with pytest.raises(ValueError, match="std values must be positive"):
+        _DecodeTransform(img_size=8, std=(1, 0, 1))
 
     original_iterdir = Path.iterdir
     with monkeypatch.context() as mp:
@@ -300,7 +367,8 @@ def test_data_error_paths(temp_dataset, monkeypatch):
             (_ for _ in ()).throw(OSError("synthetic failure"))
             if path.name == "cat" else original_iterdir(path)
         ))
-        assert len(ImageFolder(root)) == 16
+        with pytest.raises(OSError, match="unable to scan class directory"):
+            ImageFolder(root)
 
     with monkeypatch.context() as mp:
         mp.setattr(data_module, "_decode_image", fail)
@@ -341,7 +409,7 @@ def test_data_error_paths(temp_dataset, monkeypatch):
     unchanged, unchanged_labels = MixupCutmix(
         mixup_alpha=0.0, cutmix_alpha=0.0, num_classes=2)(images, labels)
     assert unchanged is images
-    assert unchanged_labels is labels
+    assert unchanged_labels.shape == (2, 2)
 
 
 def test_decode_transform():
@@ -501,4 +569,3 @@ def test_decode_truncated_jpeg():
     decoded = data_module._decode_image(truncated_raw)
     assert decoded.shape == (32, 32, 3)
     assert isinstance(decoded, np.ndarray)
-

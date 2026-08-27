@@ -1,5 +1,4 @@
 """ConViT in flax nnx. Mirrors timm.models.convit (GPSA: gated positional self-attention)."""
-import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -36,8 +35,6 @@ class GPSA(nnx.Module):
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
 
-import jax  # noqa: E402
-
 class ConViTBlock(nnx.Module):
     def __init__(self, dim, num_heads, grid, use_gpsa, drop_path=0.0, *, rngs):
         from .vision_transformer import Attention
@@ -55,7 +52,6 @@ class ConViTBlock(nnx.Module):
 class ConViT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="", embed_dim=432, depth=12, num_heads=9, gpsa_depth=10,

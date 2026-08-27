@@ -1,7 +1,7 @@
 """EfficientViT (MSRA) in flax nnx, NHWC. Mirrors timm.models.efficientvit_msra (MBConv + lightweight attn)."""
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class EViTMBConv(nnx.Module):
@@ -48,10 +48,9 @@ class EViTBlock(nnx.Module):
 
     def __call__(self, x):
         x = x + self.attn(self.norm1(x))
-        return x + self.fc2(nnx.gelu(self.fc1(self.norm2(x))))
+        return x + self.fc2(gelu(self.fc1(self.norm2(x))))
 
 class EfficientViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 192, 256), depths=(1, 2, 3, 4), attn_depths=(0, 0, 1, 2),
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

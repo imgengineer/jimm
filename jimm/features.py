@@ -29,10 +29,16 @@ class FeatureInfo:
         return [self.info[i]["reduction"] for i in self.out_indices]
 
     def get(self, key: str, idx: int | None = None) -> Any:
-        """Retrieve metadata field for all selected stages or a specific index."""
+        """Retrieve metadata field for all stages or a selected stage (timm semantics).
+
+        Args:
+            key: Metadata field name (e.g. 'num_chs', 'reduction').
+            idx: None returns the field for every stage; an integer indexes the
+                selected stages (``out_indices``), like timm's FeatureInfo.get.
+        """
         if idx is None:
-            return [self.info[i][key] for i in self.out_indices]
-        return self.info[idx][key]
+            return [stage[key] for stage in self.info]
+        return self.info[self.out_indices[idx]][key]
 
     def __len__(self) -> int:
         return len(self.out_indices)
@@ -102,8 +108,13 @@ class FeatureExtractor(nnx.Module):
             selected = []
             for idx in self.out_indices:
                 real_idx = n + idx if idx < 0 else idx
-                if 0 <= real_idx < n:
-                    selected.append(feats[real_idx])
+                if not 0 <= real_idx < n:
+                    # timm raises on invalid out_indices instead of silently
+                    # returning fewer feature maps than requested.
+                    raise ValueError(
+                        f"out_indices entry {idx} is out of range for a model "
+                        f"with {n} feature stages")
+                selected.append(feats[real_idx])
             return selected
         return feats
 

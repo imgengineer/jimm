@@ -38,7 +38,6 @@ class TNTBlock(nnx.Module):
 class TNT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="", embed_dim=384, depth=12, num_heads=6, inner_dim=24,

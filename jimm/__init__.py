@@ -22,7 +22,12 @@ except (AttributeError, ValueError, KeyError):
     )
 
 from . import augment, checkpoint, data, features, layers, models, registry, train, weights  # noqa: F401
-from .checkpoint import load_checkpoint, save_checkpoint, wait_for_checkpoints
+from .checkpoint import (
+    CheckpointManager,
+    load_checkpoint,
+    save_checkpoint,
+    wait_for_checkpoints,
+)
 from .data import ImageFolder, Loader, MixupCutmix, create_dataset, create_loader
 from .features import FeatureExtractor, FeatureInfo, create_feature_extractor
 from .layers import (
@@ -76,6 +81,7 @@ __all__ = [
     "save_checkpoint",
     "load_checkpoint",
     "wait_for_checkpoints",
+    "CheckpointManager",
     # Data & Loaders
     "create_loader",
     "create_dataset",

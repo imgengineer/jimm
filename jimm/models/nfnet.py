@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import SqueezeExcite, ClassifierMixin
+from ..layers import SqueezeExcite, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class ScaledStdConv(nnx.Module):
@@ -43,10 +43,10 @@ class NFBlock(nnx.Module):
             if in_chs != out else None
 
     def __call__(self, x):
-        y = nnx.gelu(self.conv1(x))
-        y = nnx.gelu(self.conv2(y))
+        y = gelu(self.conv1(x))
+        y = gelu(self.conv2(y))
         y = self.se(y)
-        y = nnx.gelu(self.conv3(y)) * self.alpha
+        y = gelu(self.conv3(y)) * self.alpha
         if self.do_pool:
             x = nnx.avg_pool(x, (2, 2), strides=(2, 2), padding="SAME")
         if self.short_conv is not None:
@@ -54,7 +54,6 @@ class NFBlock(nnx.Module):
         return (y + x) * self.beta
 
 class NFNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(256, 512, 1536, 1536), depths=(1, 2, 6, 3), alpha=0.2,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):

@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin
+from ..layers import ConvBNAct, DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class ConvEncoder(nnx.Module):
@@ -47,11 +47,10 @@ class SwiftFormerBlock(nnx.Module):
         B, H, W, C = x.shape
         t = x.reshape(B, H * W, C)
         t = t + self.drop_path(self.attn(self.norm1(t)))
-        t = t + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm2(t)))))
+        t = t + self.drop_path(self.fc2(gelu(self.fc1(self.norm2(t)))))
         return t.reshape(B, H, W, C)
 
 class SwiftFormer(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(48, 56, 112, 224), depths=(3, 3, 9, 3), swift_from=2,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin
+from ..layers import ConvBNAct, DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
 
@@ -21,8 +21,8 @@ class MbConvLNBlock(nnx.Module):
             if (stride != 1 or in_chs != out_chs) else None
 
     def __call__(self, x):
-        y = nnx.gelu(self.norm1(self.conv1(x)))
-        y = nnx.gelu(self.norm2(self.dw(y)))
+        y = gelu(self.norm1(self.conv1(x)))
+        y = gelu(self.norm2(self.dw(y)))
         y = self.norm3(self.pw(y))
         sc = x if self.shortcut is None else self.shortcut(x)
         return y + sc
@@ -36,7 +36,7 @@ class GeGluMlp(nnx.Module):
 
     def __call__(self, x):
         h1, h2 = jnp.split(self.fc1(x), 2, axis=-1)
-        return self.fc2(nnx.gelu(h1) * h2)
+        return self.fc2(gelu(h1) * h2)
 
 class VitBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -51,7 +51,6 @@ class VitBlock(nnx.Module):
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
 class ViTAMIN(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(64, 128, 256, 512), conv_depths=(2, 2), vit_depths=(6, 2),
                  num_heads=(8, 16), num_classes=1000, in_chans=3, global_pool="avg",

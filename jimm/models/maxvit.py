@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, SqueezeExcite, ClassifierMixin
+from ..layers import DropPath, Mlp, SqueezeExcite, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 from .swin_transformer import window_partition, window_reverse
 
@@ -22,8 +22,8 @@ class MaxViTMBConv(nnx.Module):
             if (stride != 1 or in_chs != out_chs) else None
 
     def __call__(self, x):
-        y = nnx.gelu(self.bn1(self.conv1(x)))
-        y = nnx.gelu(self.bn2(self.dw(y)))
+        y = gelu(self.bn1(self.conv1(x)))
+        y = gelu(self.bn2(self.dw(y)))
         y = self.se(y)
         y = self.bn3(self.pw(y))
         sc = x if self.shortcut is None else self.shortcut(x)
@@ -102,7 +102,6 @@ class MaxViTStage(nnx.Module):
         return x
 
 class MaxViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 5, 2), head_dim=32,
                  window_size=7, num_classes=1000, in_chans=3, global_pool="avg",

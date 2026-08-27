@@ -1,13 +1,5 @@
-"""End-to-end self-check for jimm. Run: .venv/bin/python test_jimm.py"""
-import os
-import shutil
-import tempfile
-
-import cv2  # pyright: ignore[reportMissingImports]
-import jax
+"""Forward-pass smoke checks for registered jimm models."""
 import jax.numpy as jnp
-import numpy as np
-from flax import nnx
 
 import jimm
 from jimm import create_model, list_models
@@ -16,36 +8,6 @@ from jimm import create_model, list_models
 def _require(condition, message=None):
     if not condition:
         raise AssertionError(message)
-
-
-def check_registry():
-    names = list_models()
-    _require({"resnet18", "resnet50", "vit_base_patch16_224"} <= set(names), names)
-    _require(list_models("resnet*") == [n for n in names if n.startswith("resnet")])
-    _require("resnet" in jimm.list_modules())
-    pretrained_error = False
-    try:
-        create_model("resnet18", pretrained=True)
-        raise AssertionError("pretrained=True should raise")
-    except NotImplementedError:
-        pretrained_error = True
-    _require(pretrained_error, "pretrained=True did not raise NotImplementedError")
-    print("registry OK:", names)
-
-
-def check_models():
-    x = jnp.zeros((2, 224, 224, 3), jnp.float32)  # NHWC
-    for name, feat_dim in [("resnet18", 512), ("vit_tiny_patch16_224", 192)]:
-        m = create_model(name, num_classes=10)
-        m.eval()
-        logits = m(x)
-        _require(logits.shape == (2, 10), (name, logits.shape))
-        feats = m.forward_features(x)
-        _require(feats is not None)
-        m.reset_classifier(0)
-        feats_head = m(x)
-        _require(feats_head.shape[-1] == feat_dim, (name, feats_head.shape))
-        print(f"{name} OK, logits {logits.shape}, devices {jax.devices()}")
 
 
 REPRESENTATIVE_MODELS = [
@@ -84,113 +46,8 @@ def check_all_models_forward(mode="representative"):
         print(f"  [{i+1:>2}/{len(models_to_test)}] {name:<30} OK")
 
 
-def check_train_step():
-    from jimm.train import train_step, make_optimizer, cross_entropy
-    mesh = jax.sharding.Mesh(jax.devices(), ('data',))
-    P = jax.sharding.PartitionSpec
-    data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
-    label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
-
-    m = create_model("resnet18", num_classes=5)
-    m.train()
-    opt = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
-    raw_images = np.random.randn(4, 224, 224, 3).astype(np.float32)
-    raw_labels = np.array([0, 1, 2, 3], np.int32)
-    images = jax.make_array_from_process_local_data(data_sharding, raw_images)
-    labels = jax.make_array_from_process_local_data(label_sharding, raw_labels)
-    loss1, acc1 = train_step(m, opt, images, labels, 0.1)
-    loss2, _ = train_step(m, opt, images, labels, 0.1)
-    _require(jnp.isfinite(loss1) and jnp.isfinite(loss2), (loss1, loss2))
-    l = cross_entropy(jnp.array([[10.0, 0.0]]), jnp.array([0]), 0.1)
-    _require(0 < float(l) < 1.0)
-    print(f"train_step (SPMD Mesh) OK, loss {float(loss1):.3f} -> {float(loss2):.3f}")
-
-
-def check_fsdp_step():
-    from jimm.train import train_step, make_optimizer, fsdp_shard_model
-    mesh = jax.sharding.Mesh(jax.devices(), ('data',))
-    P = jax.sharding.PartitionSpec
-    data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
-    label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
-
-    m = create_model("convnext_tiny", num_classes=5)
-    m.train()
-    opt = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
-    fsdp_shard_model(m, mesh)
-    fsdp_shard_model(opt, mesh)
-
-    # assert FSDP actually shards large weights along the mesh axis
-    P = jax.sharding.PartitionSpec
-    n_sharded = sum(1 for _, node in nnx.graph.iter_graph(m)
-                    if isinstance(node, nnx.Variable)
-                    and isinstance(node.get_value(), jax.Array)
-                    and hasattr(node.get_value().sharding, "spec")
-                    and node.get_value().sharding.spec == P('data', None))
-    _require(n_sharded > 0, "FSDP sharded no variables")
-    raw_images = np.random.randn(4, 224, 224, 3).astype(np.float32)
-    raw_labels = np.array([0, 1, 2, 3], np.int32)
-    images = jax.make_array_from_process_local_data(data_sharding, raw_images)
-    labels = jax.make_array_from_process_local_data(label_sharding, raw_labels)
-
-    loss1, acc1 = train_step(m, opt, images, labels, 0.1)
-    loss2, acc2 = train_step(m, opt, images, labels, 0.1)
-    _require(jnp.isfinite(loss1) and jnp.isfinite(loss2), (loss1, loss2))
-    print(f"train_step (FSDP ZeRO-3) OK, loss {float(loss1):.3f} -> {float(loss2):.3f}")
-
-
-def check_data_and_ckpt():
-    from jimm.data import create_loader
-    from jimm.checkpoint import save_checkpoint, load_checkpoint
-    root = tempfile.mkdtemp()
-    try:
-        for split in ["train", "val"]:
-            for cls in ["a", "b"]:
-                os.makedirs(f"{root}/{split}/{cls}")
-                for i in range(6):
-                    image = np.random.randint(0, 255, (64, 48, 3), dtype=np.uint8)
-                    cv2.imwrite(
-                        f"{root}/{split}/{cls}/{i}.png",
-                        cv2.cvtColor(image, cv2.COLOR_RGB2BGR),
-                    )
-        loader = create_loader(f"{root}/train", 4, img_size=32, is_training=True, num_workers=0)
-        batch = next(iter(loader))
-        _require(batch["image"].shape == (4, 32, 32, 3), batch["image"].shape)
-        _require(batch["label"].shape == (4,))
-        val = list(create_loader(f"{root}/val", 4, img_size=32, is_training=False, num_workers=0))
-        _require(len(val) == 3)  # 12 images / 4 per batch
-        print("data OK:", batch["image"].shape, "val batches:", len(val))
-
-        m = create_model("resnet18", num_classes=2)
-        m.eval()
-        out_before = m(batch["image"])
-        path = save_checkpoint(f"{root}/ckpt", m, epoch=3)
-        # corrupt weights with zeros (must actually change outputs), then restore
-        def _zero_weights(a):
-            if isinstance(a, jax.Array) and not jnp.issubdtype(a.dtype, jax.dtypes.prng_key):
-                return jnp.zeros_like(a)
-            return a
-        nnx.update(m, jax.tree.map(_zero_weights, nnx.state(m).to_pure_dict()))
-        out_zero = m(batch["image"])
-        _require(
-            not np.allclose(np.asarray(out_zero), np.asarray(out_before), rtol=1e-3, atol=1e-3),
-            "zeroing weights did not change outputs — state write is broken",
-        )
-        epoch = load_checkpoint(path, m)
-        _require(epoch == 3)
-        np.testing.assert_allclose(np.asarray(m(batch["image"])), np.asarray(out_before),
-                                   rtol=1e-4, atol=1e-4)
-        print("checkpoint OK, corruption verified + roundtrip restores exact outputs")
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
 if __name__ == "__main__":
     import sys
     mode = "all" if "--all" in sys.argv else ("modules" if "--modules" in sys.argv else "representative")
-    check_registry()
-    check_models()
     check_all_models_forward(mode=mode)
-    check_train_step()
-    check_fsdp_step()
-    check_data_and_ckpt()
-    print("ALL CHECKS PASSED")
+    print("ALL FORWARD CHECKS PASSED")

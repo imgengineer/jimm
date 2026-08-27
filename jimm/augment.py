@@ -7,7 +7,6 @@ runs after Grain batching.
 """
 import math
 
-import chex
 import cv2  # pyright: ignore[reportMissingImports]
 import numpy as np
 
@@ -88,12 +87,7 @@ def resolve_interpolation(interpolation="random", rng=None):
     return interpolation
 
 
-def str_to_interp_mode(mode_str):
-    return resolve_interpolation(mode_str)
-
-
-def str_to_pil_interp(mode_str):
-    return resolve_interpolation(mode_str)
+str_to_interp_mode = str_to_pil_interp = resolve_interpolation
 
 
 def interp_mode_to_str(mode):
@@ -256,12 +250,6 @@ def _adjust_saturation(image, factor):
     return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
 
-def _adjust_hue(image, delta):
-    hsv = cv2.cvtColor(_rgb(image), cv2.COLOR_RGB2HSV).astype(np.float32)
-    hsv[..., 0] = (hsv[..., 0] + delta * 180.0) % 180.0
-    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
-
-
 def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
                  hue=0.0, prob=None, random_order=True, rng=None):
     """Apply timm-style color jitter with OpenCV without JAX dispatch."""
@@ -277,18 +265,27 @@ def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
     operations = [item for item in operations if item[1] != (0.0, 0.0)]
     if random_order:
         rng.shuffle(operations)
-    result = _rgb(image)
+    # Run the whole chain in one float32 pass (one uint8->float conversion and
+    # one final clip) instead of a round trip per operation. Clipping between
+    # ops preserves per-op [0, 255] clamping.
+    array = _rgb(image).astype(np.float32)
     for name, bounds in operations:
         if name == "brightness":
             limit = max(abs(bounds[0]), abs(bounds[1]))
-            result = _adjust_brightness(result, rng.uniform(-limit, limit))
+            array = np.clip(array + rng.uniform(-limit, limit) * 255.0, 0.0, 255.0)
         elif name == "contrast":
-            result = _adjust_contrast(result, rng.uniform(*bounds))
+            factor = rng.uniform(*bounds)
+            mean = array.mean(axis=(0, 1), keepdims=True)
+            array = np.clip((array - mean) * factor + mean, 0.0, 255.0)
         elif name == "saturation":
-            result = _adjust_saturation(result, rng.uniform(*bounds))
+            hsv = cv2.cvtColor(array * (1.0 / 255.0), cv2.COLOR_RGB2HSV)
+            hsv[..., 1] = np.clip(hsv[..., 1] * rng.uniform(*bounds), 0.0, 1.0)
+            array = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB) * 255.0
         else:
-            result = _adjust_hue(result, rng.uniform(*bounds))
-    return result
+            hsv = cv2.cvtColor(array * (1.0 / 255.0), cv2.COLOR_RGB2HSV)
+            hsv[..., 0] = (hsv[..., 0] + rng.uniform(*bounds) * 360.0) % 360.0
+            array = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB) * 255.0
+    return _clip_uint8(array)
 
 
 def random_flip_left_right(image, prob=0.5, rng=None):
@@ -376,23 +373,20 @@ def _auto_op(image, name, magnitude, hparams, rng=None):
     if name == "Invert":
         return 255 - image
     if name in ("Solarize", "SolarizeIncreasing"):
-        result = image.copy()
         try:
             threshold = int(round((1.0 - strength) * 255.0))
         except (TypeError, ValueError, OverflowError):
             threshold = 0
-        mask = result > threshold
-        result[mask] = 255 - result[mask]
-        return result
+        return np.where(image > threshold, 255 - image, image)
     if name == "SolarizeAdd":
-        result = image.copy()
         try:
             amount = int(round(110 * strength))
         except (TypeError, ValueError, OverflowError):
             amount = 0
-        mask = result < 128
-        result[mask] = np.clip(result[mask].astype(np.int16) + amount, 0, 255)
-        return result.astype(np.uint8)
+        # int16 add avoids uint8 overflow before clipping; np.where is a single
+        # pass over the image instead of a masked read + write.
+        added = np.clip(image.astype(np.int16) + amount, 0, 255).astype(np.uint8)
+        return np.where(image < 128, added, image)
     if name in ("Color", "ColorIncreasing"):
         return _adjust_saturation(image, 1.0 + _random_sign(0.9 * strength, rng))
     if name in ("Contrast", "ContrastIncreasing"):
@@ -619,9 +613,14 @@ _RAND_OPS = _RAND_TRANSFORMS
 
 
 def _weighted_transforms(transforms):
+    if not transforms:
+        raise ValueError("weighted transforms must not be empty")
     names, weights = zip(*transforms.items())
     weights = np.asarray(weights, dtype=np.float64)
-    weights /= weights.sum()
+    total = weights.sum()
+    if not np.all(np.isfinite(weights)) or np.any(weights < 0) or total <= 0:
+        raise ValueError("transform weights must be finite, non-negative, and not all zero")
+    weights /= total
     return list(names), weights
 
 
@@ -712,7 +711,8 @@ class TrivialAugmentWide:
         rng = _RngAdapter(rng)
         name = _RAND_OPS[rng.randint(len(_RAND_OPS))]
         magnitude = _as_float(rng.uniform(0, 10))
-        return AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=self.hparams)(image, rng=rng)
+        return AugmentOp(
+            name, prob=1.0, magnitude=magnitude, hparams=self.hparams)(image, rng=rng)
 
 
 def augmix_ops(magnitude=10.0, hparams=None, transforms=None):
@@ -736,14 +736,15 @@ class AugMixAugment:
         rng = _RngAdapter(rng)
         weights = rng.dirichlet([self.alpha] * self.width)
         mix = _as_float(rng.beta(self.alpha, self.alpha))
-        mixed = np.zeros_like(_float_image(image))
+        base = _float_image(image)  # one conversion shared by all blends
+        mixed = np.zeros_like(base)
         for weight in weights:
             depth = self.depth if self.depth > 0 else rng.randint(1, 4)
             result = image
             for index in rng.choice(len(self.ops), depth, replace=True):
                 result = self.ops[_as_int(index)](result, rng=rng)
             mixed += weight * _float_image(result)
-        return _uint8_image((1.0 - mix) * _float_image(image) + mix * mixed)
+        return _uint8_image((1.0 - mix) * base + mix * mixed)
 
     def __repr__(self):
         return (f"{self.__class__.__name__}(alpha={self.alpha}, width={self.width}, "
@@ -789,9 +790,15 @@ def build_auto_augment(config, hparams=None):
 def _one_hot(labels, num_classes):
     values = np.asarray(labels)
     if values.ndim == 2:
+        if not np.all(np.isfinite(values)):
+            raise ValueError("soft labels must be finite")
         return values.astype(np.float32, copy=False)
+    if not np.issubdtype(values.dtype, np.integer):
+        raise ValueError("class labels must contain integer class ids")
+    if np.any(values < 0) or np.any(values >= num_classes):
+        raise ValueError(f"class labels must be between 0 and {num_classes - 1}")
     result = np.zeros((values.shape[0], num_classes), dtype=np.float32)
-    result[np.arange(values.shape[0]), values.astype(np.int64)] = 1.0
+    result[np.arange(values.shape[0]), values] = 1.0
     return result
 
 
@@ -824,28 +831,45 @@ class MixupCutmix:
         self.mode = mode
         self.label_smoothing = _as_float(label_smoothing)
         self.num_classes = _as_int(num_classes)
+        if (not math.isfinite(self.mixup_alpha) or self.mixup_alpha < 0 or
+                not math.isfinite(self.cutmix_alpha) or self.cutmix_alpha < 0):
+            raise ValueError("mixup_alpha and cutmix_alpha must be finite and non-negative")
+        for name, value in (("prob", self.prob), ("switch_prob", self.switch_prob),
+                            ("label_smoothing", self.label_smoothing)):
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
+        if self.num_classes <= 0:
+            raise ValueError("num_classes must be positive")
+        if cutmix_minmax is not None:
+            if not isinstance(cutmix_minmax, (tuple, list)) or len(cutmix_minmax) != 2:
+                raise ValueError("cutmix_minmax must be a (min, max) pair")
+            low, high = map(_as_float, cutmix_minmax)
+            if not math.isfinite(low + high) or not 0 <= low <= high <= 1:
+                raise ValueError("cutmix_minmax must satisfy 0 <= min <= max <= 1")
+            cutmix_minmax = (low, high)
         self.cutmix_minmax = cutmix_minmax
 
     def __call__(self, images, labels):
         images = np.asarray(images)
         labels = np.asarray(labels)
-        chex.assert_shape(images, (None, None, None, 3))
-        chex.assert_rank(labels, {1, 2})
-        chex.assert_equal(images.shape[0], labels.shape[0])
-        if labels.ndim == 2:
-            chex.assert_shape(labels, (None, self.num_classes))
+        if images.ndim != 4 or images.shape[-1] != 3:
+            raise ValueError("images must have shape (batch, height, width, 3)")
+        if labels.ndim not in (1, 2) or images.shape[0] != labels.shape[0]:
+            raise ValueError("labels must have rank 1 or 2 and match the image batch size")
+        if labels.ndim == 2 and labels.shape[1] != self.num_classes:
+            raise ValueError("soft labels must have shape (batch, num_classes)")
+        targets = _one_hot(labels, self.num_classes)
+        if self.label_smoothing:
+            targets = targets * (1.0 - self.label_smoothing)
+            targets += self.label_smoothing / self.num_classes
         if np.random.rand() >= self.prob:
-            return images, labels
+            return images, targets
         batch, height, width, _ = images.shape
         use_cutmix = self.cutmix_alpha > 0 and (
             self.mixup_alpha <= 0 or np.random.rand() < self.switch_prob)
         alpha = self.cutmix_alpha if use_cutmix else self.mixup_alpha
         if alpha <= 0:
-            return images, labels
-        targets = _one_hot(labels, self.num_classes)
-        if self.label_smoothing:
-            targets = targets * (1.0 - self.label_smoothing)
-            targets += self.label_smoothing / self.num_classes
+            return images, targets
         indices = (
             np.arange(batch - 1, -1, -1)
             if self.mode == "pair" else np.random.permutation(batch)

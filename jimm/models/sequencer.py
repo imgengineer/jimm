@@ -1,7 +1,7 @@
 """Sequencer2D in flax nnx. Mirrors timm.models.sequencer (LSTM-free sequence mixing via Linear)."""
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class SequencerBlock(nnx.Module):
@@ -19,7 +19,7 @@ class SequencerBlock(nnx.Module):
     def __call__(self, x):
         B, H, W, C = x.shape
         y = self.norm1(x)
-        x = x + self.drop_path(self.fc2(nnx.gelu(self.fc1(y))))
+        x = x + self.drop_path(self.fc2(gelu(self.fc1(y))))
         y = self.norm2(x)
         # mix over H: (B, W, C, H) @ Linear(H->H)
         y = self.h_mix(y.transpose(0, 2, 3, 1)).transpose(0, 3, 1, 2)
@@ -28,7 +28,6 @@ class SequencerBlock(nnx.Module):
         return x + self.drop_path(y)
 
 class Sequencer2D(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(192, 384, 768), depths=(7, 7, 7), img_size=224,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,

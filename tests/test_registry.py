@@ -26,6 +26,9 @@ def test_list_models_and_modules():
     assert all(list_models(module=module) for module in modules)
     assert "resnet" in modules
     assert "swin_transformer" in modules
+    assert "efficientnet" in modules
+    assert "convnextv2" in modules
+    assert "variants" not in modules
 
     # Wildcard and pattern filters
     resnet_models = list_models(filter="resnet*")
@@ -61,6 +64,9 @@ def test_model_entrypoint_and_is_model():
     fn = model_entrypoint("resnet18")
     assert callable(fn)
     assert fn.__name__ == "resnet18"
+    with pytest.raises(ValueError, match="Unknown model"):
+        model_entrypoint("non_existent_model_xyz")
+    assert get_default_cfg("non_existent_model_xyz") == {}
 
 
 def test_create_model():
@@ -77,13 +83,13 @@ def test_create_model():
     with pytest.raises(ValueError, match="Unknown model"):
         create_model("unknown_architecture_123")
 
-    # pretrained=True raises NotImplementedError when no URL registered
-    with pytest.raises(NotImplementedError, match="No default pretrained weight URL"):
+    # pretrained=True raises when no default weights are registered.
+    with pytest.raises(NotImplementedError, match="No default pretrained weights"):
         create_model("resnet18", pretrained=True)
 
 
 def test_custom_register_model():
-    @register_model
+    @register_model(default_cfg={"input_size": (3, 64, 64)})
     def dummy_custom_model(num_classes=10, *, rngs=None, **kwargs):
         class DummyModel(nnx.Module):
             def __init__(self, num_classes):

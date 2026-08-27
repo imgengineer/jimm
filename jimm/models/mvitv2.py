@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
+from ..layers import DropPath, Mlp, ClassifierMixin
 from ..registry import register_model, _cfg
 
 class PooledAttention(nnx.Module):
@@ -60,7 +60,6 @@ class MViTBlock(nnx.Module):
 
 class MViTv2(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
                  embed_dim=96, depths=(2, 3, 16, 3), num_heads=(1, 2, 4, 8),

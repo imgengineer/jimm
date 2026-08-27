@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class SDTEBlock(nnx.Module):
@@ -23,10 +23,9 @@ class SDTEBlock(nnx.Module):
         x2 = self.dw2(x2)
         y = self.pw(jnp.concatenate([x1, x2, x3], axis=-1))
         x = x + self.drop_path(y)
-        return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm(x)))))
+        return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm(x)))))
 
 class EdgeNeXt(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(48, 96, 160, 304), depths=(3, 3, 9, 3), num_classes=1000,
                  in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):

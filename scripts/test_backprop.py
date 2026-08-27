@@ -10,7 +10,6 @@ Checks, on representative architecture families:
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
 from flax import nnx
 
 import jimm
@@ -56,15 +55,6 @@ def check_layer_grad_flow():
         model.train()
         grads = _grad_tree(model)
         pure = nnx.state(grads).to_pure_dict()
-
-        def norm(d, keys):
-            total = 0.0
-            for k in keys:
-                if k in d:
-                    total += float(sum(float(jnp.linalg.norm(v)) for v in jax.tree.leaves(
-                        jax.tree.map(lambda x: getattr(x, "value", x), d[k]))))
-            return total
-
         flat = jax.tree_util.tree_flatten_with_path(pure)[0]
         groups = {"first": 0.0, "middle": 0.0, "last": 0.0}
         n = len(flat)

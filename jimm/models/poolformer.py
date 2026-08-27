@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class PoolFormerBlock(nnx.Module):
@@ -22,13 +22,12 @@ class PoolFormerBlock(nnx.Module):
         if self.scale1 is not None:
             y = self.scale1[...] * y
         x = x + self.drop_path(y)
-        y = self.mlp_fc2(nnx.gelu(self.mlp_fc1(self.norm(x))))
+        y = self.mlp_fc2(gelu(self.mlp_fc1(self.norm(x))))
         if self.scale2 is not None:
             y = self.scale2[...] * y
         return x + self.drop_path(y)
 
 class PoolFormer(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, layers, embed_dims, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, drop_path_rate=0.0, *, rngs):

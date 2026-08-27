@@ -55,6 +55,7 @@ from .augment import (
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
+_INV_255 = np.float32(1.0 / 255.0)
 _IMAGE_SUFFIXES = frozenset({
     ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jp2", ".png", ".tif", ".tiff", ".webp",
 })
@@ -256,8 +257,8 @@ class ImageFolder(grain.RandomAccessDataSource):
                  if path.is_dir() and _is_within(self.root, path)),
                 key=lambda path: path.name,
             )
-        except OSError:
-            classes = []
+        except OSError as exc:
+            raise ValueError(f"unable to scan dataset root {root!r}") from exc
         if not classes:
             raise ValueError(f"no class subdirectories under {root!r}")
         self.class_to_idx = {path.name: i for i, path in enumerate(classes)}
@@ -271,8 +272,8 @@ class ImageFolder(grain.RandomAccessDataSource):
                      and _is_within(self.root, path)),
                     key=lambda path: path.name,
                 )
-            except OSError:
-                files = []
+            except OSError as exc:
+                raise OSError(f"unable to scan class directory {class_dir}") from exc
             samples.extend((path, self.class_to_idx[class_dir.name]) for path in files)
         if not samples:
             raise ValueError(f"no image files under class directories in {root!r}")
@@ -318,24 +319,45 @@ class _DecodeTransform(grain.RandomMapTransform):
         self.hue = hue
         self.grayscale_prob = grayscale_prob
         self.gaussian_blur_prob = gaussian_blur_prob
+        self.re_prob = re_prob
+        for name in (
+                "hflip", "vflip", "color_jitter_prob", "grayscale_prob",
+                "gaussian_blur_prob", "re_prob"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            try:
+                value = float(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"{name} must be between 0 and 1") from exc
+            if not np.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
+            setattr(self, name, value)
         if is_training and train_crop_mode not in ("rrc", "rkrc", "rkrr"):
             raise ValueError(f"unknown train_crop_mode: {train_crop_mode}")
         self.auto_augment = build_auto_augment(auto_augment)
         self.force_color_jitter = force_color_jitter
-        self.re_prob = re_prob
         self.re_mode = re_mode
         self.re_count = re_count
         try:
             crop_pct = float(crop_pct)
-            self.resize = int(round(img_size / crop_pct)) if crop_pct > 0 else 256
-        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
-            self.resize = 256
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("crop_pct must be a positive finite number") from exc
+        if not np.isfinite(crop_pct) or crop_pct <= 0:
+            raise ValueError("crop_pct must be a positive finite number")
+        self.resize = int(round(img_size / crop_pct))
         self.mean = np.asarray(mean, dtype=np.float32)
         self.std = np.asarray(std, dtype=np.float32)
         if self.mean.shape != (3,) or self.std.shape != (3,):
             raise ValueError("mean and std must each contain three channels")
-        if np.any(self.std == 0):
-            raise ValueError("std values must be non-zero")
+        if not np.all(np.isfinite(self.mean)) or not np.all(np.isfinite(self.std)):
+            raise ValueError("mean and std values must be finite")
+        if np.any(self.std <= 0):
+            raise ValueError("std values must be positive")
+        # Fused normalization: (x / 255 - mean) / std == x * inv_std * (1/255) + shift,
+        # computed with in-place multiply/add instead of full-image temporaries.
+        self._inv_std = (1.0 / self.std).astype(np.float32)
+        self._shift = (-self.mean * self._inv_std).astype(np.float32)
 
     @staticmethod
     def _coerce_image(raw):
@@ -388,24 +410,33 @@ class _DecodeTransform(grain.RandomMapTransform):
                     prob=self.color_jitter_prob, rng=rng)
             image = random_grayscale(image, self.grayscale_prob, rng=rng)
             image = gaussian_blur(image, self.gaussian_blur_prob, rng=rng)
-            array = np.asarray(image, dtype=np.float32) / 255.0
+            array = image.astype(np.float32)
+            array *= _INV_255  # in-place; astype above already copied
             array = random_erasing(
                 array, self.re_prob, mode=self.re_mode, count=self.re_count, rng=rng)
         else:
             image = cv2.resize(
                 image, (self.resize, self.resize), interpolation=cv2.INTER_LINEAR)
             image = center_crop_or_pad(image, self.img_size)
-            array = np.asarray(image, dtype=np.float32) / 255.0
+            array = image.astype(np.float32)
+            array *= _INV_255
 
+        np.multiply(array, self._inv_std, out=array)
+        np.add(array, self._shift, out=array)
         return {
-            "image": (array - self.mean) / self.std,
+            "image": array,
             "label": np.int32(element["label"]),
         }
 
 
 def create_dataset(root, in_memory=False, **kwargs):
-    """Return a Grain source and transform for one folder split."""
-    source = ImageFolder(root, in_memory=in_memory)
+    """Return a Grain source and transform for one folder split.
+
+    ``img_size`` (consumed from ``kwargs``) pre-resizes the in-memory decode
+    cache; without it the cache stores full-resolution images and every sample
+    pays a large read + resize per epoch.
+    """
+    source = ImageFolder(root, in_memory=in_memory, img_size=kwargs.get("img_size"))
     return source, _DecodeTransform(**kwargs)
 
 
@@ -481,8 +512,15 @@ def create_loader(
         force_color_jitter=False, re_prob=0.2, re_mode="const", re_count=1,
         mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=4,
         worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
-        shard_options=None, in_memory=False):
-    """Create a Grain loader with timm-compatible augmentation options."""
+        shard_options=None, in_memory=False, drop_remainder=None):
+    """Create a Grain loader with timm-compatible augmentation options.
+
+    Args:
+      drop_remainder: Drop the final partial batch (and per-shard record
+        remainder). Defaults to ``is_training``. Distributed evaluation should
+        pass True: SPMD batch sharding requires batch sizes divisible by the
+        device count, and all hosts must iterate the same number of batches.
+    """
     _ensure_absl_flags_parsed()
     for name, value in (("batch_size", batch_size), ("img_size", img_size)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
@@ -492,6 +530,9 @@ def create_loader(
             raise ValueError(f"{name} must be a non-negative integer")
     if worker_buffer_size == 0:
         raise ValueError("worker_buffer_size must be positive")
+    if drop_remainder is not None and not isinstance(drop_remainder, bool):
+        raise ValueError("drop_remainder must be a boolean or None")
+    drop = is_training if drop_remainder is None else drop_remainder
     source, transform = create_dataset(
         root,
         in_memory=in_memory,
@@ -522,7 +563,7 @@ def create_loader(
         shard_options = grain.ShardOptions(
             shard_index=jax.process_index(),
             shard_count=jax.process_count(),
-            drop_remainder=is_training,
+            drop_remainder=drop,
         )
     sampler = grain.IndexSampler(
         num_records=len(source),
@@ -534,12 +575,15 @@ def create_loader(
     loader = grain.DataLoader(
         data_source=source,
         sampler=sampler,
-        operations=[transform, grain.Batch(batch_size, drop_remainder=is_training)],
+        operations=[transform, grain.Batch(batch_size, drop_remainder=drop)],
         worker_count=num_workers,
         worker_buffer_size=worker_buffer_size,
         enable_profiling=enable_profiling,
     )
     records = len(source)
     shard_count = shard_options.shard_count
-    local_records = records // shard_count if is_training else -(-records // shard_count)
-    return Loader(loader, local_records, batch_size, is_training)
+    local_records = (
+        records // shard_count if shard_options.drop_remainder
+        else -(-records // shard_count)
+    )
+    return Loader(loader, local_records, batch_size, drop)

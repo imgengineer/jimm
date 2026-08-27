@@ -1,7 +1,7 @@
 """LCNetV2 in flax nnx, NHWC. Mirrors timm.models.lcnet (v2 depthwise-sep blocks + SE)."""
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, hswish, ClassifierMixin
+from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
 from ..registry import register_model, _cfg
 
 class LCBlock(nnx.Module):
@@ -29,7 +29,6 @@ LCNETV2_CFG = [
 ]
 
 class LCNetV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, width_mult=1.0, num_classes=1000, in_chans=3, global_pool="avg",
                  drop_rate=0.0, *, rngs):

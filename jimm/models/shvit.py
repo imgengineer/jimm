@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class SHViTBlock(nnx.Module):
@@ -31,10 +31,9 @@ class SHViTBlock(nnx.Module):
         xa = self.proj(nnx.dot_product_attention(q, k, v).reshape(B, H * W, self.attn_chs))
         xa = xa.reshape(B, H, W, -1)
         x = jnp.concatenate([xa, xr], axis=-1)
-        return x + self.drop_path(self.fc2(nnx.gelu(self.fc1(self.norm(x)))))
+        return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm(x)))))
 
 class SHViT(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(96, 192, 384, 512), depths=(2, 2, 9, 2), num_classes=1000,
                  in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):

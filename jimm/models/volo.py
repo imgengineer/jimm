@@ -1,5 +1,4 @@
 """VOLO in flax nnx, NHWC. Mirrors timm.models.volo (Outlooker + Transformer + ClassAttention)."""
-import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -127,7 +126,6 @@ class PatchEmbedStem(nnx.Module):
 
 class VOLO(ClassifierMixin, nnx.Module):
     _default_global_pool = "token"
-    default_cfg: dict | None = None
 
     def __init__(self, layers=(4, 4, 8, 2), embed_dims=(192, 384, 384, 384),
                  num_heads=(6, 12, 12, 12), mlp_ratio=3.0, stem_hidden_dim=64,

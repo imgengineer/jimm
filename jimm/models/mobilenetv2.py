@@ -1,5 +1,4 @@
 """MobileNetV2 in flax nnx, NHWC. Mirrors timm.models.mobilenetv2 / torchvision."""
-import jax.numpy as jnp
 from flax import nnx
 
 from ..layers import ClassifierMixin, relu6
@@ -39,7 +38,6 @@ def round_chs(c, mult):
         raise ValueError(f"invalid channel multiplier: {mult!r}") from exc
 
 class MobileNetV2(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     # (expand, out_chs, repeats, stride)
     CFG = ((1, 16, 1, 1), (6, 24, 2, 2), (6, 32, 3, 2), (6, 64, 4, 2),

@@ -53,7 +53,6 @@ class SubsampleStage(nnx.Module):
 
 class LeViT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
                  embed_dims=(128, 256, 384), depths=(4, 4, 4), num_heads=(4, 8, 12),

@@ -40,7 +40,6 @@ class PoolingLayer(nnx.Module):
 class PiT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
                  global_pool="", embed_dim=384, depth=(2, 6, 4), num_heads=6, mlp_ratio=4.0,

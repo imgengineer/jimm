@@ -10,10 +10,7 @@ from ..registry import register_model, _cfg
 
 class SqueezeExciteEff(nnx.Module):
     def __init__(self, in_chs, exp_chs, se_ratio=0.25, *, rngs):
-        try:
-            rd_chs = max(1, int(in_chs * se_ratio))
-        except Exception:
-            rd_chs = 1
+        rd_chs = max(1, int(in_chs * se_ratio))
         self.conv_reduce = nnx.Conv(exp_chs, rd_chs, (1, 1), use_bias=True, rngs=rngs)
         self.conv_expand = nnx.Conv(rd_chs, exp_chs, (1, 1), use_bias=True, rngs=rngs)
 
@@ -75,28 +72,23 @@ def _round_width(c, mult):
     if not mult:
         return c
     c_val = c * mult
-    try:
-        new_c = max(8, int(c_val + 4) // 8 * 8)
-    except Exception:
-        new_c = 8
+    new_c = max(8, int(c_val + 4) // 8 * 8)
     if new_c < 0.9 * c_val:
         new_c += 8
     return new_c
 
 def _round_depth(n, mult):
-    try:
-        return int(math.ceil(n * mult))
-    except Exception:
-        return n
+    return int(math.ceil(n * mult))
 
 class EfficientNet(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, width_mult=1.0, depth_mult=1.0, channel_multiplier=None, depth_multiplier=None,
                  num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.2, drop_path_rate=0.0, *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool
         width_mult = channel_multiplier if channel_multiplier is not None else width_mult
         depth_mult = depth_multiplier if depth_multiplier is not None else depth_mult
+        if width_mult <= 0 or depth_mult <= 0:
+            raise ValueError("width and depth multipliers must be positive")
         stem = _round_width(32, width_mult)
         self.conv_stem = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
         self.bn1 = nnx.BatchNorm(stem, rngs=rngs)

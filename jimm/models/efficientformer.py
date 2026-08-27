@@ -1,7 +1,7 @@
 """EfficientFormer (v1) in flax nnx. Mirrors timm.models.efficientformer."""
 from flax import nnx
 
-from ..layers import DropPath, PatchEmbed, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 from .vision_transformer import Attention
 
@@ -33,10 +33,9 @@ class AttnBlock(nnx.Module):
 
     def __call__(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
-        return x + self.drop_path(self.mlp_fc2(nnx.gelu(self.mlp_fc1(self.norm2(x)))))
+        return x + self.drop_path(self.mlp_fc2(gelu(self.mlp_fc1(self.norm2(x)))))
 
 class EfficientFormer(ClassifierMixin, nnx.Module):
-    default_cfg: dict | None = None
 
     def __init__(self, channels=(48, 96, 224, 448), depths=(3, 2, 6, 4),
                  num_attn_blocks=(0, 0, 2, 2), num_classes=1000, in_chans=3,

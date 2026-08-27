@@ -1,7 +1,7 @@
 """PVT v2 in flax nnx, NHWC. Mirrors timm.models.pvt_v2 (overlap patch embed + linear SRA)."""
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
+from ..layers import DropPath, ClassifierMixin, gelu
 from ..registry import register_model, _cfg
 
 class LinearAttention(nnx.Module):
@@ -45,9 +45,9 @@ class PVTMlp(nnx.Module):
 
     def __call__(self, x, H, W):
         B = x.shape[0]
-        x = nnx.gelu(self.fc1(x))
+        x = gelu(self.fc1(x))
         x = self.dw(x.reshape(B, H, W, -1)).reshape(B, H * W, -1)
-        x = nnx.gelu(x)
+        x = gelu(x)
         return self.fc2(x)
 
 class PVTBlock(nnx.Module):
@@ -56,10 +56,7 @@ class PVTBlock(nnx.Module):
         self.attn = LinearAttention(dim, num_heads, sr_ratio, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
-        try:
-            hidden_dim = int(dim * mlp_ratio)
-        except Exception:
-            hidden_dim = dim * 4
+        hidden_dim = int(dim * mlp_ratio)
         self.mlp = PVTMlp(dim, hidden_dim, rngs=rngs)
 
     def __call__(self, x, H, W):
@@ -78,7 +75,6 @@ class OverlapPatchEmbed(nnx.Module):
 
 class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    default_cfg: dict | None = None
 
     def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
                  embed_dims=(64, 128, 320, 512), depths=(3, 4, 6, 3), num_heads=(1, 2, 5, 8),

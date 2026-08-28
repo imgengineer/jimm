@@ -1,24 +1,37 @@
 """Aligned Xception (wider, GELU-ish variant) in flax nnx, NHWC. Mirrors timm.models.xception_aligned."""
+
 from flax import nnx
 
 from ..layers import ClassifierMixin
-from ..registry import register_model, _cfg
+from ..registry import _cfg, register_model
 from .xception import SeparableConv, XceptionBlock
 
-class XceptionAligned(ClassifierMixin, nnx.Module):
 
-    def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,
-                 widths=(64, 128, 256, 728, 1024, 1536, 2048), middle_blocks=8, *, rngs):
+class XceptionAligned(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        widths=(64, 128, 256, 728, 1024, 1536, 2048),
+        middle_blocks=8,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.conv1 = nnx.Conv(in_chans, widths[0], (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans, widths[0], (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
+        )
         self.bn1 = nnx.BatchNorm(widths[0], rngs=rngs)
         self.conv2 = nnx.Conv(widths[0], widths[1], (3, 3), use_bias=False, rngs=rngs)
         self.bn2 = nnx.BatchNorm(widths[1], rngs=rngs)
         self.block1 = XceptionBlock(widths[1], widths[2], 2, stride=2, rngs=rngs)
         self.block2 = XceptionBlock(widths[2], widths[3], 2, stride=2, rngs=rngs)
         self.block3 = XceptionBlock(widths[3], widths[3], 2, stride=2, rngs=rngs)
-        self.middle = nnx.List([XceptionBlock(widths[3], widths[3], 3, rngs=rngs)
-                                for _ in range(middle_blocks)])
+        self.middle = nnx.List(
+            [XceptionBlock(widths[3], widths[3], 3, rngs=rngs) for _ in range(middle_blocks)]
+        )
         self.block12 = XceptionBlock(widths[3], widths[4], 2, stride=2, rngs=rngs)
         self.conv3 = SeparableConv(widths[4], widths[5], rngs=rngs)
         self.conv4 = SeparableConv(widths[5], widths[6], rngs=rngs)
@@ -39,11 +52,13 @@ class XceptionAligned(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def xception41(**kwargs):
     model = XceptionAligned(widths=(32, 64, 128, 256, 728, 1536, 2048), middle_blocks=8, **kwargs)
     model.default_cfg = _cfg(input_size=(3, 299, 299))
     return model
+
 
 @register_model
 def xception65(**kwargs):

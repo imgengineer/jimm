@@ -1,4 +1,5 @@
 """Unit tests for jimm.checkpoint."""
+
 import shutil
 import tempfile
 
@@ -124,8 +125,9 @@ def _trained_mlp(seed):
 def test_checkpoint_manager_retention_and_restore():
     root = tempfile.mkdtemp()
     try:
-        mgr = CheckpointManager(f"{root}/run", max_to_keep=2,
-                                best_fn=lambda m: m["val_acc"], best_mode="max")
+        mgr = CheckpointManager(
+            f"{root}/run", max_to_keep=2, best_fn=lambda m: m["val_acc"], best_mode="max"
+        )
         saved = {}
         # val_acc peaks at step 1; keep it in addition to the two latest.
         for step, acc in enumerate([0.1, 0.9, 0.5, 0.7]):
@@ -142,12 +144,12 @@ def test_checkpoint_manager_retention_and_restore():
         assert (step, epoch) == (3, 3)
 
         x = jnp.ones((2, 8))
-        np.testing.assert_allclose(
-            np.asarray(fresh_m(x)), np.asarray(saved[3][0](x)), rtol=1e-6)
+        np.testing.assert_allclose(np.asarray(fresh_m(x)), np.asarray(saved[3][0](x)), rtol=1e-6)
         # Optimizer state (including the step counter) is restored too.
         np.testing.assert_allclose(
             np.asarray(nnx.to_pure_dict(nnx.state(fresh_o))["step"]),
-            np.asarray(nnx.to_pure_dict(nnx.state(saved[3][1]))["step"]))
+            np.asarray(nnx.to_pure_dict(nnx.state(saved[3][1]))["step"]),
+        )
 
         # Manager restores validate structure/shapes like load_checkpoint.
         wrong = Mlp(16, rngs=nnx.Rngs(0))

@@ -1,8 +1,10 @@
 """HGNet in flax nnx, NHWC. Mirrors timm.models.hgnet (hierarchical grouped dw conv blocks)."""
+
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
+from ..registry import _cfg, register_model
+
 
 class HGBlock(nnx.Module):
     """stack of dw convs with increasing kernel + 1x1 expand/project, residual."""
@@ -11,7 +13,9 @@ class HGBlock(nnx.Module):
         self.layers = layers
         convs = [ConvBNAct(in_chs, mid_chs, kernel, stride, act="silu", rngs=rngs)]
         for _ in range(layers - 1):
-            convs.append(ConvBNAct(mid_chs, mid_chs, kernel, 1, groups=mid_chs, act="silu", rngs=rngs))
+            convs.append(
+                ConvBNAct(mid_chs, mid_chs, kernel, 1, groups=mid_chs, act="silu", rngs=rngs)
+            )
         self.convs = nnx.List(convs)
         self.pw = ConvBNAct(mid_chs, out_chs, 1, act="identity", rngs=rngs)
         self.se = SqueezeExcite(mid_chs, rd_ratio=0.25, rngs=rngs) if se else None
@@ -29,20 +33,41 @@ class HGBlock(nnx.Module):
         sc = self.sc(x) if self.use_sc else x
         return nnx.relu(y + sc)
 
+
 _CFGS = {  # (mid, out, layers, stride, se) per stage
-    "hgnet_tiny": [(48, 48, 6, 2, 0), (128, 96, 6, 2, 0), (512, 192, 6, 2, 1), (1024, 384, 6, 2, 1)],
-    "hgnet_small": [(96, 96, 6, 2, 0), (256, 192, 6, 2, 0), (768, 384, 6, 2, 1), (1536, 768, 6, 2, 1)],
-    "hgnet_base": [(160, 192, 7, 2, 0), (352, 256, 7, 2, 0), (1024, 512, 7, 2, 1), (2048, 1024, 7, 2, 1)],
+    "hgnet_tiny": [
+        (48, 48, 6, 2, 0),
+        (128, 96, 6, 2, 0),
+        (512, 192, 6, 2, 1),
+        (1024, 384, 6, 2, 1),
+    ],
+    "hgnet_small": [
+        (96, 96, 6, 2, 0),
+        (256, 192, 6, 2, 0),
+        (768, 384, 6, 2, 1),
+        (1536, 768, 6, 2, 1),
+    ],
+    "hgnet_base": [
+        (160, 192, 7, 2, 0),
+        (352, 256, 7, 2, 0),
+        (1024, 512, 7, 2, 1),
+        (2048, 1024, 7, 2, 1),
+    ],
 }
 
-class HGNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, cfg, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
+class HGNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self, cfg, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.stem = nnx.List([
-            ConvBNAct(in_chans, 32, 3, 2, act="silu", rngs=rngs),
-            ConvBNAct(32, 32, 3, 1, act="silu", rngs=rngs),
-            ConvBNAct(32, 48, 3, 2, act="silu", rngs=rngs)])
+        self.stem = nnx.List(
+            [
+                ConvBNAct(in_chans, 32, 3, 2, act="silu", rngs=rngs),
+                ConvBNAct(32, 32, 3, 1, act="silu", rngs=rngs),
+                ConvBNAct(32, 48, 3, 2, act="silu", rngs=rngs),
+            ]
+        )
         stages, chs = [], 48
         for mid, out, layers, stride, se in cfg:
             stages.append(HGBlock(chs, mid, out, 3, layers, stride, se, rngs=rngs))
@@ -62,6 +87,7 @@ class HGNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _make(name):
     cfg = _CFGS[name]
 
@@ -69,8 +95,10 @@ def _make(name):
         model = HGNet(cfg, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

@@ -1,9 +1,11 @@
 """EdgeNeXt in flax nnx, NHWC. Mirrors timm.models.edgenext (split depthwise transpose encoder)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, gelu
+from ..registry import _cfg, register_model
+
 
 class SDTEBlock(nnx.Module):
     """Split-Depthwise-Transpose encoder: dw conv on channel-split parts + pointwise MLP."""
@@ -25,10 +27,20 @@ class SDTEBlock(nnx.Module):
         x = x + self.drop_path(y)
         return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm(x)))))
 
-class EdgeNeXt(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(48, 96, 160, 304), depths=(3, 3, 9, 3), num_classes=1000,
-                 in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class EdgeNeXt(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(48, 96, 160, 304),
+        depths=(3, 3, 9, 3),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
         self.stem = nnx.Conv(in_chans, channels[0], (4, 4), strides=(4, 4), rngs=rngs)
@@ -40,10 +52,15 @@ class EdgeNeXt(ClassifierMixin, nnx.Module):
             k += d
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            nnx.Sequential(nnx.LayerNorm(channels[i], rngs=rngs),
-                           nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
-            for i in range(3)])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(
+                    nnx.LayerNorm(channels[i], rngs=rngs),
+                    nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs),
+                )
+                for i in range(3)
+            ]
+        )
         self.head_norm = nnx.LayerNorm(channels[-1], rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
@@ -60,11 +77,13 @@ class EdgeNeXt(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "edgenext_xx_small": ((48, 96, 160, 304), (3, 3, 9, 3)),
     "edgenext_x_small": ((64, 128, 256, 512), (3, 3, 9, 3)),
     "edgenext_small": ((80, 160, 296, 552), (3, 3, 9, 3)),
 }
+
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -73,8 +92,10 @@ def _make(name):
         model = EdgeNeXt(channels, depths, **kwargs)
         model.default_cfg = _cfg(input_size=(3, 256, 256))
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

@@ -1,9 +1,11 @@
 """CSATv2 in flax nnx, NHWC. Mirrors timm.models.csatv2 (Cascaded Spatial Attention Transformer)."""
+
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, Mlp, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, DropPath, Mlp
+from ..registry import _cfg, register_model
 from .vision_transformer import Attention
+
 
 class SpatialAttention(nnx.Module):
     """Spatial attention using 7x7 depthwise convolution + gating."""
@@ -16,6 +18,7 @@ class SpatialAttention(nnx.Module):
     def __call__(self, x):
         return self.proj(nnx.relu(self.bn(self.dw(x))))
 
+
 class SpatialTransformerBlock(nnx.Module):
     def __init__(self, dim, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -27,6 +30,7 @@ class SpatialTransformerBlock(nnx.Module):
     def __call__(self, x):
         x = x + self.drop_path(self.spatial(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
+
 
 class TransformerBlock(nnx.Module):
     def __init__(self, dim, num_heads=8, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -43,18 +47,30 @@ class TransformerBlock(nnx.Module):
         t = t + self.drop_path(self.mlp(self.norm2(t)))
         return t.reshape(B, H, W, C)
 
-class CSATv2(ClassifierMixin, nnx.Module):
 
-    def __init__(self, dims=(48, 96, 224, 448), depths=(3, 3, 9, 3), num_classes=1000,
-                 in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class CSATv2(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        dims=(48, 96, 224, 448),
+        depths=(3, 3, 9, 3),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = dims[-1]
 
         # Stem
-        self.stem = nnx.List([
-            ConvBNAct(in_chans, dims[0] // 2, 3, 2, rngs=rngs),
-            ConvBNAct(dims[0] // 2, dims[0], 3, 2, rngs=rngs),
-        ])
+        self.stem = nnx.List(
+            [
+                ConvBNAct(in_chans, dims[0] // 2, 3, 2, rngs=rngs),
+                ConvBNAct(dims[0] // 2, dims[0], 3, 2, rngs=rngs),
+            ]
+        )
 
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
         stages, k = [], 0
@@ -69,10 +85,12 @@ class CSATv2(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
 
-        self.downsamples = nnx.List([
-            ConvBNAct(dims[i], dims[i + 1], 3, 2, act="identity", rngs=rngs)
-            for i in range(len(dims) - 1)
-        ])
+        self.downsamples = nnx.List(
+            [
+                ConvBNAct(dims[i], dims[i + 1], 3, 2, act="identity", rngs=rngs)
+                for i in range(len(dims) - 1)
+            ]
+        )
 
         self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
@@ -91,11 +109,13 @@ class CSATv2(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def csatv2(**kwargs):
     model = CSATv2(dims=(48, 96, 224, 448), depths=(3, 3, 9, 3), **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def csatv2_21m(**kwargs):

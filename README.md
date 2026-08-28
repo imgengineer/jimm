@@ -67,27 +67,22 @@ print("Modules:", jimm.list_modules())
 print("ResNet models:", jimm.list_models("resnet*"))
 
 # Create any model (e.g. ConvNeXt, Swin, ViT, EfficientNet, MaxViT, EVA, Hiera, etc.)
-model = jimm.create_model(
-    "convnext_tiny",
-    num_classes=1000,
-    drop_path_rate=0.1,
-    rngs=nnx.Rngs(0)
-)
+model = jimm.create_model("convnext_tiny", num_classes=1000, drop_path_rate=0.1, rngs=nnx.Rngs(0))
 model.eval()
 
 # Forward pass (NHWC: Batch, Height, Width, Channels)
 x = jnp.zeros((2, 224, 224, 3), jnp.float32)
 logits = model(x)
-print("Logits shape:", logits.shape) # (2, 1000)
+print("Logits shape:", logits.shape)  # (2, 1000)
 
 # Unpooled feature extraction
 features = model.forward_features(x)
-print("Features shape:", features.shape) # (2, 7, 7, 768)
+print("Features shape:", features.shape)  # (2, 7, 7, 768)
 
 # Convert to feature extractor
 model.reset_classifier(0)
 pooled_feats = model(x)
-print("Pooled feature dimension:", pooled_feats.shape[-1]) # 768
+print("Pooled feature dimension:", pooled_feats.shape[-1])  # 768
 ```
 
 ---
@@ -108,15 +103,11 @@ train_loader = create_loader(
     auto_augment="rand-m9-n2",
     grayscale_prob=0.1,
     gaussian_blur_prob=0.1,
-    num_workers=4
+    num_workers=4,
 )
 
 val_loader = create_loader(
-    root="/path/to/dataset/val",
-    batch_size=128,
-    img_size=224,
-    is_training=False,
-    num_workers=4
+    root="/path/to/dataset/val", batch_size=128, img_size=224, is_training=False, num_workers=4
 )
 
 # Fetch a batch
@@ -229,10 +220,15 @@ import jimm
 from jimm.train import make_optimizer, train_step, fsdp_shard_model
 
 # Setup 1D Data-Parallel Device Mesh
-mesh = jax.sharding.Mesh(jax.devices(), ('data',))
+mesh = jax.sharding.Mesh(jax.devices(), ("data",))
 P = jax.sharding.PartitionSpec
-data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
-label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
+data_sharding = jax.sharding.NamedSharding(mesh, P("data", None, None, None))
+label_sharding = jax.sharding.NamedSharding(
+    mesh,
+    P(
+        "data",
+    ),
+)
 
 model = jimm.create_model("resnet50", num_classes=10, rngs=nnx.Rngs(0))
 model.train()
@@ -327,6 +323,10 @@ pytest tests/ --cov=jimm --cov-report=term-missing
 
 # Or run parallel testing across all CPU cores
 pytest tests/ -n auto --cov=jimm
+
+# Run the pinned project lint rules
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 Force the CPU backend when GPU experiments should remain disabled:

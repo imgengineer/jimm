@@ -1,8 +1,10 @@
 """SENet-154 in flax nnx, NHWC. Mirrors timm.models.senet (deep stem + SE bottlenecks, groups=32)."""
+
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
+from ..registry import _cfg, register_model
+
 
 class SENetBottleneck(nnx.Module):
     expansion = 2  # senet154 uses expansion 2 with groups
@@ -13,8 +15,11 @@ class SENetBottleneck(nnx.Module):
         self.conv2 = ConvBNAct(chs, chs, 3, stride, groups=groups, rngs=rngs)
         self.conv3 = ConvBNAct(chs, out_chs, 1, act="identity", rngs=rngs)
         self.se = SqueezeExcite(out_chs, rd_ratio=0.0625, rngs=rngs)
-        self.short_conv = ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs) \
-            if (stride != 1 or in_chs != out_chs) else None
+        self.short_conv = (
+            ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs)
+            if (stride != 1 or in_chs != out_chs)
+            else None
+        )
 
     def __call__(self, x):
         y = self.conv3(self.conv2(self.conv1(x)))
@@ -22,15 +27,26 @@ class SENetBottleneck(nnx.Module):
         sc = x if self.short_conv is None else self.short_conv(x)
         return nnx.relu(y + sc)
 
-class SENet154(ClassifierMixin, nnx.Module):
 
-    def __init__(self, layers=(3, 8, 36, 3), num_classes=1000, in_chans=3,
-                 global_pool="avg", drop_rate=0.2, *, rngs):
+class SENet154(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        layers=(3, 8, 36, 3),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.2,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.stem = nnx.List([
-            ConvBNAct(in_chans, 64, 3, 2, rngs=rngs),
-            ConvBNAct(64, 64, 3, 1, rngs=rngs),
-            ConvBNAct(64, 128, 3, 1, rngs=rngs)])
+        self.stem = nnx.List(
+            [
+                ConvBNAct(in_chans, 64, 3, 2, rngs=rngs),
+                ConvBNAct(64, 64, 3, 1, rngs=rngs),
+                ConvBNAct(64, 128, 3, 1, rngs=rngs),
+            ]
+        )
         # senet154 stage widths (bottleneck chs): 64,128,256,512 with expansion 2
         chs, stages = 128, []
         for i, (n, stride) in enumerate(zip(layers, [1, 2, 2, 2])):
@@ -56,6 +72,7 @@ class SENet154(ClassifierMixin, nnx.Module):
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
+
 
 @register_model
 def senet154(**kwargs):

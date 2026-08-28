@@ -1,8 +1,10 @@
 """Hiera in flax nnx, NHWC. Mirrors timm.models.hiera (Hierarchical Vision Transformer)."""
+
 from flax import nnx
 
-from ..layers import DropPath, Mlp, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp
+from ..registry import _cfg, register_model
+
 
 class HieraBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -23,17 +25,28 @@ class HieraBlock(nnx.Module):
         x = x + self.drop_path(self.proj(out))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-class Hiera(ClassifierMixin, nnx.Module):
 
-    def __init__(self, embed_dim=96, num_heads=1, stages=(1, 2, 7, 2),
-                 mlp_ratio=4.0, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class Hiera(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        embed_dim=96,
+        num_heads=1,
+        stages=(1, 2, 7, 2),
+        mlp_ratio=4.0,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        
+
         self.stem = nnx.Conv(in_chans, embed_dim, (7, 7), strides=(4, 4), padding="SAME", rngs=rngs)
-        
-        dims = [embed_dim * (2 ** i) for i in range(len(stages))]
-        heads = [num_heads * (2 ** i) for i in range(len(stages))]
+
+        dims = [embed_dim * (2**i) for i in range(len(stages))]
+        heads = [num_heads * (2**i) for i in range(len(stages))]
         self.num_features = dims[-1]
 
         dpr = [drop_path_rate * i / max(sum(stages) - 1, 1) for i in range(sum(stages))]
@@ -45,11 +58,12 @@ class Hiera(ClassifierMixin, nnx.Module):
             stages_list.append(nnx.List(stage_blocks))
         self.stages = nnx.List(stages_list)
 
-        self.downsamples = nnx.List([
-            nnx.Sequential(
-                nnx.Conv(dims[i], dims[i + 1], (2, 2), strides=(2, 2), rngs=rngs)
-            ) for i in range(len(stages) - 1)
-        ])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(nnx.Conv(dims[i], dims[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
+                for i in range(len(stages) - 1)
+            ]
+        )
 
         self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
@@ -70,6 +84,7 @@ class Hiera(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "hiera_tiny_224": dict(embed_dim=96, num_heads=1, stages=(1, 2, 7, 2)),
     "hiera_small_224": dict(embed_dim=96, num_heads=1, stages=(1, 2, 11, 2)),
@@ -79,6 +94,7 @@ _CFGS = {
     "hiera_huge_224": dict(embed_dim=256, num_heads=4, stages=(2, 6, 36, 4)),
 }
 
+
 def _make(name):
     cfg = _CFGS[name]
 
@@ -86,8 +102,10 @@ def _make(name):
         model = Hiera(**dict(cfg, **kwargs))
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

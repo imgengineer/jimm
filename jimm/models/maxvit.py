@@ -1,25 +1,37 @@
 """MaxViT in flax nnx, NHWC. Mirrors timm.models.maxxvit (MBConv + window/grid attention)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, SqueezeExcite, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, SqueezeExcite, gelu
+from ..registry import _cfg, register_model
 from .swin_transformer import window_partition, window_reverse
+
 
 class MaxViTMBConv(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand=4, drop_path=0.0, *, rngs):
         mid = in_chs * expand
         self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
         self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
-        self.dw = nnx.Conv(mid, mid, (3, 3), strides=(stride, stride), use_bias=False,
-                           feature_group_count=mid, rngs=rngs)
+        self.dw = nnx.Conv(
+            mid,
+            mid,
+            (3, 3),
+            strides=(stride, stride),
+            use_bias=False,
+            feature_group_count=mid,
+            rngs=rngs,
+        )
         self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
         self.se = SqueezeExcite(mid, 0.25, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
-        self.shortcut = nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride), rngs=rngs) \
-            if (stride != 1 or in_chs != out_chs) else None
+        self.shortcut = (
+            nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride), rngs=rngs)
+            if (stride != 1 or in_chs != out_chs)
+            else None
+        )
 
     def __call__(self, x):
         y = gelu(self.bn1(self.conv1(x)))
@@ -28,6 +40,7 @@ class MaxViTMBConv(nnx.Module):
         y = self.bn3(self.pw(y))
         sc = x if self.shortcut is None else self.shortcut(x)
         return self.drop_path(y) + sc
+
 
 class MaxViTAttention(nnx.Module):
     """Window/grid attention with relative position bias (proper q,k,v)."""
@@ -40,7 +53,9 @@ class MaxViTAttention(nnx.Module):
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
         n = (2 * window_size - 1) ** 2
         self.rel_bias = nnx.Param(jnp.zeros((n, num_heads)))
-        coords = jnp.stack(jnp.meshgrid(jnp.arange(window_size), jnp.arange(window_size), indexing="ij"))
+        coords = jnp.stack(
+            jnp.meshgrid(jnp.arange(window_size), jnp.arange(window_size), indexing="ij")
+        )
         cf = coords.reshape(2, -1)
         rel = (cf[:, :, None] - cf[:, None, :]).transpose(1, 2, 0) + window_size - 1
         # nnx.Variable: raw array attributes break nnx.cached_partial graph flattening
@@ -53,6 +68,7 @@ class MaxViTAttention(nnx.Module):
         bias = self.rel_bias[...][self.rel_index[...]].transpose(2, 0, 1)
         x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
+
 
 class MaxViTBlock(nnx.Module):
     """Block attention (window or grid) + FFN."""
@@ -85,13 +101,18 @@ class MaxViTBlock(nnx.Module):
             x = window_reverse(t, ws, H, W, B)
         return x
 
+
 class MaxViTStage(nnx.Module):
-    def __init__(self, in_chs, out_chs, depth, num_heads, window_size, stride,
-                 drop_path=0.0, *, rngs):
+    def __init__(
+        self, in_chs, out_chs, depth, num_heads, window_size, stride, drop_path=0.0, *, rngs
+    ):
         blocks = []
         for i in range(depth):
-            blocks.append(MaxViTMBConv(in_chs if i == 0 else out_chs, out_chs,
-                                       stride if i == 0 else 1, rngs=rngs))
+            blocks.append(
+                MaxViTMBConv(
+                    in_chs if i == 0 else out_chs, out_chs, stride if i == 0 else 1, rngs=rngs
+                )
+            )
             blocks.append(MaxViTBlock(out_chs, num_heads, window_size, is_grid=False, rngs=rngs))
             blocks.append(MaxViTBlock(out_chs, num_heads, window_size, is_grid=True, rngs=rngs))
         self.blocks = nnx.List(blocks)
@@ -101,20 +122,45 @@ class MaxViTStage(nnx.Module):
             x = blk(x)
         return x
 
-class MaxViT(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 5, 2), head_dim=32,
-                 window_size=7, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class MaxViT(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(96, 192, 384, 768),
+        depths=(2, 2, 5, 2),
+        head_dim=32,
+        window_size=7,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
-        self.stem = nnx.List([nnx.Conv(in_chans, channels[0] // 2, (3, 3), strides=(2, 2), rngs=rngs),
-                              nnx.Conv(channels[0] // 2, channels[0], (3, 3), rngs=rngs)])
+        self.stem = nnx.List(
+            [
+                nnx.Conv(in_chans, channels[0] // 2, (3, 3), strides=(2, 2), rngs=rngs),
+                nnx.Conv(channels[0] // 2, channels[0], (3, 3), rngs=rngs),
+            ]
+        )
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
         stages, chs, k = [], channels[0], 0
         for i, (c, d) in enumerate(zip(channels, depths)):
-            stages.append(MaxViTStage(chs, c, d, max(c // head_dim, 1), window_size,
-                                      1 if i == 0 else 2, dpr[k], rngs=rngs))
+            stages.append(
+                MaxViTStage(
+                    chs,
+                    c,
+                    d,
+                    max(c // head_dim, 1),
+                    window_size,
+                    1 if i == 0 else 2,
+                    dpr[k],
+                    rngs=rngs,
+                )
+            )
             chs = c
             k += d
         self.stages = nnx.List(stages)
@@ -132,6 +178,7 @@ class MaxViT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "maxvit_pico_rw_256": ((32, 64, 128, 256), (2, 2, 5, 2)),
     "maxvit_nano_rw_256": ((32, 64, 128, 256), (2, 2, 5, 2)),
@@ -140,6 +187,7 @@ _CFGS = {
     "maxvit_base_rw_224": ((96, 192, 384, 768), (2, 6, 14, 2)),
 }
 
+
 def _make(name):
     channels, depths = _CFGS[name]
 
@@ -147,8 +195,10 @@ def _make(name):
         model = MaxViT(channels, depths, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

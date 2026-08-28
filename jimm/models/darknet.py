@@ -1,9 +1,11 @@
 """DarkNet53 + CSPDarkNet53 + CSPResNet50/CSPResNeXt50 in flax nnx, NHWC. Mirrors timm.models.cspnet."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct
+from ..registry import _cfg, register_model
+
 
 class ResBlock(nnx.Module):
     def __init__(self, chs, *, rngs):
@@ -12,6 +14,7 @@ class ResBlock(nnx.Module):
 
     def __call__(self, x):
         return x + self.conv2(self.conv1(x))
+
 
 class CSPStage(nnx.Module):
     """CSP stage: split into two paths, one through blocks, merge at output."""
@@ -31,14 +34,27 @@ class CSPStage(nnx.Module):
             x1 = blk(x1)
         return self.conv_out(jnp.concatenate([self.conv_t1(x1), self.conv_t2(x2)], axis=-1))
 
-class CSPDarkNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(64, 128, 256, 512, 1024), blocks=(2, 4, 8, 4),
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
+class CSPDarkNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(64, 128, 256, 512, 1024),
+        blocks=(2, 4, 8, 4),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.stem = ConvBNAct(in_chans, 32, 3, act="silu", rngs=rngs)
-        self.stages = nnx.List([CSPStage(32 if i == 0 else channels[i - 1], c, n, rngs=rngs)
-                                for i, (c, n) in enumerate(zip(channels, blocks))])
+        self.stages = nnx.List(
+            [
+                CSPStage(32 if i == 0 else channels[i - 1], c, n, rngs=rngs)
+                for i, (c, n) in enumerate(zip(channels, blocks))
+            ]
+        )
         self.num_features = channels[-1]
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
@@ -52,6 +68,7 @@ class CSPDarkNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 class DarkNetResBlock(nnx.Module):
     def __init__(self, chs, *, rngs):
         self.conv1 = ConvBNAct(chs, chs // 2, 1, rngs=rngs)
@@ -60,8 +77,8 @@ class DarkNetResBlock(nnx.Module):
     def __call__(self, x):
         return x + self.conv2(self.conv1(x))
 
-class DarkNet53(ClassifierMixin, nnx.Module):
 
+class DarkNet53(ClassifierMixin, nnx.Module):
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.stem = ConvBNAct(in_chans, 32, 3, rngs=rngs)
@@ -87,10 +104,12 @@ class DarkNet53(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _csp(channels, blocks, **kwargs):
     model = CSPDarkNet(channels, blocks, **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def darknet53(**kwargs):
@@ -98,13 +117,16 @@ def darknet53(**kwargs):
     model.default_cfg = _cfg(input_size=(3, 256, 256))
     return model
 
+
 @register_model
 def cspdarknet53(**kwargs):
     return _csp((64, 128, 256, 512, 1024), (1, 2, 8, 8, 4), **kwargs)  # YOLOv4 block counts
 
+
 @register_model
 def cspresnet50(**kwargs):
     return _csp((128, 256, 512, 1024), (3, 4, 6, 3), **kwargs)
+
 
 @register_model
 def cspresnext50(**kwargs):

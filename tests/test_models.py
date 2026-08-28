@@ -1,5 +1,7 @@
 """Comprehensive parameterized tests for registered jimm model families and variants."""
+
 import gc
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -49,8 +51,9 @@ def test_architecture_family_forward_and_backward(module_name):
         return cross_entropy(out, y)
 
     grads = nnx.grad(loss_fn)(m)
-    leaves = jax.tree.leaves(jax.tree.map(lambda v: getattr(v, "value", v),
-                                          nnx.to_pure_dict(nnx.state(grads))))
+    leaves = jax.tree.leaves(
+        jax.tree.map(lambda v: getattr(v, "value", v), nnx.to_pure_dict(nnx.state(grads)))
+    )
     assert len(leaves) > 0, f"{name}: no parameter gradient leaves"
     n_bad = sum(1 for g in leaves if not bool(jnp.isfinite(g).all()))
     n_nonzero = sum(1 for g in leaves if bool(jnp.any(g != 0)))
@@ -65,12 +68,14 @@ def test_architecture_family_forward_and_backward(module_name):
         assert logits.shape == (1, 5), f"{name} expected logits shape (1, 5), got {logits.shape}"
         m.reset_classifier(0)
         feats = m(x)
-        assert feats.shape[-1] == m.num_features, f"{name} feature shape mismatch: {feats.shape} vs {m.num_features}"
+        assert feats.shape[-1] == m.num_features, (
+            f"{name} feature shape mismatch: {feats.shape} vs {m.num_features}"
+        )
     else:
         assert logits.shape[-1] == m.num_features
 
     # Clean up memory
-    del m, x, logits, grads
+    del m, logits, grads
     gc.collect()
 
 

@@ -1,12 +1,14 @@
 """EfficientNet (B0-B7) in flax nnx, NHWC. Mirrors timm.models.efficientnet / torchvision."""
+
 import math
 
 import jax.numpy as jnp
-from jax.nn import silu
 from flax import nnx
+from jax.nn import silu
 
-from ..layers import DropPath, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath
+from ..registry import _cfg, register_model
+
 
 class SqueezeExciteEff(nnx.Module):
     def __init__(self, in_chs, exp_chs, se_ratio=0.25, *, rngs):
@@ -30,8 +32,15 @@ class MBConv(nnx.Module):
         if self.has_expand:
             self.expand = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
             self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
-        self.dw = nnx.Conv(mid, mid, (kernel, kernel), strides=(stride, stride), use_bias=False,
-                           feature_group_count=mid, rngs=rngs)
+        self.dw = nnx.Conv(
+            mid,
+            mid,
+            (kernel, kernel),
+            strides=(stride, stride),
+            use_bias=False,
+            feature_group_count=mid,
+            rngs=rngs,
+        )
         self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
         self.se = SqueezeExciteEff(in_chs, mid, 0.25, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
@@ -44,10 +53,16 @@ class MBConv(nnx.Module):
         y = self.bn3(self.pw(y))
         return x + self.drop_path(y) if self.use_residual else y
 
+
 # (kernel, expand, out_chs, repeats, stride) — B0 base
 BASE_CFG = [
-    (3, 1, 16, 1, 1), (3, 6, 24, 2, 2), (5, 6, 40, 2, 2), (3, 6, 80, 3, 2),
-    (5, 6, 112, 3, 1), (5, 6, 192, 4, 2), (3, 6, 320, 1, 1),
+    (3, 1, 16, 1, 1),
+    (3, 6, 24, 2, 2),
+    (5, 6, 40, 2, 2),
+    (3, 6, 80, 3, 2),
+    (5, 6, 112, 3, 1),
+    (5, 6, 192, 4, 2),
+    (3, 6, 320, 1, 1),
 ]
 
 # name: (width_mult, depth_mult, img_size, drop_rate)
@@ -68,6 +83,7 @@ _VARIANTS = {
     "tinynet_e": (0.475, 0.51, 106, 0.2),
 }
 
+
 def _round_width(c, mult):
     if not mult:
         return c
@@ -77,13 +93,26 @@ def _round_width(c, mult):
         new_c += 8
     return new_c
 
+
 def _round_depth(n, mult):
     return int(math.ceil(n * mult))
 
-class EfficientNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, width_mult=1.0, depth_mult=1.0, channel_multiplier=None, depth_multiplier=None,
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.2, drop_path_rate=0.0, *, rngs):
+class EfficientNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        width_mult=1.0,
+        depth_mult=1.0,
+        channel_multiplier=None,
+        depth_multiplier=None,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.2,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         width_mult = channel_multiplier if channel_multiplier is not None else width_mult
         depth_mult = depth_multiplier if depth_multiplier is not None else depth_mult
@@ -98,7 +127,9 @@ class EfficientNet(ClassifierMixin, nnx.Module):
         for k, e, c, n, s in BASE_CFG:
             out = _round_width(c, width_mult)
             for j in range(_round_depth(n, depth_mult)):
-                blocks.append(MBConv(chs, out, k, s if j == 0 else 1, e, dpr[len(blocks)], rngs=rngs))
+                blocks.append(
+                    MBConv(chs, out, k, s if j == 0 else 1, e, dpr[len(blocks)], rngs=rngs)
+                )
                 chs = out
         self.blocks = nnx.List(blocks)
         head = _round_width(1280, width_mult)
@@ -117,6 +148,7 @@ class EfficientNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _make(name):
     w, d, img, drop = _VARIANTS[name]
 
@@ -125,8 +157,10 @@ def _make(name):
         model = EfficientNet(w, d, **kwargs)
         model.default_cfg = _cfg(input_size=(3, img, img))
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _VARIANTS:
     register_model(_make(_name))

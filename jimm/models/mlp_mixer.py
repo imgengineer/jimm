@@ -1,9 +1,11 @@
 """MLP-Mixer and ResMLP in flax nnx. Mirrors timm.models.mlp_mixer."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
+from ..registry import _cfg, register_model
+
 
 class MixerBlock(nnx.Module):
     def __init__(self, num_tokens, dim, tokens_mlp, channels_mlp, drop=0.0, drop_path=0.0, *, rngs):
@@ -19,20 +21,44 @@ class MixerBlock(nnx.Module):
         x = x + self.drop_path(y)
         return x + self.drop_path(self.channel_mlp(self.norm2(x)))
 
+
 class MlpMixer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
 
-    def __init__(self, img_size=224, patch_size=16, num_blocks=8, embed_dim=512,
-                 mlp_ratio=(0.5, 4.0), num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        num_blocks=8,
+        embed_dim=512,
+        mlp_ratio=(0.5, 4.0),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
         n = self.patch_embed.num_patches
         dpr = [drop_path_rate * i / max(num_blocks - 1, 1) for i in range(num_blocks)]
-        self.blocks = nnx.List([
-            MixerBlock(n, embed_dim, int(n * mlp_ratio[0]), int(embed_dim * mlp_ratio[1]),
-                       drop_rate, dpr[i], rngs=rngs) for i in range(num_blocks)])
+        self.blocks = nnx.List(
+            [
+                MixerBlock(
+                    n,
+                    embed_dim,
+                    int(n * mlp_ratio[0]),
+                    int(embed_dim * mlp_ratio[1]),
+                    drop_rate,
+                    dpr[i],
+                    rngs=rngs,
+                )
+                for i in range(num_blocks)
+            ]
+        )
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -51,22 +77,27 @@ class MlpMixer(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _mixer(patch, dim, blocks, **kwargs):
     model = MlpMixer(patch_size=patch, embed_dim=dim, num_blocks=blocks, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def mixer_b16_224(**kwargs):
     return _mixer(16, 768, 12, **kwargs)
+
 
 @register_model
 def mixer_b32_224(**kwargs):
     return _mixer(32, 768, 12, img_size=224, **kwargs)
 
+
 @register_model
 def mixer_l16_224(**kwargs):
     return _mixer(16, 1024, 24, **kwargs)
+
 
 class ResMLPBlock(nnx.Module):
     def __init__(self, num_tokens, dim, mlp_ratio=4.0, *, rngs):
@@ -80,11 +111,23 @@ class ResMLPBlock(nnx.Module):
         x = x + self.token_fc(y).transpose(0, 2, 1)
         return x + self.channel_mlp(self.norm2(x))
 
+
 class ResMLP(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
 
-    def __init__(self, img_size=224, patch_size=16, num_blocks=12, embed_dim=384,
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        num_blocks=12,
+        embed_dim=384,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
@@ -106,17 +149,20 @@ class ResMLP(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def resmlp_12_224(**kwargs):
     model = ResMLP(num_blocks=12, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def resmlp_24_224(**kwargs):
     model = ResMLP(num_blocks=24, **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def resmlp_36_224(**kwargs):

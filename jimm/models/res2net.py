@@ -1,10 +1,12 @@
 """Res2Net in flax nnx, NHWC. Mirrors timm.models.res2net."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath
+from ..registry import _cfg, register_model
 from .resnet import Downsample
+
 
 class Res2NetBottleneck(nnx.Module):
     expansion = 4
@@ -17,12 +19,20 @@ class Res2NetBottleneck(nnx.Module):
         width = mid // scale
         self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
         self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
-        self.convs = nnx.List([nnx.Conv(width, width, (3, 3), strides=(stride, stride),
-                                        use_bias=False, rngs=rngs) for _ in range(scale - 1)])
+        self.convs = nnx.List(
+            [
+                nnx.Conv(width, width, (3, 3), strides=(stride, stride), use_bias=False, rngs=rngs)
+                for _ in range(scale - 1)
+            ]
+        )
         self.bns = nnx.List([nnx.BatchNorm(width, rngs=rngs) for _ in range(scale - 1)])
         self.conv3 = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
-        self.shortcut = Downsample(in_chs, out_chs, stride, rngs=rngs) if (stride != 1 or in_chs != out_chs) else None
+        self.shortcut = (
+            Downsample(in_chs, out_chs, stride, rngs=rngs)
+            if (stride != 1 or in_chs != out_chs)
+            else None
+        )
         self.drop_path = DropPath(drop_path_rate, rngs=rngs)
 
     def __call__(self, x):
@@ -43,14 +53,32 @@ class Res2NetBottleneck(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return nnx.relu(y + self.drop_path(sc))
 
-class Res2Net(ClassifierMixin, nnx.Module):
 
-    def __init__(self, layers, scale=4, base_width=26, num_classes=1000, in_chans=3,
-                 global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class Res2Net(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        layers,
+        scale=4,
+        base_width=26,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = 512 * Res2NetBottleneck.expansion
-        self.conv1 = nnx.Conv(in_chans, 64, (7, 7), strides=(2, 2), padding=[(3, 3), (3, 3)],
-                              use_bias=False, rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans,
+            64,
+            (7, 7),
+            strides=(2, 2),
+            padding=[(3, 3), (3, 3)],
+            use_bias=False,
+            rngs=rngs,
+        )
         self.bn1 = nnx.BatchNorm(64, rngs=rngs)
         dpr = [drop_path_rate * i / max(sum(layers) - 1, 1) for i in range(sum(layers))]
         chs, stages, k = 64, [], 0
@@ -58,8 +86,11 @@ class Res2Net(ClassifierMixin, nnx.Module):
             width = 64 * 2**i
             blocks = []
             for j in range(n):
-                blocks.append(Res2NetBottleneck(chs, width, stride if j == 0 else 1,
-                                                scale, base_width, dpr[k], rngs=rngs))
+                blocks.append(
+                    Res2NetBottleneck(
+                        chs, width, stride if j == 0 else 1, scale, base_width, dpr[k], rngs=rngs
+                    )
+                )
                 chs = width * Res2NetBottleneck.expansion
                 k += 1
             stages.append(nnx.List(blocks))
@@ -77,18 +108,22 @@ class Res2Net(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _res2net(layers, scale, base_width, **kwargs):
     model = Res2Net(layers, scale, base_width, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def res2net50_26w_4s(**kwargs):
     return _res2net([3, 4, 6, 3], 4, 26, **kwargs)
 
+
 @register_model
 def res2net50_14w_8s(**kwargs):
     return _res2net([3, 4, 6, 3], 8, 14, **kwargs)
+
 
 @register_model
 def res2net101_26w_4s(**kwargs):

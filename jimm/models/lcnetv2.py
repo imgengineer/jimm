@@ -1,8 +1,10 @@
 """LCNetV2 in flax nnx, NHWC. Mirrors timm.models.lcnet (v2 depthwise-sep blocks + SE)."""
+
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
+from ..registry import _cfg, register_model
+
 
 class LCBlock(nnx.Module):
     """dw 3x3/5x5 + pw 1x1, optional SE; stride-2 variant doubles via two branches."""
@@ -19,19 +21,38 @@ class LCBlock(nnx.Module):
             y = self.se(y)
         return self.pw(y)
 
+
 # (kernel, out, se, stride, repeats)
 LCNETV2_CFG = [
-    (5, 64, 0, 1, 1), (5, 64, 0, 2, 1), (5, 128, 0, 1, 1), (5, 128, 0, 2, 1),
-    (5, 256, 0, 1, 2), (5, 256, 0, 2, 1),
-    (5, 512, 0, 1, 1), (5, 512, 1, 1, 1), (5, 512, 0, 1, 1), (5, 512, 1, 1, 1),
+    (5, 64, 0, 1, 1),
+    (5, 64, 0, 2, 1),
+    (5, 128, 0, 1, 1),
+    (5, 128, 0, 2, 1),
+    (5, 256, 0, 1, 2),
+    (5, 256, 0, 2, 1),
+    (5, 512, 0, 1, 1),
+    (5, 512, 1, 1, 1),
+    (5, 512, 0, 1, 1),
+    (5, 512, 1, 1, 1),
     (5, 512, 0, 2, 1),
-    (5, 512, 0, 1, 1), (5, 512, 1, 1, 1), (5, 512, 0, 1, 1), (5, 512, 1, 1, 1),
+    (5, 512, 0, 1, 1),
+    (5, 512, 1, 1, 1),
+    (5, 512, 0, 1, 1),
+    (5, 512, 1, 1, 1),
 ]
 
-class LCNetV2(ClassifierMixin, nnx.Module):
 
-    def __init__(self, width_mult=1.0, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, *, rngs):
+class LCNetV2(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        width_mult=1.0,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         stem = max(int(32 * width_mult), 8)
         self.conv1 = ConvBNAct(in_chans, stem, 3, 2, act="hswish", rngs=rngs)
@@ -57,17 +78,20 @@ class LCNetV2(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def lcnetv2_050(**kwargs):
     model = LCNetV2(0.5, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def lcnetv2_100(**kwargs):
     model = LCNetV2(1.0, **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def lcnetv2_150(**kwargs):

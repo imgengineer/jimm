@@ -1,15 +1,24 @@
 """Xception in flax nnx, NHWC. Mirrors timm.models.xception (aligned with the keras ref impl)."""
+
 from flax import nnx
 
 from ..layers import ClassifierMixin
-from ..registry import register_model, _cfg
+from ..registry import _cfg, register_model
+
 
 class SeparableConv(nnx.Module):
     """3x3 depthwise -> BN -> 1x1 pointwise -> BN (no activation in between)."""
 
     def __init__(self, in_chs, out_chs, stride=1, *, rngs):
-        self.dw = nnx.Conv(in_chs, in_chs, (3, 3), strides=(stride, stride), use_bias=False,
-                           feature_group_count=in_chs, rngs=rngs)
+        self.dw = nnx.Conv(
+            in_chs,
+            in_chs,
+            (3, 3),
+            strides=(stride, stride),
+            use_bias=False,
+            feature_group_count=in_chs,
+            rngs=rngs,
+        )
         self.bn_dw = nnx.BatchNorm(in_chs, rngs=rngs)
         self.pw = nnx.Conv(in_chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn_pw = nnx.BatchNorm(out_chs, rngs=rngs)
@@ -17,16 +26,28 @@ class SeparableConv(nnx.Module):
     def __call__(self, x):
         return self.bn_pw(self.pw(self.bn_dw(self.dw(x))))
 
+
 class XceptionBlock(nnx.Module):
     """relu-sep x repeats, optional maxpool stride 2, residual shortcut."""
 
     def __init__(self, in_chs, out_chs, repeats, stride=1, *, rngs):
-        self.reps = nnx.List([SeparableConv(in_chs if i == 0 else out_chs, out_chs, rngs=rngs)
-                              for i in range(repeats)])
+        self.reps = nnx.List(
+            [
+                SeparableConv(in_chs if i == 0 else out_chs, out_chs, rngs=rngs)
+                for i in range(repeats)
+            ]
+        )
         self.pool = stride == 2
-        self.shortcut = nnx.Sequential(
-            nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride), use_bias=False, rngs=rngs),
-            nnx.BatchNorm(out_chs, rngs=rngs)) if (stride == 2 or in_chs != out_chs) else None
+        self.shortcut = (
+            nnx.Sequential(
+                nnx.Conv(
+                    in_chs, out_chs, (1, 1), strides=(stride, stride), use_bias=False, rngs=rngs
+                ),
+                nnx.BatchNorm(out_chs, rngs=rngs),
+            )
+            if (stride == 2 or in_chs != out_chs)
+            else None
+        )
 
     def __call__(self, x):
         y = x
@@ -37,11 +58,13 @@ class XceptionBlock(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return y + sc
 
-class Xception(ClassifierMixin, nnx.Module):
 
+class Xception(ClassifierMixin, nnx.Module):
     def __init__(self, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.conv1 = nnx.Conv(in_chans, 32, (3, 3), strides=(2, 2), use_bias=False, padding="VALID", rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans, 32, (3, 3), strides=(2, 2), use_bias=False, padding="VALID", rngs=rngs
+        )
         self.bn1 = nnx.BatchNorm(32, rngs=rngs)
         self.conv2 = nnx.Conv(32, 64, (3, 3), use_bias=False, padding="VALID", rngs=rngs)
         self.bn2 = nnx.BatchNorm(64, rngs=rngs)
@@ -68,6 +91,7 @@ class Xception(ClassifierMixin, nnx.Module):
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
+
 
 @register_model
 def xception(**kwargs):

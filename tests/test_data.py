@@ -1,4 +1,5 @@
 """Unit tests for jimm.data."""
+
 import os
 import shutil
 import tempfile
@@ -7,11 +8,11 @@ from typing import Any, cast
 
 import cv2  # pyright: ignore[reportMissingImports]
 import grain.python as grain
-import jimm.augment as augment_module
-import jimm.data as data_module
 import numpy as np
 import pytest
 
+import jimm.augment as augment_module
+import jimm.data as data_module
 from jimm.data import (
     ImageFolder,
     MixupCutmix,
@@ -22,8 +23,8 @@ from jimm.data import (
     create_dataset,
     create_loader,
     gaussian_blur,
-    random_erasing,
     random_crop_or_pad,
+    random_erasing,
     random_flip_left_right,
     random_flip_up_down,
     random_grayscale,
@@ -69,8 +70,7 @@ def test_image_folder(temp_dataset):
 
 def test_in_memory_cache_preserves_source_resolution(temp_dataset):
     # Caching must not change the source image before stochastic augmentation.
-    source, transform = create_dataset(
-        f"{temp_dataset}/train", in_memory=True, img_size=32)
+    source, transform = create_dataset(f"{temp_dataset}/train", in_memory=True, img_size=32)
     assert source._cache is not None
     shapes = {tuple(shape) for _, _, shape, _ in source._cache.records}
     assert shapes == {(48, 48, 3)}
@@ -78,8 +78,7 @@ def test_in_memory_cache_preserves_source_resolution(temp_dataset):
     assert sample["image"].shape == (32, 32, 3)
 
 
-def test_in_memory_cache_invalidates_when_labels_change(
-        temp_dataset, tmp_path, monkeypatch):
+def test_in_memory_cache_invalidates_when_labels_change(temp_dataset, tmp_path, monkeypatch):
     monkeypatch.setattr(data_module, "_IMAGE_CACHE_ROOT", tmp_path / "cache")
     root = Path(temp_dataset) / "train"
 
@@ -97,8 +96,13 @@ def test_in_memory_cache_invalidates_when_labels_change(
 
 def test_create_loader_drop_remainder(temp_dataset):
     loader = create_loader(
-        f"{temp_dataset}/val", batch_size=5, img_size=32,
-        is_training=False, num_workers=0, drop_remainder=True)
+        f"{temp_dataset}/val",
+        batch_size=5,
+        img_size=32,
+        is_training=False,
+        num_workers=0,
+        drop_remainder=True,
+    )
     try:
         batches = list(loader)
         assert len(batches) == len(loader) == 4  # 24 // 5, tail dropped
@@ -107,8 +111,8 @@ def test_create_loader_drop_remainder(temp_dataset):
         loader.close()
 
     default_loader = create_loader(
-        f"{temp_dataset}/val", batch_size=5, img_size=32,
-        is_training=False, num_workers=0)
+        f"{temp_dataset}/val", batch_size=5, img_size=32, is_training=False, num_workers=0
+    )
     try:
         assert len(list(default_loader)) == 5  # default keeps the tail batch
     finally:
@@ -116,14 +120,24 @@ def test_create_loader_drop_remainder(temp_dataset):
 
     with pytest.raises(ValueError, match="drop_remainder"):
         create_loader(
-            f"{temp_dataset}/val", batch_size=5, img_size=32,
-            is_training=False, num_workers=0, drop_remainder="yes")
+            f"{temp_dataset}/val",
+            batch_size=5,
+            img_size=32,
+            is_training=False,
+            num_workers=0,
+            drop_remainder="yes",
+        )
 
 
 def test_create_loader_pads_eval_without_losing_records(temp_dataset):
     loader = create_loader(
-        f"{temp_dataset}/val", batch_size=5, img_size=32,
-        is_training=False, num_workers=0, pad_remainder=True)
+        f"{temp_dataset}/val",
+        batch_size=5,
+        img_size=32,
+        is_training=False,
+        num_workers=0,
+        pad_remainder=True,
+    )
     try:
         batches = list(loader)
         assert len(batches) == len(loader) == 5
@@ -134,22 +148,30 @@ def test_create_loader_pads_eval_without_losing_records(temp_dataset):
 
     shard_loaders = [
         create_loader(
-            f"{temp_dataset}/val", batch_size=5, img_size=32,
-            is_training=False, num_workers=0, pad_remainder=True,
+            f"{temp_dataset}/val",
+            batch_size=5,
+            img_size=32,
+            is_training=False,
+            num_workers=0,
+            pad_remainder=True,
             shard_options=grain.ShardOptions(
-                shard_index=shard_index, shard_count=2, drop_remainder=False),
+                shard_index=shard_index, shard_count=2, drop_remainder=False
+            ),
         )
         for shard_index in range(2)
     ]
     try:
         sharded_batches = [list(shard_loader) for shard_loader in shard_loaders]
         assert [len(batches) for batches in sharded_batches] == [3, 3]
-        assert all(
-            batch["image"].shape[0] == 5
-            for batches in sharded_batches for batch in batches)
-        assert sum(
-            int(np.asarray(batch["valid"]).sum())
-            for batches in sharded_batches for batch in batches) == 24
+        assert all(batch["image"].shape[0] == 5 for batches in sharded_batches for batch in batches)
+        assert (
+            sum(
+                int(np.asarray(batch["valid"]).sum())
+                for batches in sharded_batches
+                for batch in batches
+            )
+            == 24
+        )
     finally:
         for shard_loader in shard_loaders:
             shard_loader.close()
@@ -162,10 +184,15 @@ def test_sharded_loader_keeps_record_remainder(temp_dataset):
 
     loaders = [
         create_loader(
-            root, batch_size=5, img_size=32, is_training=False,
-            num_workers=0, drop_remainder=False,
+            root,
+            batch_size=5,
+            img_size=32,
+            is_training=False,
+            num_workers=0,
+            drop_remainder=False,
             shard_options=grain.ShardOptions(
-                shard_index=shard_index, shard_count=2, drop_remainder=False),
+                shard_index=shard_index, shard_count=2, drop_remainder=False
+            ),
         )
         for shard_index in range(2)
     ]
@@ -187,8 +214,7 @@ def test_loader_start_step_restores_training_stream(temp_dataset):
         is_training=True,
         num_workers=0,
         seed=17,
-        shard_options=grain.ShardOptions(
-            shard_index=1, shard_count=2, drop_remainder=True),
+        shard_options=grain.ShardOptions(shard_index=1, shard_count=2, drop_remainder=True),
     )
     continuous = create_loader(f"{temp_dataset}/train", **kwargs)
     resumed = create_loader(f"{temp_dataset}/train", **kwargs)
@@ -249,7 +275,9 @@ def test_timm_augmentation_api():
     assert len(data_module.auto_augment_policy("originalr")) == 25
     assert len(data_module.rand_augment_ops(transforms=["Invert"])) == 1
     assert data_module.rand_augment_choices("3a") == [
-        "SolarizeIncreasing", "Desaturate", "GaussianBlur"
+        "SolarizeIncreasing",
+        "Desaturate",
+        "GaussianBlur",
     ]
     assert data_module.str_to_interp_mode("bilinear") == cv2.INTER_LINEAR
     assert data_module.interp_mode_to_str(cv2.INTER_NEAREST) == "nearest"
@@ -267,7 +295,10 @@ def test_augmentation_edge_cases():
     img = np.arange(32 * 40 * 3, dtype=np.uint8).reshape(32, 40, 3)
 
     for interpolation in (
-        "nearest", None, ("bilinear", "bicubic"), cv2.INTER_AREA,
+        "nearest",
+        None,
+        ("bilinear", "bicubic"),
+        cv2.INTER_AREA,
     ):
         assert data_module.resolve_interpolation(cast(Any, interpolation)) is not None
     with pytest.raises(ValueError):
@@ -287,18 +318,27 @@ def test_augmentation_edge_cases():
 
     assert data_module.resize_keep_ratio(img, size=16).ndim == 3
     assert augment_module.random_resized_crop(
-        np.zeros((8, 64, 3), dtype=np.uint8), size=16, scale=(2.0, 2.0),
+        np.zeros((8, 64, 3), dtype=np.uint8),
+        size=16,
+        scale=(2.0, 2.0),
     ).shape == (16, 16, 3)
     assert augment_module.random_resized_crop(
-        np.zeros((64, 8, 3), dtype=np.uint8), size=16, scale=(2.0, 2.0),
+        np.zeros((64, 8, 3), dtype=np.uint8),
+        size=16,
+        scale=(2.0, 2.0),
     ).shape == (16, 16, 3)
-    assert augment_module.random_crop_or_pad(
-        img, cast(Any, (16, 20))).shape == (16, 20, 3)
-    assert data_module.color_jitter(
-        img, brightness=cast(Any, (0.1, 0.2)),
-        contrast=cast(Any, (0.8, 1.2)), saturation=cast(Any, (0.8, 1.2)),
-        hue=cast(Any, (-0.1, 0.1)), random_order=False,
-    ).shape == img.shape
+    assert augment_module.random_crop_or_pad(img, cast(Any, (16, 20))).shape == (16, 20, 3)
+    assert (
+        data_module.color_jitter(
+            img,
+            brightness=cast(Any, (0.1, 0.2)),
+            contrast=cast(Any, (0.8, 1.2)),
+            saturation=cast(Any, (0.8, 1.2)),
+            hue=cast(Any, (-0.1, 0.1)),
+            random_order=False,
+        ).shape
+        == img.shape
+    )
     assert augment_module._range(None, "test") == (0.0, 0.0)
     assert augment_module._hue_range(None) == (0.0, 0.0)
     with pytest.raises(ValueError):
@@ -312,25 +352,54 @@ def test_augmentation_edge_cases():
     assert data_module.gaussian_blur(img, prob=1.0, sigma=(1.0, 1.0)).shape == img.shape
 
     for name in (
-        "AutoContrast", "Equalize", "Invert", "Solarize", "SolarizeIncreasing",
-        "SolarizeAdd", "Color", "ColorIncreasing", "Contrast", "ContrastIncreasing",
-        "Brightness", "BrightnessIncreasing", "Sharpness", "SharpnessIncreasing",
-        "Desaturate", "GaussianBlur", "GaussianBlurRand", "Rotate",
-        "Posterize", "PosterizeOriginal", "PosterizeIncreasing", "ShearX", "ShearY",
-        "TranslateX", "TranslateY", "TranslateXRel", "TranslateYRel",
+        "AutoContrast",
+        "Equalize",
+        "Invert",
+        "Solarize",
+        "SolarizeIncreasing",
+        "SolarizeAdd",
+        "Color",
+        "ColorIncreasing",
+        "Contrast",
+        "ContrastIncreasing",
+        "Brightness",
+        "BrightnessIncreasing",
+        "Sharpness",
+        "SharpnessIncreasing",
+        "Desaturate",
+        "GaussianBlur",
+        "GaussianBlurRand",
+        "Rotate",
+        "Posterize",
+        "PosterizeOriginal",
+        "PosterizeIncreasing",
+        "ShearX",
+        "ShearY",
+        "TranslateX",
+        "TranslateY",
+        "TranslateXRel",
+        "TranslateYRel",
     ):
         result = augment_module.AugmentOp(
-            name, prob=1.0, magnitude=5,
+            name,
+            prob=1.0,
+            magnitude=5,
             hparams={"translate_const": 8, "translate_pct": 0.2},
         )(img)
         assert result.shape == img.shape
     assert augment_module.AugmentOp("Invert", prob=0.0)(img) is img
-    assert augment_module.AugmentOp(
-        "Invert", prob=1.0, hparams={"magnitude_std": float("inf")})(img).shape == img.shape
-    assert augment_module.AugmentOp(
-        "Invert", prob=1.0, hparams={"magnitude_std": 1.0})(img).shape == img.shape
+    assert (
+        augment_module.AugmentOp("Invert", prob=1.0, hparams={"magnitude_std": float("inf")})(
+            img
+        ).shape
+        == img.shape
+    )
+    assert (
+        augment_module.AugmentOp("Invert", prob=1.0, hparams={"magnitude_std": 1.0})(img).shape
+        == img.shape
+    )
     assert "AugmentOp" in repr(augment_module.AugmentOp("Invert"))
-    assert augment_module.AutoAugment([[('Invert', 1.0, 1.0)]])(img).shape == img.shape
+    assert augment_module.AutoAugment([[("Invert", 1.0, 1.0)]])(img).shape == img.shape
     with pytest.raises(ValueError):
         augment_module.AugmentOp("missing", prob=1.0)(img)
 
@@ -354,10 +423,18 @@ def test_augmentation_edge_cases():
     assert data_module.augmix_ops(transforms={"Invert": 1})
     assert repr(augment_module.RandAugment([], 0))
     assert repr(augment_module.AugMixAugment([], blended=True))
-    assert augment_module.AugMixAugment(
-        data_module.augmix_ops(transforms=["Invert"]), width=1, depth=1)(img).shape == img.shape
-    assert augment_module.RandAugment(
-        data_module.rand_augment_ops(transforms=["Invert"]), 1, [1.0])(img).shape == img.shape
+    assert (
+        augment_module.AugMixAugment(
+            data_module.augmix_ops(transforms=["Invert"]), width=1, depth=1
+        )(img).shape
+        == img.shape
+    )
+    assert (
+        augment_module.RandAugment(data_module.rand_augment_ops(transforms=["Invert"]), 1, [1.0])(
+            img
+        ).shape
+        == img.shape
+    )
     assert augment_module.RandAugment([], 0)(img) is img
 
 
@@ -370,8 +447,9 @@ def test_mixup_cutmix(monkeypatch):
 
     random_values = iter([0.0, 0.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    mixed, mixed_labels = MixupCutmix(
-        mixup_alpha=1.0, cutmix_alpha=0.0, num_classes=2)(images, labels)
+    mixed, mixed_labels = MixupCutmix(mixup_alpha=1.0, cutmix_alpha=0.0, num_classes=2)(
+        images, labels
+    )
     assert mixed.shape == images.shape
     assert mixed_labels.shape == (2, 2)
     assert np.allclose(mixed_labels.sum(axis=1), 1.0)
@@ -379,8 +457,9 @@ def test_mixup_cutmix(monkeypatch):
 
     random_values = iter([0.0, 1.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    cutmixed, cutmix_labels = MixupCutmix(
-        mixup_alpha=1.0, cutmix_alpha=1.0, num_classes=2)(images, labels)
+    cutmixed, cutmix_labels = MixupCutmix(mixup_alpha=1.0, cutmix_alpha=1.0, num_classes=2)(
+        images, labels
+    )
     assert cutmixed.shape == images.shape
     assert cutmix_labels.shape == (2, 2)
 
@@ -397,9 +476,14 @@ def test_mixup_modes_and_edges():
     with pytest.raises(ValueError, match="mode"):
         MixupCutmix(mode="invalid")
     for kwargs in (
-        {"mixup_alpha": -1}, {"cutmix_alpha": float("nan")}, {"prob": 2},
-        {"switch_prob": -1}, {"label_smoothing": 1.1}, {"num_classes": 0},
-        {"cutmix_minmax": (0.8, 0.2)}, {"cutmix_minmax": (0.2,)},
+        {"mixup_alpha": -1},
+        {"cutmix_alpha": float("nan")},
+        {"prob": 2},
+        {"switch_prob": -1},
+        {"label_smoothing": 1.1},
+        {"num_classes": 0},
+        {"cutmix_minmax": (0.8, 0.2)},
+        {"cutmix_minmax": (0.2,)},
     ):
         with pytest.raises(ValueError):
             MixupCutmix(**kwargs)
@@ -420,16 +504,22 @@ def test_mixup_modes_and_edges():
 
     for mode in ("pair", "elem"):
         mixed, targets = MixupCutmix(
-            mixup_alpha=1.0, cutmix_alpha=0.0, mode=mode,
-            label_smoothing=0.1, num_classes=4,
+            mixup_alpha=1.0,
+            cutmix_alpha=0.0,
+            mode=mode,
+            label_smoothing=0.1,
+            num_classes=4,
         )(images, labels)
         assert mixed.shape == images.shape
         assert targets.shape == (4, 4)
 
     for mode in ("batch", "elem"):
         mixed, targets = MixupCutmix(
-            mixup_alpha=0.0, cutmix_alpha=1.0, mode=mode,
-            num_classes=4, cutmix_minmax=(0.25, 0.5),
+            mixup_alpha=0.0,
+            cutmix_alpha=1.0,
+            mode=mode,
+            num_classes=4,
+            cutmix_minmax=(0.25, 0.5),
         )(images, labels)
         assert mixed.shape == images.shape
         assert targets.shape == (4, 4)
@@ -467,10 +557,15 @@ def test_data_error_paths(temp_dataset, monkeypatch):
 
     original_iterdir = Path.iterdir
     with monkeypatch.context() as mp:
-        mp.setattr(Path, "iterdir", lambda path: (
-            (_ for _ in ()).throw(OSError("synthetic failure"))
-            if path.name == "cat" else original_iterdir(path)
-        ))
+        mp.setattr(
+            Path,
+            "iterdir",
+            lambda path: (
+                (_ for _ in ()).throw(OSError("synthetic failure"))
+                if path.name == "cat"
+                else original_iterdir(path)
+            ),
+        )
         with pytest.raises(OSError, match="unable to scan class directory"):
             ImageFolder(root)
 
@@ -487,9 +582,11 @@ def test_data_error_paths(temp_dataset, monkeypatch):
 
     ds = ImageFolder(root)
     with monkeypatch.context() as mp:
-        mp.setattr(Path, "open", lambda *_args, **_kwargs: (
-            (_ for _ in ()).throw(OSError("synthetic failure"))
-        ))
+        mp.setattr(
+            Path,
+            "open",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic failure")),
+        )
         with pytest.raises(OSError, match="unable to read image"):
             ds[0]
 
@@ -500,18 +597,23 @@ def test_data_error_paths(temp_dataset, monkeypatch):
 
     random_values = iter([0.0, 0.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    assert MixupCutmix(
-        mixup_alpha=1.0, cutmix_alpha=0.0, num_classes=2)(images, labels)[0].shape == images.shape
+    assert (
+        MixupCutmix(mixup_alpha=1.0, cutmix_alpha=0.0, num_classes=2)(images, labels)[0].shape
+        == images.shape
+    )
 
     random_values = iter([0.0, 1.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    assert MixupCutmix(
-        mixup_alpha=1.0, cutmix_alpha=1.0, num_classes=2)(images, labels)[0].shape == images.shape
+    assert (
+        MixupCutmix(mixup_alpha=1.0, cutmix_alpha=1.0, num_classes=2)(images, labels)[0].shape
+        == images.shape
+    )
 
     random_values = iter([0.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
-    unchanged, unchanged_labels = MixupCutmix(
-        mixup_alpha=0.0, cutmix_alpha=0.0, num_classes=2)(images, labels)
+    unchanged, unchanged_labels = MixupCutmix(mixup_alpha=0.0, cutmix_alpha=0.0, num_classes=2)(
+        images, labels
+    )
     assert unchanged is images
     assert unchanged_labels.shape == (2, 2)
 
@@ -522,8 +624,7 @@ def test_decode_transform():
 
     # 1. Create a test sample
     img = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
-    ok, encoded = cv2.imencode(
-        ".png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    ok, encoded = cv2.imencode(".png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
     assert ok
     sample = {"image": encoded.tobytes(), "label": 2}
 
@@ -548,27 +649,37 @@ def test_decode_transform():
 
     # 4. Array inputs and disabled optional augmentations.
     t_plain = _DecodeTransform(
-        img_size=32, is_training=True, hflip=0.0,
-        color_jitter_prob=0.0, re_prob=0.0,
+        img_size=32,
+        is_training=True,
+        hflip=0.0,
+        color_jitter_prob=0.0,
+        re_prob=0.0,
     )
     t_rkrc = _DecodeTransform(img_size=32, is_training=True, train_crop_mode="rkrc")
     t_rkrr = _DecodeTransform(img_size=32, is_training=True, train_crop_mode="rkrr")
     assert t_rkrc.map(sample)["image"].shape == (32, 32, 3)
     assert t_rkrr.map(sample)["image"].shape == (32, 32, 3)
     t_aug = _DecodeTransform(
-        img_size=32, is_training=True, auto_augment="3a", color_jitter=cast(Any, None),
+        img_size=32,
+        is_training=True,
+        auto_augment="3a",
+        color_jitter=cast(Any, None),
         re_prob=0.0,
     )
     assert t_aug.map(sample)["image"].shape == (32, 32, 3)
     t_force = _DecodeTransform(
-        img_size=32, is_training=True, auto_augment="3a",
+        img_size=32,
+        is_training=True,
+        auto_augment="3a",
         force_color_jitter=True,
-        color_jitter=cast(Any, (0.1, 0.1, 0.1, 0.1)), re_prob=0.0,
+        color_jitter=cast(Any, (0.1, 0.1, 0.1, 0.1)),
+        re_prob=0.0,
     )
     assert t_force.map(sample)["image"].shape == (32, 32, 3)
     with pytest.raises(ValueError, match="color_jitter"):
         _DecodeTransform(
-            img_size=32, is_training=True,
+            img_size=32,
+            is_training=True,
             color_jitter=cast(Any, (0.1, 0.1)),
         ).map(sample)
     with pytest.raises(ValueError, match="unknown train_crop_mode"):
@@ -611,8 +722,12 @@ def test_create_dataset_and_loader(temp_dataset):
     assert list(b2["image"].shape) == [4, 32, 32, 3]
 
     memory_loader = create_loader(
-        f"{temp_dataset}/train", batch_size=4, img_size=32,
-        is_training=True, num_workers=0, in_memory=True,
+        f"{temp_dataset}/train",
+        batch_size=4,
+        img_size=32,
+        is_training=True,
+        num_workers=0,
+        in_memory=True,
     )
     assert next(iter(memory_loader))["image"].shape == (4, 32, 32, 3)
 

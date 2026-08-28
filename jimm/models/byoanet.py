@@ -1,8 +1,10 @@
 """ByoaNet in flax nnx, NHWC. Mirrors timm.models.byoanet (RegNet-ish with varying blocks)."""
+
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
+from ..registry import _cfg, register_model
+
 
 class ByoaBlock(nnx.Module):
     """1x1 -> dw 3x3 -> SE -> 1x1 bottleneck (byoanet default block)."""
@@ -13,8 +15,11 @@ class ByoaBlock(nnx.Module):
         self.dw = ConvBNAct(mid, mid, 3, stride, groups=groups, act="silu", rngs=rngs)
         self.se = SqueezeExcite(mid, rd_ratio=0.25, rngs=rngs) if se else None
         self.pw = ConvBNAct(mid, out_chs, 1, act="identity", rngs=rngs)
-        self.shortcut = ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs) \
-            if (stride != 1 or in_chs != out_chs) else None
+        self.shortcut = (
+            ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs)
+            if (stride != 1 or in_chs != out_chs)
+            else None
+        )
 
     def __call__(self, x):
         y = self.dw(self.conv1(x))
@@ -24,16 +29,28 @@ class ByoaBlock(nnx.Module):
         sc = x if self.shortcut is None else self.shortcut(x)
         return y + sc
 
+
 _CFGS = {  # (widths, depths, expand, stride)
     "byoanet_pv1": ((24, 56, 152, 288, 608), (1, 1, 4, 7, 1), 1.0, (1, 2, 2, 2, 2)),
     "byoanet_pv2": ((32, 72, 192, 384, 768), (1, 1, 4, 8, 1), 1.0, (1, 2, 2, 2, 2)),
     "byoanet_s": ((24, 56, 160, 304, 608), (2, 3, 7, 2, 1), 1.0, (1, 2, 2, 2, 2)),
 }
 
-class ByoaNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, widths, depths, expand, strides, num_classes=1000, in_chans=3,
-                 global_pool="avg", drop_rate=0.0, *, rngs):
+class ByoaNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        widths,
+        depths,
+        expand,
+        strides,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.stem = ConvBNAct(in_chans, widths[0], 3, 2, act="silu", rngs=rngs)
         stages, chs = [], widths[0]
@@ -58,6 +75,7 @@ class ByoaNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _make(name):
     widths, depths, expand, strides = _CFGS[name]
 
@@ -65,8 +83,10 @@ def _make(name):
         model = ByoaNet(widths, depths, expand, strides, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

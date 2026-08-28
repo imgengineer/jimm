@@ -1,9 +1,11 @@
 """Swin Transformer in flax nnx, NHWC. Mirrors timm.models.swin_transformer."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp
+from ..registry import _cfg, register_model
+
 
 def window_partition(x, ws):
     """(B,H,W,C) -> (B*nH*nW, ws*ws, C)."""
@@ -11,9 +13,11 @@ def window_partition(x, ws):
     x = x.reshape(B, H // ws, ws, W // ws, ws, C).transpose(0, 1, 3, 2, 4, 5)
     return x.reshape(-1, ws * ws, C)
 
+
 def window_reverse(windows, ws, H, W, B):
     x = windows.reshape(B, H // ws, W // ws, ws, ws, -1).transpose(0, 1, 3, 2, 4, 5)
     return x.reshape(B, H, W, -1)
+
 
 class WindowAttention(nnx.Module):
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, drop=0.0, *, rngs):
@@ -25,7 +29,9 @@ class WindowAttention(nnx.Module):
         n = (2 * window_size - 1) ** 2
         self.rel_bias_table = nnx.Param(jnp.zeros((n, num_heads)))
         # relative position index, fixed for a given window size
-        coords = jnp.stack(jnp.meshgrid(jnp.arange(window_size), jnp.arange(window_size), indexing="ij"))
+        coords = jnp.stack(
+            jnp.meshgrid(jnp.arange(window_size), jnp.arange(window_size), indexing="ij")
+        )
         coords_flat = coords.reshape(2, -1)
         rel = coords_flat[:, :, None] - coords_flat[:, None, :]
         rel = rel.transpose(1, 2, 0) + window_size - 1
@@ -47,11 +53,23 @@ class WindowAttention(nnx.Module):
         x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
+
 class SwinBlock(nnx.Module):
     attn_cls = WindowAttention
 
-    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift=0,
-                 mlp_ratio=4.0, drop=0.0, drop_path=0.0, *, rngs):
+    def __init__(
+        self,
+        dim,
+        input_resolution,
+        num_heads,
+        window_size=7,
+        shift=0,
+        mlp_ratio=4.0,
+        drop=0.0,
+        drop_path=0.0,
+        *,
+        rngs,
+    ):
         self.dim, self.res = dim, input_resolution
         if min(input_resolution) <= window_size:
             # if window size is larger than the input resolution, skip windowing
@@ -69,13 +87,17 @@ class SwinBlock(nnx.Module):
             # mask for SW-MSA, precomputed for fixed resolution (timm does the same)
             H, W = input_resolution
             img_mask = jnp.zeros((1, H, W, 1))
-            slices = [(slice(0, -window_size), slice(0, -window_size)),
-                      (slice(0, -window_size), slice(-window_size, None)),
-                      (slice(-window_size, None), slice(0, -window_size)),
-                      (slice(-window_size, None), slice(-window_size, None))]
+            slices = [
+                (slice(0, -window_size), slice(0, -window_size)),
+                (slice(0, -window_size), slice(-window_size, None)),
+                (slice(-window_size, None), slice(0, -window_size)),
+                (slice(-window_size, None), slice(-window_size, None)),
+            ]
             for i, (hs, ws_) in enumerate(slices):
                 img_mask = img_mask.at[:, hs, ws_, :].set(i)
-            mask_windows = window_partition(img_mask, window_size).reshape(-1, window_size * window_size)
+            mask_windows = window_partition(img_mask, window_size).reshape(
+                -1, window_size * window_size
+            )
             m = mask_windows[:, None, :] - mask_windows[:, :, None]
             attn_mask = jnp.where(m != 0, -100.0, 0.0)
         # nnx.Variable: raw array attributes break nnx.cached_partial graph flattening
@@ -96,6 +118,7 @@ class SwinBlock(nnx.Module):
         x = sc + self.drop_path(x)
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
+
 class PatchMerging(nnx.Module):
     def __init__(self, dim, *, rngs):
         self.norm = nnx.LayerNorm(4 * dim, rngs=rngs)
@@ -108,15 +131,40 @@ class PatchMerging(nnx.Module):
         x = jnp.concatenate([x0, x1, x2, x3], axis=-1)
         return self.reduction(self.norm(x))
 
+
 class SwinStage(nnx.Module):
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4.0, drop=0.0, drop_path=None, downsample=True, block_cls=SwinBlock, *, rngs):
+    def __init__(
+        self,
+        dim,
+        input_resolution,
+        depth,
+        num_heads,
+        window_size,
+        mlp_ratio=4.0,
+        drop=0.0,
+        drop_path=None,
+        downsample=True,
+        block_cls=SwinBlock,
+        *,
+        rngs,
+    ):
         drop_path = drop_path or [0.0] * depth
-        self.blocks = nnx.List([
-            block_cls(dim, input_resolution, num_heads, window_size,
-                      shift=0 if i % 2 == 0 else window_size // 2,
-                      mlp_ratio=mlp_ratio, drop=drop, drop_path=drop_path[i], rngs=rngs)
-            for i in range(depth)])
+        self.blocks = nnx.List(
+            [
+                block_cls(
+                    dim,
+                    input_resolution,
+                    num_heads,
+                    window_size,
+                    shift=0 if i % 2 == 0 else window_size // 2,
+                    mlp_ratio=mlp_ratio,
+                    drop=drop,
+                    drop_path=drop_path[i],
+                    rngs=rngs,
+                )
+                for i in range(depth)
+            ]
+        )
         self.downsample = PatchMerging(dim, rngs=rngs) if downsample else None
 
     def __call__(self, x):
@@ -126,29 +174,63 @@ class SwinStage(nnx.Module):
             x = self.downsample(x)
         return x
 
+
 class SwinTransformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
 
-    def __init__(self, img_size=224, patch_size=4, in_chans=3, num_classes=1000,
-                 global_pool="avg", embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
-                 window_size=7, mlp_ratio=4.0, drop_rate=0.0, drop_path_rate=0.1,
-                 block_cls=SwinBlock, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=4,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="avg",
+        embed_dim=96,
+        depths=(2, 2, 6, 2),
+        num_heads=(3, 6, 12, 24),
+        window_size=7,
+        mlp_ratio=4.0,
+        drop_rate=0.0,
+        drop_path_rate=0.1,
+        block_cls=SwinBlock,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim * 2 ** (len(depths) - 1)
-        self.patch_embed_conv = nnx.Conv(in_chans, embed_dim, (patch_size, patch_size),
-                                         strides=(patch_size, patch_size), rngs=rngs)
+        self.patch_embed_conv = nnx.Conv(
+            in_chans,
+            embed_dim,
+            (patch_size, patch_size),
+            strides=(patch_size, patch_size),
+            rngs=rngs,
+        )
         self.patch_norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         res = img_size // patch_size
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
-        self.stages = nnx.List([
-            SwinStage(embed_dim * 2**i, (res // 2**i, res // 2**i), depths[i], num_heads[i],
-                      window_size, mlp_ratio, drop_rate,
-                      dpr[sum(depths[:i]):sum(depths[:i + 1])],
-                      downsample=i < len(depths) - 1, block_cls=block_cls, rngs=rngs)
-            for i in range(len(depths))])
+        self.stages = nnx.List(
+            [
+                SwinStage(
+                    embed_dim * 2**i,
+                    (res // 2**i, res // 2**i),
+                    depths[i],
+                    num_heads[i],
+                    window_size,
+                    mlp_ratio,
+                    drop_rate,
+                    dpr[sum(depths[:i]) : sum(depths[: i + 1])],
+                    downsample=i < len(depths) - 1,
+                    block_cls=block_cls,
+                    rngs=rngs,
+                )
+                for i in range(len(depths))
+            ]
+        )
         self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
-        self.head = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
+        self.head = (
+            nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
+        )
 
     def forward_features(self, x):
         x = self.patch_norm(self.patch_embed_conv(x))
@@ -159,22 +241,27 @@ class SwinTransformer(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _swin(embed_dim, depths, num_heads, **kwargs):
     model = SwinTransformer(embed_dim=embed_dim, depths=depths, num_heads=num_heads, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def swin_tiny_patch4_window7_224(**kwargs):
     return _swin(96, (2, 2, 6, 2), (3, 6, 12, 24), **kwargs)
+
 
 @register_model
 def swin_small_patch4_window7_224(**kwargs):
     return _swin(96, (2, 2, 18, 2), (3, 6, 12, 24), **kwargs)
 
+
 @register_model
 def swin_base_patch4_window7_224(**kwargs):
     return _swin(128, (2, 2, 18, 2), (4, 8, 16, 32), **kwargs)
+
 
 # Swin v2: post-norm + cosine attention + continuous rel-pos MLP (structure-level v2)
 class SwinV2Attention(WindowAttention):
@@ -197,6 +284,7 @@ class SwinV2Attention(WindowAttention):
         x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
+
 class SwinV2Block(SwinBlock):
     attn_cls = SwinV2Attention
 
@@ -215,15 +303,24 @@ class SwinV2Block(SwinBlock):
         x = self.norm1(x)
         return self.norm2(x + self.drop_path(self.mlp(x)))
 
+
 def _swinv2(embed_dim, depths, num_heads, img_size=256, **kwargs):
-    model = SwinTransformer(embed_dim=embed_dim, depths=depths, num_heads=num_heads,
-                            img_size=img_size, block_cls=SwinV2Block, **kwargs)
+    model = SwinTransformer(
+        embed_dim=embed_dim,
+        depths=depths,
+        num_heads=num_heads,
+        img_size=img_size,
+        block_cls=SwinV2Block,
+        **kwargs,
+    )
     model.default_cfg = _cfg(input_size=(3, img_size, img_size))
     return model
+
 
 @register_model
 def swinv2_tiny_window8_256(**kwargs):
     return _swinv2(96, (2, 2, 6, 2), (3, 6, 12, 24), window_size=8, img_size=256, **kwargs)
+
 
 @register_model
 def swinv2_small_window8_256(**kwargs):

@@ -1,13 +1,16 @@
 """PoolFormer in flax nnx, NHWC. Mirrors timm.models.poolformer."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, gelu
+from ..registry import _cfg, register_model
+
 
 class PoolFormerBlock(nnx.Module):
-    def __init__(self, dim, pool_size=3, mlp_ratio=4.0, drop_path=0.0,
-                 layer_scale_init=1e-5, *, rngs):
+    def __init__(
+        self, dim, pool_size=3, mlp_ratio=4.0, drop_path=0.0, layer_scale_init=1e-5, *, rngs
+    ):
         self.pool_size = pool_size
         self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm = nnx.GroupNorm(dim, num_groups=1, rngs=rngs)
@@ -27,18 +30,31 @@ class PoolFormerBlock(nnx.Module):
             y = self.scale2[...] * y
         return x + self.drop_path(y)
 
-class PoolFormer(ClassifierMixin, nnx.Module):
 
-    def __init__(self, layers, embed_dims, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class PoolFormer(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        layers,
+        embed_dims,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dims[-1]
         dpr = [drop_path_rate * i / max(sum(layers) - 1, 1) for i in range(sum(layers))]
         patches, stages, k = [], [], 0
         for i, (n, dim) in enumerate(zip(layers, embed_dims)):
             prev = in_chans if i == 0 else embed_dims[i - 1]
-            patches.append(nnx.Conv(prev, dim, (3, 3) if i else (7, 7),
-                                    strides=(2, 2) if i else (4, 4), rngs=rngs))
+            patches.append(
+                nnx.Conv(
+                    prev, dim, (3, 3) if i else (7, 7), strides=(2, 2) if i else (4, 4), rngs=rngs
+                )
+            )
             blocks = []
             for _ in range(n):
                 blocks.append(PoolFormerBlock(dim, drop_path=dpr[k], rngs=rngs))
@@ -59,18 +75,22 @@ class PoolFormer(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _poolformer(layers, dims, **kwargs):
     model = PoolFormer(layers, dims, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def poolformer_s12(**kwargs):
     return _poolformer([2, 2, 6, 2], [64, 128, 320, 512], **kwargs)
 
+
 @register_model
 def poolformer_s24(**kwargs):
     return _poolformer([4, 4, 12, 4], [64, 128, 320, 512], **kwargs)
+
 
 @register_model
 def poolformer_s36(**kwargs):

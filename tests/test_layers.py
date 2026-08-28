@@ -1,4 +1,5 @@
 """Unit tests for jimm.layers."""
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,8 +13,8 @@ from jimm.layers import (
     Mlp,
     PatchEmbed,
     SqueezeExcite,
-    global_pool_nhwc,
     gelu,
+    global_pool_nhwc,
     hswish,
     relu6,
 )
@@ -124,11 +125,15 @@ def test_conv_bn_act():
     assert c2(x2).shape == (2, 8, 8, 32)
 
     # 3. VALID padding
-    c3 = ConvBNAct(in_chs=32, out_chs=64, kernel=3, stride=2, padding="VALID", act="silu", rngs=rngs)
+    c3 = ConvBNAct(
+        in_chs=32, out_chs=64, kernel=3, stride=2, padding="VALID", act="silu", rngs=rngs
+    )
     assert c3(x2).shape == (2, 3, 3, 64)
 
     # 4. No BN (use_bn=False) and identity act
-    c4 = ConvBNAct(in_chs=32, out_chs=32, kernel=1, stride=1, use_bn=False, act="identity", rngs=rngs)
+    c4 = ConvBNAct(
+        in_chs=32, out_chs=32, kernel=1, stride=1, use_bn=False, act="identity", rngs=rngs
+    )
     assert c4(x2).shape == (2, 8, 8, 32)
 
     # 5. Grouped convolution

@@ -1,9 +1,11 @@
 """ConvNeXt in flax nnx, NHWC (natural for ConvNeXt). Mirrors timm.models.convnext."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, global_pool_nhwc, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, gelu, global_pool_nhwc
+from ..registry import _cfg, register_model
+
 
 class ConvNeXtBlock(nnx.Module):
     def __init__(self, dim, drop_path=0.0, layer_scale_init=1e-6, *, rngs):
@@ -22,10 +24,20 @@ class ConvNeXtBlock(nnx.Module):
             y = self.gamma[...] * y
         return x + self.drop_path(y)
 
-class ConvNeXt(ClassifierMixin, nnx.Module):
 
-    def __init__(self, depths, dims, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class ConvNeXt(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        depths,
+        dims,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.stem = nnx.Conv(in_chans, dims[0], (4, 4), strides=(4, 4), rngs=rngs)
         self.stem_norm = nnx.LayerNorm(dims[0], rngs=rngs)
@@ -38,10 +50,15 @@ class ConvNeXt(ClassifierMixin, nnx.Module):
                 k += 1
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            nnx.Sequential(nnx.LayerNorm(dims[i], rngs=rngs),
-                           nnx.Conv(dims[i], dims[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
-            for i in range(3)])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(
+                    nnx.LayerNorm(dims[i], rngs=rngs),
+                    nnx.Conv(dims[i], dims[i + 1], (2, 2), strides=(2, 2), rngs=rngs),
+                )
+                for i in range(3)
+            ]
+        )
         self.num_features = dims[-1]
         self.head_norm = nnx.LayerNorm(dims[-1], rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
@@ -65,26 +82,32 @@ class ConvNeXt(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _convnext(depths, dims, **kwargs):
     model = ConvNeXt(depths, dims, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def convnext_atto(**kwargs):
     return _convnext([2, 2, 6, 2], [40, 80, 160, 320], **kwargs)
+
 
 @register_model
 def convnext_tiny(**kwargs):
     return _convnext([3, 3, 9, 3], [96, 192, 384, 768], **kwargs)
 
+
 @register_model
 def convnext_small(**kwargs):
     return _convnext([3, 3, 27, 3], [96, 192, 384, 768], **kwargs)
 
+
 @register_model
 def convnext_base(**kwargs):
     return _convnext([3, 3, 27, 3], [128, 256, 512, 1024], **kwargs)
+
 
 @register_model
 def convnext_large(**kwargs):

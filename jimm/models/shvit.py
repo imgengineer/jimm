@@ -1,17 +1,20 @@
 """SHViT in flax nnx, NHWC. Mirrors timm.models.shvit (single-head vision transformer)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, gelu
+from ..registry import _cfg, register_model
+
 
 class SHViTBlock(nnx.Module):
     """single-head attention over a channel chunk + dw conv on the rest + pointwise MLP."""
 
     def __init__(self, dim, attn_chs=64, drop_path=0.0, *, rngs):
         self.attn_chs = attn_chs
-        self.dw = nnx.Conv(dim - attn_chs, dim - attn_chs, (3, 3),
-                           feature_group_count=dim - attn_chs, rngs=rngs)
+        self.dw = nnx.Conv(
+            dim - attn_chs, dim - attn_chs, (3, 3), feature_group_count=dim - attn_chs, rngs=rngs
+        )
         self.qkv = nnx.Linear(attn_chs, attn_chs * 3, rngs=rngs)
         self.proj = nnx.Linear(attn_chs, attn_chs, rngs=rngs)
         self.norm = nnx.LayerNorm(dim, rngs=rngs)
@@ -33,10 +36,20 @@ class SHViTBlock(nnx.Module):
         x = jnp.concatenate([xa, xr], axis=-1)
         return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm(x)))))
 
-class SHViT(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(96, 192, 384, 512), depths=(2, 2, 9, 2), num_classes=1000,
-                 in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class SHViT(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(96, 192, 384, 512),
+        depths=(2, 2, 9, 2),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
         self.stem = nnx.Conv(in_chans, channels[0], (4, 4), strides=(4, 4), rngs=rngs)
@@ -47,10 +60,15 @@ class SHViT(ClassifierMixin, nnx.Module):
             k += d
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            nnx.Sequential(nnx.LayerNorm(channels[i], rngs=rngs),
-                           nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
-            for i in range(3)])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(
+                    nnx.LayerNorm(channels[i], rngs=rngs),
+                    nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs),
+                )
+                for i in range(3)
+            ]
+        )
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
@@ -67,11 +85,13 @@ class SHViT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "shvit_t1": ((96, 192, 384, 512), (1, 1, 5, 1)),
     "shvit_s1": ((96, 192, 384, 512), (2, 2, 9, 2)),
     "shvit_s2": ((128, 256, 512, 640), (2, 2, 12, 2)),
 }
+
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -80,8 +100,10 @@ def _make(name):
         model = SHViT(channels, depths, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

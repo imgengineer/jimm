@@ -1,8 +1,9 @@
 """VGG in flax nnx, NHWC. Mirrors timm.models.vgg (head: 7x7 pool -> MLP classifier)."""
+
 from flax import nnx
 
 from ..layers import ClassifierMixin
-from ..registry import register_model, _cfg
+from ..registry import _cfg, register_model
 
 
 class ConvBlock(nnx.Module):
@@ -18,7 +19,6 @@ class ConvBlock(nnx.Module):
 
 
 class VGG(ClassifierMixin, nnx.Module):
-
     def __init__(self, cfg, use_bn=True, num_classes=1000, in_chans=3, drop_rate=0.0, *, rngs):
         self.num_classes = num_classes
         blocks, chs = [], in_chans
@@ -55,8 +55,49 @@ class VGG(ClassifierMixin, nnx.Module):
 _CFGS = {
     "vgg11": [64, "M", 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
     "vgg13": [64, 64, "M", 128, 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
-    "vgg16": [64, 64, "M", 128, 128, "M", 256, 256, 256, "M", 512, 512, 512, "M", 512, 512, 512, "M"],
-    "vgg19": [64, 64, "M", 128, 128, "M", 256, 256, 256, 256, "M", 512, 512, 512, 512, "M", 512, 512, 512, 512, "M"],
+    "vgg16": [
+        64,
+        64,
+        "M",
+        128,
+        128,
+        "M",
+        256,
+        256,
+        256,
+        "M",
+        512,
+        512,
+        512,
+        "M",
+        512,
+        512,
+        512,
+        "M",
+    ],
+    "vgg19": [
+        64,
+        64,
+        "M",
+        128,
+        128,
+        "M",
+        256,
+        256,
+        256,
+        256,
+        "M",
+        512,
+        512,
+        512,
+        512,
+        "M",
+        512,
+        512,
+        512,
+        512,
+        "M",
+    ],
 }
 
 

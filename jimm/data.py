@@ -3,6 +3,7 @@
 Images are decoded to RGB NumPy arrays with OpenCV and yielded as normalized
 float32 NHWC batches. Grain handles sharding and batching.
 """
+
 import fcntl
 import hashlib
 import json
@@ -10,55 +11,66 @@ import os
 import tempfile
 from pathlib import Path
 
-from absl import flags
 import cv2  # pyright: ignore[reportMissingImports]
 import grain.python as grain
 import jax
 import numpy as np
+from absl import flags
 
 from .augment import (
     AugmentOp,
-    AutoAugment,
     AugMixAugment,
+    AutoAugment,
     Mixup,
+    MixupCutmix,
+    RandAugment,
+    TrivialAugmentWide,
+    augment_and_mix_transform,
+    augmix_ops,
     auto_augment_policy,
     auto_augment_policy_3a,
     auto_augment_policy_original,
     auto_augment_policy_originalr,
     auto_augment_policy_v0,
     auto_augment_policy_v0r,
-    augmix_ops,
-    MixupCutmix,
-    RandAugment,
-    TrivialAugmentWide,
-    augment_and_mix_transform,
     auto_augment_transform,
     build_auto_augment,
     center_crop_or_pad,
     color_jitter,
     gaussian_blur,
+    interp_mode_to_str,
+    rand_augment_choices,
+    rand_augment_ops,
+    rand_augment_transform,
     random_crop_or_pad,
     random_erasing,
     random_flip_left_right,
     random_flip_up_down,
     random_grayscale,
     random_resized_crop,
-    rand_augment_choices,
-    rand_augment_ops,
-    rand_augment_transform,
     resize_keep_ratio,
     resolve_interpolation,
     str_to_interp_mode,
     str_to_pil_interp,
-    interp_mode_to_str,
 )
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
 _INV_255 = np.float32(1.0 / 255.0)
-_IMAGE_SUFFIXES = frozenset({
-    ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jp2", ".png", ".tif", ".tiff", ".webp",
-})
+_IMAGE_SUFFIXES = frozenset(
+    {
+        ".avif",
+        ".bmp",
+        ".gif",
+        ".jpeg",
+        ".jpg",
+        ".jp2",
+        ".png",
+        ".tif",
+        ".tiff",
+        ".webp",
+    }
+)
 _IMAGE_CACHE_ROOT = Path(os.environ.get("JIMM_CACHE_DIR", "~/.cache/jimm/image-cache")).expanduser()
 
 
@@ -68,19 +80,47 @@ def _ensure_absl_flags_parsed():
 
 
 __all__ = [
-    "AugmentOp", "AutoAugment", "AugMixAugment", "ImageFolder", "Loader",
-    "Mixup", "MixupCutmix", "RandAugment", "TrivialAugmentWide",
-    "IMAGENET_MEAN", "IMAGENET_STD", "_DecodeTransform", "auto_augment_policy",
-    "auto_augment_policy_3a", "auto_augment_policy_original",
-    "auto_augment_policy_originalr", "auto_augment_policy_v0",
-    "auto_augment_policy_v0r", "auto_augment_transform", "augmix_ops",
-    "augment_and_mix_transform", "build_auto_augment", "center_crop_or_pad",
-    "color_jitter", "create_dataset", "create_loader", "gaussian_blur",
-    "random_crop_or_pad", "random_erasing", "random_flip_left_right",
-    "random_flip_up_down", "random_grayscale", "random_resized_crop",
-    "rand_augment_choices", "rand_augment_ops", "rand_augment_transform",
-    "resize_keep_ratio", "resolve_interpolation", "str_to_interp_mode",
-    "str_to_pil_interp", "interp_mode_to_str",
+    "AugmentOp",
+    "AutoAugment",
+    "AugMixAugment",
+    "ImageFolder",
+    "Loader",
+    "Mixup",
+    "MixupCutmix",
+    "RandAugment",
+    "TrivialAugmentWide",
+    "IMAGENET_MEAN",
+    "IMAGENET_STD",
+    "_DecodeTransform",
+    "auto_augment_policy",
+    "auto_augment_policy_3a",
+    "auto_augment_policy_original",
+    "auto_augment_policy_originalr",
+    "auto_augment_policy_v0",
+    "auto_augment_policy_v0r",
+    "auto_augment_transform",
+    "augmix_ops",
+    "augment_and_mix_transform",
+    "build_auto_augment",
+    "center_crop_or_pad",
+    "color_jitter",
+    "create_dataset",
+    "create_loader",
+    "gaussian_blur",
+    "random_crop_or_pad",
+    "random_erasing",
+    "random_flip_left_right",
+    "random_flip_up_down",
+    "random_grayscale",
+    "random_resized_crop",
+    "rand_augment_choices",
+    "rand_augment_ops",
+    "rand_augment_transform",
+    "resize_keep_ratio",
+    "resolve_interpolation",
+    "str_to_interp_mode",
+    "str_to_pil_interp",
+    "interp_mode_to_str",
 ]
 
 
@@ -168,7 +208,7 @@ class _MemmapImageCache:
 
     def __getitem__(self, index):
         offset, size, shape, label = self.records[index]
-        image = self._data()[offset:offset + size].reshape(shape)
+        image = self._data()[offset : offset + size].reshape(shape)
         return image, label
 
     def __getstate__(self):
@@ -227,8 +267,12 @@ def _build_memmap_cache(root: Path, samples):
                 os.fsync(data_file.fileno())
             metadata = {"version": 1, "total_bytes": offset, "records": records}
             with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=cache_dir,
-                prefix=f"{key}.", suffix=".json.tmp", delete=False
+                mode="w",
+                encoding="utf-8",
+                dir=cache_dir,
+                prefix=f"{key}.",
+                suffix=".json.tmp",
+                delete=False,
             ) as metadata_file:
                 metadata_tmp = Path(metadata_file.name)
                 json.dump(metadata, metadata_file, separators=(",", ":"))
@@ -253,8 +297,11 @@ class ImageFolder(grain.RandomAccessDataSource):
         self.root = Path(root).expanduser().resolve()
         try:
             classes = sorted(
-                (path for path in self.root.iterdir()
-                 if path.is_dir() and _is_within(self.root, path)),
+                (
+                    path
+                    for path in self.root.iterdir()
+                    if path.is_dir() and _is_within(self.root, path)
+                ),
                 key=lambda path: path.name,
             )
         except OSError as exc:
@@ -266,10 +313,13 @@ class ImageFolder(grain.RandomAccessDataSource):
         for class_dir in classes:
             try:
                 files = sorted(
-                    (path for path in class_dir.iterdir()
-                     if path.is_file()
-                     and path.suffix.lower() in _IMAGE_SUFFIXES
-                     and _is_within(self.root, path)),
+                    (
+                        path
+                        for path in class_dir.iterdir()
+                        if path.is_file()
+                        and path.suffix.lower() in _IMAGE_SUFFIXES
+                        and _is_within(self.root, path)
+                    ),
                     key=lambda path: path.name,
                 )
             except OSError as exc:
@@ -299,13 +349,30 @@ class ImageFolder(grain.RandomAccessDataSource):
 class _DecodeTransform(grain.RandomMapTransform):
     """Decode one sample, apply timm-style augmentation, normalize to NHWC."""
 
-    def __init__(self, img_size=224, is_training=False, crop_pct=0.875,
-                 scale=(0.08, 1.0), ratio=(3.0 / 4.0, 4.0 / 3.0),
-                 interpolation="random", train_crop_mode="rrc", hflip=0.5,
-                 vflip=0.0, color_jitter=0.4, color_jitter_prob=None, hue=0.0,
-                 grayscale_prob=0.0, gaussian_blur_prob=0.0, auto_augment=None,
-                 force_color_jitter=False, re_prob=0.2, re_mode="const",
-                 re_count=1, mean=IMAGENET_MEAN, std=IMAGENET_STD):
+    def __init__(
+        self,
+        img_size=224,
+        is_training=False,
+        crop_pct=0.875,
+        scale=(0.08, 1.0),
+        ratio=(3.0 / 4.0, 4.0 / 3.0),
+        interpolation="random",
+        train_crop_mode="rrc",
+        hflip=0.5,
+        vflip=0.0,
+        color_jitter=0.4,
+        color_jitter_prob=None,
+        hue=0.0,
+        grayscale_prob=0.0,
+        gaussian_blur_prob=0.0,
+        auto_augment=None,
+        force_color_jitter=False,
+        re_prob=0.2,
+        re_mode="const",
+        re_count=1,
+        mean=IMAGENET_MEAN,
+        std=IMAGENET_STD,
+    ):
         self.img_size = img_size
         self.is_training = is_training
         self.scale = scale
@@ -321,8 +388,13 @@ class _DecodeTransform(grain.RandomMapTransform):
         self.gaussian_blur_prob = gaussian_blur_prob
         self.re_prob = re_prob
         for name in (
-                "hflip", "vflip", "color_jitter_prob", "grayscale_prob",
-                "gaussian_blur_prob", "re_prob"):
+            "hflip",
+            "vflip",
+            "color_jitter_prob",
+            "grayscale_prob",
+            "gaussian_blur_prob",
+            "re_prob",
+        ):
             value = getattr(self, name)
             if value is None:
                 continue
@@ -380,10 +452,12 @@ class _DecodeTransform(grain.RandomMapTransform):
         if self.is_training:
             if self.train_crop_mode == "rrc":
                 image = random_resized_crop(
-                    image, self.img_size, self.scale, self.ratio, self.interpolation, rng=rng)
+                    image, self.img_size, self.scale, self.ratio, self.interpolation, rng=rng
+                )
             elif self.train_crop_mode in ("rkrc", "rkrr"):
                 image = resize_keep_ratio(
-                    image, self.img_size, self.scale, self.ratio, self.interpolation, rng=rng)
+                    image, self.img_size, self.scale, self.ratio, self.interpolation, rng=rng
+                )
                 if self.train_crop_mode == "rkrc":
                     image = center_crop_or_pad(image, self.img_size)
                 else:
@@ -395,7 +469,8 @@ class _DecodeTransform(grain.RandomMapTransform):
             if self.auto_augment is not None:
                 image = self.auto_augment(image, rng=rng)
             if self.color_jitter_values is not None and (
-                    self.auto_augment is None or self.force_color_jitter):
+                self.auto_augment is None or self.force_color_jitter
+            ):
                 values = self.color_jitter_values
                 if isinstance(values, (tuple, list)):
                     if len(values) not in (3, 4):
@@ -406,17 +481,23 @@ class _DecodeTransform(grain.RandomMapTransform):
                     brightness = contrast = saturation = values
                     hue = self.hue
                 image = color_jitter(
-                    image, brightness, contrast, saturation, hue,
-                    prob=self.color_jitter_prob, rng=rng)
+                    image,
+                    brightness,
+                    contrast,
+                    saturation,
+                    hue,
+                    prob=self.color_jitter_prob,
+                    rng=rng,
+                )
             image = random_grayscale(image, self.grayscale_prob, rng=rng)
             image = gaussian_blur(image, self.gaussian_blur_prob, rng=rng)
             array = image.astype(np.float32)
             array *= _INV_255  # in-place; astype above already copied
             array = random_erasing(
-                array, self.re_prob, mode=self.re_mode, count=self.re_count, rng=rng)
+                array, self.re_prob, mode=self.re_mode, count=self.re_count, rng=rng
+            )
         else:
-            image = cv2.resize(
-                image, (self.resize, self.resize), interpolation=cv2.INTER_LINEAR)
+            image = cv2.resize(image, (self.resize, self.resize), interpolation=cv2.INTER_LINEAR)
             image = center_crop_or_pad(image, self.img_size)
             array = image.astype(np.float32)
             array *= _INV_255
@@ -499,8 +580,9 @@ class _SamplerWithLength:
 class Loader:
     """Grain loader with a timm-style ``len`` and explicit worker cleanup."""
 
-    def __init__(self, loader, num_records, batch_size, drop_remainder,
-                 sampler=None, shard_count=1):
+    def __init__(
+        self, loader, num_records, batch_size, drop_remainder, sampler=None, shard_count=1
+    ):
         self._loader = loader
         self._prefetched_iterator = None
         self._active_iterator = None
@@ -573,16 +655,39 @@ class Loader:
 
 
 def create_loader(
-        root, batch_size, img_size=224, is_training=False, crop_pct=0.875,
-        scale=(0.08, 1.0), ratio=(3.0 / 4.0, 4.0 / 3.0),
-        interpolation="random", train_crop_mode="rrc", hflip=0.5,
-        vflip=0.0, color_jitter=0.4, color_jitter_prob=None, hue=0.0,
-        grayscale_prob=0.0, gaussian_blur_prob=0.0, auto_augment=None,
-        force_color_jitter=False, re_prob=0.2, re_mode="const", re_count=1,
-        mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=4,
-        worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
-        shard_options=None, in_memory=False, drop_remainder=None,
-        pad_remainder=False):
+    root,
+    batch_size,
+    img_size=224,
+    is_training=False,
+    crop_pct=0.875,
+    scale=(0.08, 1.0),
+    ratio=(3.0 / 4.0, 4.0 / 3.0),
+    interpolation="random",
+    train_crop_mode="rrc",
+    hflip=0.5,
+    vflip=0.0,
+    color_jitter=0.4,
+    color_jitter_prob=None,
+    hue=0.0,
+    grayscale_prob=0.0,
+    gaussian_blur_prob=0.0,
+    auto_augment=None,
+    force_color_jitter=False,
+    re_prob=0.2,
+    re_mode="const",
+    re_count=1,
+    mean=IMAGENET_MEAN,
+    std=IMAGENET_STD,
+    num_workers=4,
+    worker_buffer_size=1,
+    enable_profiling=False,
+    seed=0,
+    shuffle=None,
+    shard_options=None,
+    in_memory=False,
+    drop_remainder=None,
+    pad_remainder=False,
+):
     """Create a Grain loader with timm-compatible augmentation options.
 
     Args:
@@ -639,13 +744,11 @@ def create_loader(
         std=std,
     )
     if pad_remainder:
-        source = _PaddedDataSource(
-            source, int(batch_size) * shard_options.shard_count)
+        source = _PaddedDataSource(source, int(batch_size) * shard_options.shard_count)
     records = len(source)
     shard_count = shard_options.shard_count
     local_records, record_remainder = divmod(records, shard_count)
-    if (not shard_options.drop_remainder
-            and shard_options.shard_index < record_remainder):
+    if not shard_options.drop_remainder and shard_options.shard_index < record_remainder:
         local_records += 1
     sampler = grain.IndexSampler(
         num_records=records,
@@ -671,5 +774,10 @@ def create_loader(
         enable_profiling=enable_profiling,
     )
     return Loader(
-        loader, local_records, batch_size, batch_drop,
-        sampler=offset_sampler, shard_count=shard_count)
+        loader,
+        local_records,
+        batch_size,
+        batch_drop,
+        sampler=offset_sampler,
+        shard_count=shard_count,
+    )

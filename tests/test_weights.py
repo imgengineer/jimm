@@ -1,16 +1,31 @@
 """Tests for PyTorch state dict conversion and weight loading into jimm models."""
+
 import numpy as np
 import pytest
 from flax import nnx
 
-from jimm.weights import load_pretrained, load_state_dict, _convert_key, _convert_tensor
 from jimm.registry import create_model
+from jimm.weights import _convert_key, _convert_tensor, load_pretrained, load_state_dict
 
 
 def test_convert_key():
     assert _convert_key("layer1.0.conv1.weight") == ["stages", "0", "0", "conv1", "kernel"]
-    assert _convert_key("layer2.0.downsample.0.weight") == ["stages", "1", "0", "shortcut", "conv", "kernel"]
-    assert _convert_key("layer2.0.downsample.1.weight") == ["stages", "1", "0", "shortcut", "bn", "scale"]
+    assert _convert_key("layer2.0.downsample.0.weight") == [
+        "stages",
+        "1",
+        "0",
+        "shortcut",
+        "conv",
+        "kernel",
+    ]
+    assert _convert_key("layer2.0.downsample.1.weight") == [
+        "stages",
+        "1",
+        "0",
+        "shortcut",
+        "bn",
+        "scale",
+    ]
     assert _convert_key("bn1.running_mean") == ["bn1", "mean"]
     assert _convert_key("bn1.running_var") == ["bn1", "var"]
     assert _convert_key("fc.weight") == ["fc", "kernel"]
@@ -68,12 +83,13 @@ def test_load_state_dict_strict_is_atomic_and_preserves_model_structure():
 
 def test_load_pretrained_npz_and_reject_unsupported_files(tmp_path):
     checkpoint = tmp_path / "weights.npz"
-    np.savez(checkpoint, **{
-        "conv1.weight": np.full((64, 3, 7, 7), 3.25, dtype=np.float32),
-    })
-    m = create_model(
-        "resnet18", pretrained=str(checkpoint), num_classes=1000,
-        rngs=nnx.Rngs(0))
+    np.savez(
+        checkpoint,
+        **{
+            "conv1.weight": np.full((64, 3, 7, 7), 3.25, dtype=np.float32),
+        },
+    )
+    m = create_model("resnet18", pretrained=str(checkpoint), num_classes=1000, rngs=nnx.Rngs(0))
     assert np.isclose(float(m.conv1.kernel[...][0, 0, 0, 0]), 3.25)
 
     unsupported = tmp_path / "weights.safetensors"

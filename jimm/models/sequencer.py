@@ -1,8 +1,10 @@
 """Sequencer2D in flax nnx. Mirrors timm.models.sequencer (LSTM-free sequence mixing via Linear)."""
+
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, gelu
+from ..registry import _cfg, register_model
+
 
 class SequencerBlock(nnx.Module):
     """channel MLP + spatial mixing via Linear over the H and W token dims."""
@@ -27,11 +29,21 @@ class SequencerBlock(nnx.Module):
         y = self.w_mix(y.transpose(0, 1, 3, 2)).transpose(0, 1, 3, 2)
         return x + self.drop_path(y)
 
-class Sequencer2D(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(192, 384, 768), depths=(7, 7, 7), img_size=224,
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,
-                 drop_path_rate=0.0, *, rngs):
+class Sequencer2D(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(192, 384, 768),
+        depths=(7, 7, 7),
+        img_size=224,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
         self.stem = nnx.Conv(in_chans, channels[0], (7, 7), strides=(4, 4), rngs=rngs)
@@ -45,9 +57,12 @@ class Sequencer2D(ClassifierMixin, nnx.Module):
             k += d
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs)
-            for i in range(2)])
+        self.downsamples = nnx.List(
+            [
+                nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs)
+                for i in range(2)
+            ]
+        )
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
@@ -64,10 +79,12 @@ class Sequencer2D(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "sequencer2d_s": ((192, 384, 768), (7, 7, 7)),
     "sequencer2d_m": ((256, 512, 1024), (7, 7, 7)),
 }
+
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -76,8 +93,10 @@ def _make(name):
         model = Sequencer2D(channels, depths, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

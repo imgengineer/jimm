@@ -1,4 +1,5 @@
 """Forward-pass smoke checks for registered jimm models."""
+
 import jax.numpy as jnp
 
 import jimm
@@ -11,8 +12,11 @@ def _require(condition, message=None):
 
 
 REPRESENTATIVE_MODELS = [
-    "resnet18", "vit_tiny_patch16_224", "swin_tiny_patch4_window7_224",
-    "convnext_tiny", "efficientnet_b0"
+    "resnet18",
+    "vit_tiny_patch16_224",
+    "swin_tiny_patch4_window7_224",
+    "convnext_tiny",
+    "efficientnet_b0",
 ]
 
 
@@ -36,18 +40,25 @@ def check_all_models_forward(mode="representative"):
         m.eval()
         logits = m(x)
         _require(bool(jnp.isfinite(logits).all()), f"NaN in {name}")
-        if m.get_classifier() is None:  # encoder-only models (e.g. vit_sam): feature maps in, features out
+        if (
+            m.get_classifier() is None
+        ):  # encoder-only models (e.g. vit_sam): feature maps in, features out
             _require(logits.shape[-1] == m.num_features, (name, logits.shape))
             continue
         _require(logits.shape == (1, 7), (name, logits.shape))
         m.reset_classifier(0)
         feats = m(x)
         _require(feats.shape[-1] == m.num_features, (name, feats.shape, m.num_features))
-        print(f"  [{i+1:>2}/{len(models_to_test)}] {name:<30} OK")
+        print(f"  [{i + 1:>2}/{len(models_to_test)}] {name:<30} OK")
 
 
 if __name__ == "__main__":
     import sys
-    mode = "all" if "--all" in sys.argv else ("modules" if "--modules" in sys.argv else "representative")
+
+    mode = (
+        "all"
+        if "--all" in sys.argv
+        else ("modules" if "--modules" in sys.argv else "representative")
+    )
     check_all_models_forward(mode=mode)
     print("ALL FORWARD CHECKS PASSED")

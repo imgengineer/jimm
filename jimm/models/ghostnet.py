@@ -1,9 +1,11 @@
 """GhostNet in flax nnx, NHWC. Mirrors timm.models.ghostnet."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, global_pool_nhwc, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..registry import _cfg, register_model
+
 
 class GhostModule(nnx.Module):
     """Cheap half conv + 5x5 depthwise on half, concatenated."""
@@ -21,15 +23,22 @@ class GhostModule(nnx.Module):
         x2 = nnx.relu(self.bn2(self.dw(x1)))
         return jnp.concatenate([x1, x2], axis=-1)[..., : self.out_chs]
 
+
 class GhostBottleneck(nnx.Module):
     def __init__(self, in_chs, mid_chs, out_chs, kernel, stride, se, *, rngs):
         self.use_shortcut_conv = stride == 2 or in_chs != out_chs
         self.ghost1 = GhostModule(in_chs, mid_chs, rngs=rngs)
-        self.dw = ConvBNAct(mid_chs, mid_chs, kernel, stride, groups=mid_chs, act="identity", rngs=rngs) if stride == 2 else None
+        self.dw = (
+            ConvBNAct(mid_chs, mid_chs, kernel, stride, groups=mid_chs, act="identity", rngs=rngs)
+            if stride == 2
+            else None
+        )
         self.se = SqueezeExcite(mid_chs, rngs=rngs, rd_ratio=0.25) if se else None
         self.ghost2 = GhostModule(mid_chs, out_chs, rngs=rngs)
         if self.use_shortcut_conv:
-            self.sc_dw = ConvBNAct(in_chs, in_chs, kernel, stride, groups=in_chs, act="identity", rngs=rngs)
+            self.sc_dw = ConvBNAct(
+                in_chs, in_chs, kernel, stride, groups=in_chs, act="identity", rngs=rngs
+            )
             self.sc_pw = ConvBNAct(in_chs, out_chs, 1, act="identity", rngs=rngs)
 
     def __call__(self, x):
@@ -43,22 +52,39 @@ class GhostBottleneck(nnx.Module):
             return y + self.sc_pw(self.sc_dw(x))
         return y + x
 
+
 # (kernel, exp, out, se, stride, repeats)
 GHOSTNET_CFG = [
     (3, 16, 16, 0, 1, 1),
-    (3, 48, 24, 0, 2, 1), (3, 72, 24, 0, 1, 1),
-    (5, 72, 40, 1, 2, 1), (5, 120, 40, 1, 1, 1),
+    (3, 48, 24, 0, 2, 1),
+    (3, 72, 24, 0, 1, 1),
+    (5, 72, 40, 1, 2, 1),
+    (5, 120, 40, 1, 1, 1),
     (3, 240, 80, 0, 2, 1),
-    (3, 200, 80, 0, 1, 1), (3, 184, 80, 0, 1, 1), (3, 184, 80, 0, 1, 1),
-    (3, 480, 112, 1, 1, 1), (3, 672, 112, 1, 1, 1),
+    (3, 200, 80, 0, 1, 1),
+    (3, 184, 80, 0, 1, 1),
+    (3, 184, 80, 0, 1, 1),
+    (3, 480, 112, 1, 1, 1),
+    (3, 672, 112, 1, 1, 1),
     (5, 672, 160, 1, 2, 1),
-    (5, 960, 160, 0, 1, 1), (5, 960, 160, 1, 1, 1), (5, 960, 160, 0, 1, 1), (5, 960, 160, 1, 1, 1),
+    (5, 960, 160, 0, 1, 1),
+    (5, 960, 160, 1, 1, 1),
+    (5, 960, 160, 0, 1, 1),
+    (5, 960, 160, 1, 1, 1),
 ]
 
-class GhostNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, width_mult=1.0, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, *, rngs):
+class GhostNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        width_mult=1.0,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         stem = max(int(16 * width_mult), 8)
         self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
@@ -93,18 +119,22 @@ class GhostNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _ghostnet(width_mult, **kwargs):
     model = GhostNet(width_mult, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def ghostnet_050(**kwargs):
     return _ghostnet(0.5, **kwargs)
 
+
 @register_model
 def ghostnet_100(**kwargs):
     return _ghostnet(1.0, **kwargs)
+
 
 @register_model
 def ghostnet_130(**kwargs):

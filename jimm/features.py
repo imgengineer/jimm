@@ -3,12 +3,13 @@
 Wraps vision models to extract intermediate hierarchical feature representations for
 downstream tasks like object detection, segmentation, and feature pyramid networks.
 """
+
 from collections.abc import Sequence
 from typing import Any
 
-from flax import nnx
 import jax
 import jax.numpy as jnp
+from flax import nnx
 
 __all__ = ["FeatureInfo", "FeatureExtractor", "create_feature_extractor"]
 
@@ -94,7 +95,9 @@ class FeatureExtractor(nnx.Module):
                 curr = curr.reshape(batch_size, -1, curr.shape[-1])
             if hasattr(m, "cls_token"):
                 cls = m.cls_token[...]
-                curr = jnp.concatenate([jnp.broadcast_to(cls, (batch_size, 1, curr.shape[-1])), curr], axis=1)
+                curr = jnp.concatenate(
+                    [jnp.broadcast_to(cls, (batch_size, 1, curr.shape[-1])), curr], axis=1
+                )
             if hasattr(m, "pos_embed"):
                 curr = curr + m.pos_embed[...]
             for blk in m.blocks:
@@ -113,7 +116,8 @@ class FeatureExtractor(nnx.Module):
                     # returning fewer feature maps than requested.
                     raise ValueError(
                         f"out_indices entry {idx} is out of range for a model "
-                        f"with {n} feature stages")
+                        f"with {n} feature stages"
+                    )
                 selected.append(feats[real_idx])
             return selected
         return feats

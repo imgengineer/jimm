@@ -1,8 +1,8 @@
 """Unit tests for jimm.registry."""
+
 import pytest
 from flax import nnx
 
-import jimm
 from jimm.registry import (
     create_model,
     get_default_cfg,
@@ -95,6 +95,7 @@ def test_custom_register_model():
             def __init__(self, num_classes):
                 self.num_classes = num_classes
                 self.default_cfg = {"input_size": (3, 64, 64)}
+
         return DummyModel(num_classes)
 
     assert is_model("dummy_custom_model")

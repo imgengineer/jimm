@@ -1,9 +1,11 @@
 """MobileNetV5 in flax nnx, NHWC. Mirrors timm.models.mobilenetv5 (Multi-Scale Fusion Inverted Residuals)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, SqueezeExcite, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
+from ..registry import _cfg, register_model
+
 
 class V5Block(nnx.Module):
     """Inverted residual with multi-scale kernels (3x3 and 5x5) and SE."""
@@ -26,11 +28,19 @@ class V5Block(nnx.Module):
         y = self.pw(h)
         return x + y if self.use_sc else y
 
-class MobileNetV5(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(32, 64, 128, 256, 512), depths=(2, 2, 6, 2),
-                 num_classes: int = 1000, in_chans: int = 3, global_pool: str = "avg",
-                 drop_rate: float = 0.0, *, rngs):
+class MobileNetV5(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(32, 64, 128, 256, 512),
+        depths=(2, 2, 6, 2),
+        num_classes: int = 1000,
+        in_chans: int = 3,
+        global_pool: str = "avg",
+        drop_rate: float = 0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
 
@@ -57,11 +67,15 @@ class MobileNetV5(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "mobilenetv5_300m": dict(channels=(32, 64, 128, 256, 512), depths=(2, 2, 6, 2)),
-    "mobilenetv5_300m_enc": dict(channels=(32, 64, 128, 256, 512), depths=(2, 2, 6, 2), num_classes=0),
+    "mobilenetv5_300m_enc": dict(
+        channels=(32, 64, 128, 256, 512), depths=(2, 2, 6, 2), num_classes=0
+    ),
     "mobilenetv5_base": dict(channels=(48, 96, 192, 384, 768), depths=(3, 3, 9, 3)),
 }
+
 
 def _make(name):
     cfg = _CFGS[name]
@@ -70,8 +84,10 @@ def _make(name):
         model = MobileNetV5(**dict(cfg, **kwargs))
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

@@ -1,9 +1,11 @@
 """LeViT in flax nnx, NHWC. Mirrors timm.models.levit (conv stem + attention with subsampling)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import hswish, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, hswish
+from ..registry import _cfg, register_model
+
 
 class LevitAttention(nnx.Module):
     def __init__(self, dim, num_heads, key_dim=16, *, rngs):
@@ -24,6 +26,7 @@ class LevitAttention(nnx.Module):
         x = nnx.dot_product_attention(q, k, v, bias=self.attn_bias[...]).reshape(B, N, -1)
         return self.proj(x)
 
+
 class LevitBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=2.0, key_dim=16, *, rngs):
         self.attn = LevitAttention(dim, num_heads, key_dim, rngs=rngs)
@@ -33,6 +36,7 @@ class LevitBlock(nnx.Module):
     def __call__(self, x):
         x = x + self.attn(x)
         return x + self.mlp_fc2(hswish(self.mlp_fc1(x)))
+
 
 class SubsampleStage(nnx.Module):
     """Attention-based stride-2 subsampling between LeViT stages."""
@@ -51,28 +55,49 @@ class SubsampleStage(nnx.Module):
         t = self.proj(t.reshape(B, -1, t.shape[-1]))
         return t, H2, W2
 
+
 class LeViT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
 
-    def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
-                 embed_dims=(128, 256, 384), depths=(4, 4, 4), num_heads=(4, 8, 12),
-                 key_dim=16, drop_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="avg",
+        embed_dims=(128, 256, 384),
+        depths=(4, 4, 4),
+        num_heads=(4, 8, 12),
+        key_dim=16,
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dims[-1]
         # conv stem: 4x conv3x3 s2 with BN -> 14x14 tokens at embed_dims[0]
         stem, chs = [], in_chans
-        for i, out in enumerate([embed_dims[0] // 8, embed_dims[0] // 4,
-                                 embed_dims[0] // 2, embed_dims[0]]):
+        for i, out in enumerate(
+            [embed_dims[0] // 8, embed_dims[0] // 4, embed_dims[0] // 2, embed_dims[0]]
+        ):
             stem.append(nnx.Conv(chs, out, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs))
             stem.append(nnx.BatchNorm(out, rngs=rngs))
             chs = out
         self.stem = nnx.List(stem)
-        self.stages = nnx.List([
-            nnx.List([LevitBlock(dim, h, 2.0, key_dim, rngs=rngs) for _ in range(d)])
-            for dim, d, h in zip(embed_dims, depths, num_heads)])
-        self.subsamples = nnx.List([
-            SubsampleStage(embed_dims[i], embed_dims[i + 1], num_heads[i + 1], key_dim, rngs=rngs)
-            for i in range(len(embed_dims) - 1)])
+        self.stages = nnx.List(
+            [
+                nnx.List([LevitBlock(dim, h, 2.0, key_dim, rngs=rngs) for _ in range(d)])
+                for dim, d, h in zip(embed_dims, depths, num_heads)
+            ]
+        )
+        self.subsamples = nnx.List(
+            [
+                SubsampleStage(
+                    embed_dims[i], embed_dims[i + 1], num_heads[i + 1], key_dim, rngs=rngs
+                )
+                for i in range(len(embed_dims) - 1)
+            ]
+        )
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dims[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
@@ -91,11 +116,13 @@ class LeViT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {  # embed_dims, depths, num_heads
     "levit_128s": ((128, 256, 384), (2, 3, 4), (4, 8, 12)),
     "levit_192": ((192, 288, 384), (3, 3, 4), (4, 8, 12)),
     "levit_256": ((256, 384, 512), (4, 4, 4), (8, 12, 16)),
 }
+
 
 def _make(name):
     embed_dims, depths, heads = _CFGS[name]
@@ -104,8 +131,10 @@ def _make(name):
         model = LeViT(embed_dims=embed_dims, depths=depths, num_heads=heads, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

@@ -5,6 +5,7 @@ codec, geometric, color, flip, blur, rotation, hue, saturation, and
 solarization operations. Batch Mixup/CutMix remains NumPy friendly because it
 runs after Grain batching.
 """
+
 import math
 
 import cv2  # pyright: ignore[reportMissingImports]
@@ -25,8 +26,9 @@ class _RngAdapter:
     """Expose NumPy RandomState-style methods for Generator-backed transforms."""
 
     def __init__(self, rng=None):
-        self._rng = rng._rng if isinstance(rng, _RngAdapter) else (
-            np.random if rng is None else rng)
+        self._rng = (
+            rng._rng if isinstance(rng, _RngAdapter) else (np.random if rng is None else rng)
+        )
 
     def rand(self, *size):
         return self._rng.random(size if size else None)
@@ -59,17 +61,40 @@ def _as_float(value):
 
 
 __all__ = [
-    "AugmentOp", "AutoAugment", "AugMixAugment", "Mixup", "MixupCutmix",
-    "RandAugment", "TrivialAugmentWide", "auto_augment_policy",
-    "auto_augment_policy_3a", "auto_augment_policy_original",
-    "auto_augment_policy_originalr", "auto_augment_policy_v0",
-    "auto_augment_policy_v0r", "auto_augment_transform", "augmix_ops",
-    "augment_and_mix_transform", "build_auto_augment", "center_crop_or_pad",
-    "color_jitter", "gaussian_blur", "random_crop_or_pad", "random_erasing",
-    "random_flip_left_right", "random_flip_up_down", "random_grayscale",
-    "random_resized_crop", "rand_augment_choices", "rand_augment_ops",
-    "rand_augment_transform", "resize_keep_ratio", "resolve_interpolation",
-    "str_to_interp_mode", "str_to_pil_interp", "interp_mode_to_str",
+    "AugmentOp",
+    "AutoAugment",
+    "AugMixAugment",
+    "Mixup",
+    "MixupCutmix",
+    "RandAugment",
+    "TrivialAugmentWide",
+    "auto_augment_policy",
+    "auto_augment_policy_3a",
+    "auto_augment_policy_original",
+    "auto_augment_policy_originalr",
+    "auto_augment_policy_v0",
+    "auto_augment_policy_v0r",
+    "auto_augment_transform",
+    "augmix_ops",
+    "augment_and_mix_transform",
+    "build_auto_augment",
+    "center_crop_or_pad",
+    "color_jitter",
+    "gaussian_blur",
+    "random_crop_or_pad",
+    "random_erasing",
+    "random_flip_left_right",
+    "random_flip_up_down",
+    "random_grayscale",
+    "random_resized_crop",
+    "rand_augment_choices",
+    "rand_augment_ops",
+    "rand_augment_transform",
+    "resize_keep_ratio",
+    "resolve_interpolation",
+    "str_to_interp_mode",
+    "str_to_pil_interp",
+    "interp_mode_to_str",
 ]
 
 
@@ -129,8 +154,14 @@ def _clip_uint8(array):
     return np.clip(array, 0, 255).astype(np.uint8)
 
 
-def random_resized_crop(image, size=224, scale=(0.08, 1.0),
-                        ratio=(3.0 / 4.0, 4.0 / 3.0), interpolation="random", rng=None):
+def random_resized_crop(
+    image,
+    size=224,
+    scale=(0.08, 1.0),
+    ratio=(3.0 / 4.0, 4.0 / 3.0),
+    interpolation="random",
+    rng=None,
+):
     """Timm-compatible random area/aspect-ratio crop using OpenCV resize."""
     rng = _RngAdapter(rng)
     image = _rgb(image)
@@ -149,9 +180,10 @@ def random_resized_crop(image, size=224, scale=(0.08, 1.0),
         if 0 < crop_w <= width and 0 < crop_h <= height:
             top = rng.randint(0, max(1, height - crop_h + 1))
             left = rng.randint(0, max(1, width - crop_w + 1))
-            crop = image[top:top + crop_h, left:left + crop_w]
+            crop = image[top : top + crop_h, left : left + crop_w]
             return cv2.resize(
-                crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation, rng=rng))
+                crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation, rng=rng)
+            )
 
     input_ratio = width / height
     if input_ratio < ratio[0]:
@@ -162,20 +194,24 @@ def random_resized_crop(image, size=224, scale=(0.08, 1.0),
         crop_w, crop_h = width, height
     left = max(0, (width - crop_w) // 2)
     top = max(0, (height - crop_h) // 2)
-    crop = image[top:top + crop_h, left:left + crop_w]
+    crop = image[top : top + crop_h, left : left + crop_w]
     return cv2.resize(
-        crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation, rng=rng))
+        crop, (out_w, out_h), interpolation=resolve_interpolation(interpolation, rng=rng)
+    )
 
 
-def resize_keep_ratio(image, size=224, scale=(0.8, 1.0),
-                      ratio=(0.9, 1.0 / 0.9), interpolation="random", rng=None):
+def resize_keep_ratio(
+    image, size=224, scale=(0.8, 1.0), ratio=(0.9, 1.0 / 0.9), interpolation="random", rng=None
+):
     rng = _RngAdapter(rng)
     image = _rgb(image)
     target = min(_size(size)) * rng.uniform(scale[0], scale[1])
     aspect = math.exp(rng.uniform(math.log(ratio[0]), math.log(ratio[1])))
     width = max(1, _as_int(round(target * math.sqrt(aspect))))
     height = max(1, _as_int(round(target / math.sqrt(aspect))))
-    return cv2.resize(image, (width, height), interpolation=resolve_interpolation(interpolation, rng=rng))
+    return cv2.resize(
+        image, (width, height), interpolation=resolve_interpolation(interpolation, rng=rng)
+    )
 
 
 def _pad_to_size(image, target_h, target_w):
@@ -186,8 +222,7 @@ def _pad_to_size(image, target_h, target_w):
     bottom = max(0, target_h - height - top)
     left = max(0, (target_w - width) // 2)
     right = max(0, target_w - width - left)
-    return cv2.copyMakeBorder(
-        image, top, bottom, left, right, cv2.BORDER_REFLECT_101)
+    return cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_REFLECT_101)
 
 
 def center_crop_or_pad(image, size=224):
@@ -196,7 +231,7 @@ def center_crop_or_pad(image, size=224):
     height, width = image.shape[:2]
     top = max(0, (height - target_h) // 2)
     left = max(0, (width - target_w) // 2)
-    return image[top:top + target_h, left:left + target_w].copy()
+    return image[top : top + target_h, left : left + target_w].copy()
 
 
 def random_crop_or_pad(image, size=224, rng=None):
@@ -206,7 +241,7 @@ def random_crop_or_pad(image, size=224, rng=None):
     height, width = image.shape[:2]
     top = rng.randint(0, max(1, height - target_h + 1))
     left = rng.randint(0, max(1, width - target_w + 1))
-    return image[top:top + target_h, left:left + target_w].copy()
+    return image[top : top + target_h, left : left + target_w].copy()
 
 
 # Pixel-level transforms.
@@ -250,8 +285,16 @@ def _adjust_saturation(image, factor):
     return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
 
-def color_jitter(image, brightness=0.0, contrast=0.0, saturation=0.0,
-                 hue=0.0, prob=None, random_order=True, rng=None):
+def color_jitter(
+    image,
+    brightness=0.0,
+    contrast=0.0,
+    saturation=0.0,
+    hue=0.0,
+    prob=None,
+    random_order=True,
+    rng=None,
+):
     """Apply timm-style color jitter with OpenCV without JAX dispatch."""
     rng = _RngAdapter(rng)
     if prob is not None and rng.rand() >= prob:
@@ -325,8 +368,9 @@ def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0), rng=None):
     return cv2.GaussianBlur(image, (kernel, kernel), sigmaX=radius)
 
 
-def random_erasing(array, prob=0.0, sl=0.02, sh=0.33, r1=0.3,
-                   mode="const", count=1, value=0.0, rng=None):
+def random_erasing(
+    array, prob=0.0, sl=0.02, sh=0.33, r1=0.3, mode="const", count=1, value=0.0, rng=None
+):
     rng = _RngAdapter(rng)
     if rng.rand() >= prob:
         return array
@@ -350,7 +394,7 @@ def random_erasing(array, prob=0.0, sl=0.02, sh=0.33, r1=0.3,
                     fill = result.mean(axis=(0, 1), keepdims=True)
                 else:
                     fill = value
-                result[top:top + erase_h, left:left + erase_w] = fill
+                result[top : top + erase_h, left : left + erase_w] = fill
                 break
     return result
 
@@ -403,14 +447,13 @@ def _auto_op(image, name, magnitude, hparams, rng=None):
     if name == "Rotate":
         height, width = image.shape[:2]
         matrix = cv2.getRotationMatrix2D(
-            (width / 2.0, height / 2.0), _random_sign(30.0 * strength, rng), 1.0)
-        return cv2.warpAffine(
-            image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
+            (width / 2.0, height / 2.0), _random_sign(30.0 * strength, rng), 1.0
+        )
+        return cv2.warpAffine(image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
     if name in ("Posterize", "PosterizeOriginal", "PosterizeIncreasing"):
         bits = max(1, 8 - _as_int(round(4 * strength)))
         return image & np.uint8((0xFF << (8 - bits)) & 0xFF)
-    if name in ("ShearX", "ShearY", "TranslateX", "TranslateY",
-                "TranslateXRel", "TranslateYRel"):
+    if name in ("ShearX", "ShearY", "TranslateX", "TranslateY", "TranslateXRel", "TranslateYRel"):
         height, width = image.shape[:2]
         shear_x = _random_sign(0.3 * strength, rng) if name == "ShearX" else 0.0
         shear_y = _random_sign(0.3 * strength, rng) if name == "ShearY" else 0.0
@@ -427,8 +470,7 @@ def _auto_op(image, name, magnitude, hparams, rng=None):
         elif name == "TranslateYRel":
             ty = _random_sign(translate_pct * strength, rng) * height
         matrix = np.array([[1.0, shear_x, tx], [shear_y, 1.0, ty]], dtype=np.float32)
-        return cv2.warpAffine(
-            image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
+        return cv2.warpAffine(image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
     raise ValueError(f"unknown augmentation operation: {name}")
 
 
@@ -456,51 +498,75 @@ class AugmentOp:
         return _auto_op(image, self.name, magnitude, self.hparams, rng=rng)
 
     def __repr__(self):
-        return (f"{self.__class__.__name__}(name={self.name!r}, prob={self.prob}, "
-                f"magnitude={self.magnitude})")
+        return (
+            f"{self.__class__.__name__}(name={self.name!r}, prob={self.prob}, "
+            f"magnitude={self.magnitude})"
+        )
 
 
 # Searched AutoAugment policies and automated policy builders.
 _V0_POLICY = [
-    [("Equalize", .8, 1), ("ShearY", .8, 4)], [("Color", .4, 9), ("Equalize", .6, 3)],
-    [("Color", .4, 1), ("Rotate", .6, 8)], [("Solarize", .8, 3), ("Equalize", .4, 7)],
-    [("Solarize", .4, 2), ("Solarize", .6, 2)], [("Color", .2, 0), ("Equalize", .8, 8)],
-    [("Equalize", .4, 8), ("SolarizeAdd", .8, 3)], [("ShearX", .2, 9), ("Rotate", .6, 8)],
-    [("Color", .6, 1), ("Equalize", 1.0, 2)], [("Invert", .4, 9), ("Rotate", .6, 0)],
-    [("Equalize", 1.0, 9), ("ShearY", .6, 3)], [("Color", .4, 7), ("Equalize", .6, 0)],
-    [("Posterize", .4, 6), ("AutoContrast", .4, 7)], [("Solarize", .6, 8), ("Color", .6, 9)],
-    [("Solarize", .2, 4), ("Rotate", .8, 9)], [("Rotate", 1.0, 7), ("TranslateYRel", .8, 9)],
-    [("ShearX", .0, 0), ("Solarize", .8, 4)], [("ShearY", .8, 0), ("Color", .6, 4)],
-    [("Color", 1.0, 0), ("Rotate", .6, 2)], [("Equalize", .8, 4), ("Equalize", .0, 8)],
-    [("Equalize", 1.0, 4), ("AutoContrast", .6, 2)], [("ShearY", .4, 7), ("SolarizeAdd", .6, 7)],
-    [("Posterize", .8, 2), ("Solarize", .6, 10)], [("Solarize", .6, 8), ("Equalize", .6, 1)],
-    [("Color", .8, 6), ("Rotate", .4, 5)],
+    [("Equalize", 0.8, 1), ("ShearY", 0.8, 4)],
+    [("Color", 0.4, 9), ("Equalize", 0.6, 3)],
+    [("Color", 0.4, 1), ("Rotate", 0.6, 8)],
+    [("Solarize", 0.8, 3), ("Equalize", 0.4, 7)],
+    [("Solarize", 0.4, 2), ("Solarize", 0.6, 2)],
+    [("Color", 0.2, 0), ("Equalize", 0.8, 8)],
+    [("Equalize", 0.4, 8), ("SolarizeAdd", 0.8, 3)],
+    [("ShearX", 0.2, 9), ("Rotate", 0.6, 8)],
+    [("Color", 0.6, 1), ("Equalize", 1.0, 2)],
+    [("Invert", 0.4, 9), ("Rotate", 0.6, 0)],
+    [("Equalize", 1.0, 9), ("ShearY", 0.6, 3)],
+    [("Color", 0.4, 7), ("Equalize", 0.6, 0)],
+    [("Posterize", 0.4, 6), ("AutoContrast", 0.4, 7)],
+    [("Solarize", 0.6, 8), ("Color", 0.6, 9)],
+    [("Solarize", 0.2, 4), ("Rotate", 0.8, 9)],
+    [("Rotate", 1.0, 7), ("TranslateYRel", 0.8, 9)],
+    [("ShearX", 0.0, 0), ("Solarize", 0.8, 4)],
+    [("ShearY", 0.8, 0), ("Color", 0.6, 4)],
+    [("Color", 1.0, 0), ("Rotate", 0.6, 2)],
+    [("Equalize", 0.8, 4), ("Equalize", 0.0, 8)],
+    [("Equalize", 1.0, 4), ("AutoContrast", 0.6, 2)],
+    [("ShearY", 0.4, 7), ("SolarizeAdd", 0.6, 7)],
+    [("Posterize", 0.8, 2), ("Solarize", 0.6, 10)],
+    [("Solarize", 0.6, 8), ("Equalize", 0.6, 1)],
+    [("Color", 0.8, 6), ("Rotate", 0.4, 5)],
 ]
 _ORIGINAL_POLICY = [
-    [("PosterizeOriginal", .4, 8), ("Rotate", .6, 9)],
-    [("Solarize", .6, 5), ("AutoContrast", .6, 5)],
-    [("Equalize", .8, 8), ("Equalize", .6, 3)],
-    [("PosterizeOriginal", .6, 7), ("PosterizeOriginal", .6, 6)],
-    [("Equalize", .4, 7), ("Solarize", .2, 4)],
-    [("Equalize", .4, 4), ("Rotate", .8, 8)],
-    [("Solarize", .6, 3), ("Equalize", .6, 7)],
-    [("PosterizeOriginal", .8, 5), ("Equalize", 1.0, 2)],
-    [("Rotate", .2, 3), ("Solarize", .6, 8)], [("Equalize", .6, 8), ("PosterizeOriginal", .4, 6)],
-    [("Rotate", .8, 8), ("Color", .4, 0)], [("Rotate", .4, 9), ("Equalize", .6, 2)],
-    [("Equalize", .0, 7), ("Equalize", .8, 8)], [("Invert", .6, 4), ("Equalize", 1.0, 8)],
-    [("Color", .6, 4), ("Contrast", 1.0, 8)], [("Rotate", .8, 8), ("Color", 1.0, 2)],
-    [("Color", .8, 8), ("Solarize", .8, 7)], [("Sharpness", .4, 7), ("Invert", .6, 8)],
-    [("ShearX", .6, 5), ("Equalize", 1.0, 9)], [("Color", .4, 0), ("Equalize", .6, 3)],
-    [("Equalize", .4, 7), ("Solarize", .2, 4)], [("Solarize", .6, 5), ("AutoContrast", .6, 5)],
-    [("Invert", .6, 4), ("Equalize", 1.0, 8)], [("Color", .6, 4), ("Contrast", 1.0, 8)],
-    [("Equalize", .8, 8), ("Equalize", .6, 3)],
+    [("PosterizeOriginal", 0.4, 8), ("Rotate", 0.6, 9)],
+    [("Solarize", 0.6, 5), ("AutoContrast", 0.6, 5)],
+    [("Equalize", 0.8, 8), ("Equalize", 0.6, 3)],
+    [("PosterizeOriginal", 0.6, 7), ("PosterizeOriginal", 0.6, 6)],
+    [("Equalize", 0.4, 7), ("Solarize", 0.2, 4)],
+    [("Equalize", 0.4, 4), ("Rotate", 0.8, 8)],
+    [("Solarize", 0.6, 3), ("Equalize", 0.6, 7)],
+    [("PosterizeOriginal", 0.8, 5), ("Equalize", 1.0, 2)],
+    [("Rotate", 0.2, 3), ("Solarize", 0.6, 8)],
+    [("Equalize", 0.6, 8), ("PosterizeOriginal", 0.4, 6)],
+    [("Rotate", 0.8, 8), ("Color", 0.4, 0)],
+    [("Rotate", 0.4, 9), ("Equalize", 0.6, 2)],
+    [("Equalize", 0.0, 7), ("Equalize", 0.8, 8)],
+    [("Invert", 0.6, 4), ("Equalize", 1.0, 8)],
+    [("Color", 0.6, 4), ("Contrast", 1.0, 8)],
+    [("Rotate", 0.8, 8), ("Color", 1.0, 2)],
+    [("Color", 0.8, 8), ("Solarize", 0.8, 7)],
+    [("Sharpness", 0.4, 7), ("Invert", 0.6, 8)],
+    [("ShearX", 0.6, 5), ("Equalize", 1.0, 9)],
+    [("Color", 0.4, 0), ("Equalize", 0.6, 3)],
+    [("Equalize", 0.4, 7), ("Solarize", 0.2, 4)],
+    [("Solarize", 0.6, 5), ("AutoContrast", 0.6, 5)],
+    [("Invert", 0.6, 4), ("Equalize", 1.0, 8)],
+    [("Color", 0.6, 4), ("Contrast", 1.0, 8)],
+    [("Equalize", 0.8, 8), ("Equalize", 0.6, 3)],
 ]
 
 
 def _policy_ops(policy, hparams=None):
     config = dict(hparams or {})
-    return [[AugmentOp(name, probability, magnitude, config)
-             for name, probability, magnitude in row] for row in policy]
+    return [
+        [AugmentOp(name, probability, magnitude, config) for name, probability, magnitude in row]
+        for row in policy
+    ]
 
 
 def auto_augment_policy_v0(hparams=None):
@@ -508,10 +574,13 @@ def auto_augment_policy_v0(hparams=None):
 
 
 def auto_augment_policy_v0r(hparams=None):
-    policy = [[
-        ("PosterizeIncreasing" if name == "Posterize" else name, probability, magnitude)
-        for name, probability, magnitude in row
-    ] for row in _V0_POLICY]
+    policy = [
+        [
+            ("PosterizeIncreasing" if name == "Posterize" else name, probability, magnitude)
+            for name, probability, magnitude in row
+        ]
+        for row in _V0_POLICY
+    ]
     return _policy_ops(policy, hparams)
 
 
@@ -520,16 +589,18 @@ def auto_augment_policy_original(hparams=None):
 
 
 def auto_augment_policy_originalr(hparams=None):
-    policy = [[
-        ("PosterizeIncreasing" if name == "PosterizeOriginal" else name, probability, magnitude)
-        for name, probability, magnitude in row
-    ] for row in _ORIGINAL_POLICY]
+    policy = [
+        [
+            ("PosterizeIncreasing" if name == "PosterizeOriginal" else name, probability, magnitude)
+            for name, probability, magnitude in row
+        ]
+        for row in _ORIGINAL_POLICY
+    ]
     return _policy_ops(policy, hparams)
 
 
 def auto_augment_policy_3a(hparams=None):
-    policy = [[("Solarize", 1.0, 5)], [("Desaturate", 1.0, 10)],
-              [("GaussianBlurRand", 1.0, 10)]]
+    policy = [[("Solarize", 1.0, 5)], [("Desaturate", 1.0, 10)], [("GaussianBlurRand", 1.0, 10)]]
     return _policy_ops(policy, hparams)
 
 
@@ -579,35 +650,87 @@ def auto_augment_transform(config_str="v0", hparams=None):
 
 
 _RAND_TRANSFORMS = [
-    "AutoContrast", "Equalize", "Invert", "Rotate", "Posterize", "Solarize",
-    "SolarizeAdd", "Color", "Contrast", "Brightness", "Sharpness", "ShearX",
-    "ShearY", "TranslateXRel", "TranslateYRel",
+    "AutoContrast",
+    "Equalize",
+    "Invert",
+    "Rotate",
+    "Posterize",
+    "Solarize",
+    "SolarizeAdd",
+    "Color",
+    "Contrast",
+    "Brightness",
+    "Sharpness",
+    "ShearX",
+    "ShearY",
+    "TranslateXRel",
+    "TranslateYRel",
 ]
 _RAND_INCREASING_TRANSFORMS = [
-    "AutoContrast", "Equalize", "Invert", "Rotate", "PosterizeIncreasing",
-    "SolarizeIncreasing", "SolarizeAdd", "ColorIncreasing", "ContrastIncreasing",
-    "BrightnessIncreasing", "SharpnessIncreasing", "ShearX", "ShearY",
-    "TranslateXRel", "TranslateYRel",
+    "AutoContrast",
+    "Equalize",
+    "Invert",
+    "Rotate",
+    "PosterizeIncreasing",
+    "SolarizeIncreasing",
+    "SolarizeAdd",
+    "ColorIncreasing",
+    "ContrastIncreasing",
+    "BrightnessIncreasing",
+    "SharpnessIncreasing",
+    "ShearX",
+    "ShearY",
+    "TranslateXRel",
+    "TranslateYRel",
 ]
 _RAND_3A = ["SolarizeIncreasing", "Desaturate", "GaussianBlur"]
 _RAND_WEIGHTED_3A = {
-    "SolarizeIncreasing": 6, "Desaturate": 6, "GaussianBlur": 6,
-    "Rotate": 3, "ShearX": 2, "ShearY": 2, "PosterizeIncreasing": 1,
-    "AutoContrast": 1, "ColorIncreasing": 1, "SharpnessIncreasing": 1,
-    "ContrastIncreasing": 1, "BrightnessIncreasing": 1, "Equalize": 1,
+    "SolarizeIncreasing": 6,
+    "Desaturate": 6,
+    "GaussianBlur": 6,
+    "Rotate": 3,
+    "ShearX": 2,
+    "ShearY": 2,
+    "PosterizeIncreasing": 1,
+    "AutoContrast": 1,
+    "ColorIncreasing": 1,
+    "SharpnessIncreasing": 1,
+    "ContrastIncreasing": 1,
+    "BrightnessIncreasing": 1,
+    "Equalize": 1,
     "Invert": 1,
 }
 _RAND_WEIGHTED_0 = {
-    "Rotate": 3, "ShearX": 2, "ShearY": 2, "TranslateXRel": 1,
-    "TranslateYRel": 1, "ColorIncreasing": 0.25, "SharpnessIncreasing": 0.25,
-    "AutoContrast": 0.25, "SolarizeIncreasing": 0.05, "SolarizeAdd": 0.05,
-    "ContrastIncreasing": 0.05, "BrightnessIncreasing": 0.05,
-    "Equalize": 0.05, "PosterizeIncreasing": 0.05, "Invert": 0.05,
+    "Rotate": 3,
+    "ShearX": 2,
+    "ShearY": 2,
+    "TranslateXRel": 1,
+    "TranslateYRel": 1,
+    "ColorIncreasing": 0.25,
+    "SharpnessIncreasing": 0.25,
+    "AutoContrast": 0.25,
+    "SolarizeIncreasing": 0.05,
+    "SolarizeAdd": 0.05,
+    "ContrastIncreasing": 0.05,
+    "BrightnessIncreasing": 0.05,
+    "Equalize": 0.05,
+    "PosterizeIncreasing": 0.05,
+    "Invert": 0.05,
 }
 _AUGMIX_TRANSFORMS = [
-    "AutoContrast", "ColorIncreasing", "ContrastIncreasing", "BrightnessIncreasing",
-    "SharpnessIncreasing", "Equalize", "Rotate", "PosterizeIncreasing",
-    "SolarizeIncreasing", "ShearX", "ShearY", "TranslateXRel", "TranslateYRel",
+    "AutoContrast",
+    "ColorIncreasing",
+    "ContrastIncreasing",
+    "BrightnessIncreasing",
+    "SharpnessIncreasing",
+    "Equalize",
+    "Rotate",
+    "PosterizeIncreasing",
+    "SolarizeIncreasing",
+    "ShearX",
+    "ShearY",
+    "TranslateXRel",
+    "TranslateYRel",
 ]
 _RAND_OPS = _RAND_TRANSFORMS
 
@@ -644,8 +767,7 @@ def rand_augment_ops(magnitude=10.0, prob=0.5, hparams=None, transforms=None):
         transforms = _RAND_TRANSFORMS
     if isinstance(transforms, dict):
         transforms, _ = _weighted_transforms(transforms)
-    return [AugmentOp(name, prob=prob, magnitude=magnitude, hparams=hparams)
-            for name in transforms]
+    return [AugmentOp(name, prob=prob, magnitude=magnitude, hparams=hparams) for name in transforms]
 
 
 class RandAugment:
@@ -660,8 +782,8 @@ class RandAugment:
         if count == 0:
             return image
         indices = rng.choice(
-            len(self.ops), count, replace=self.choice_weights is None,
-            p=self.choice_weights)
+            len(self.ops), count, replace=self.choice_weights is None, p=self.choice_weights
+        )
         for index in np.atleast_1d(indices):
             image = self.ops[_as_int(index)](image, rng=rng)
         return image
@@ -711,8 +833,7 @@ class TrivialAugmentWide:
         rng = _RngAdapter(rng)
         name = _RAND_OPS[rng.randint(len(_RAND_OPS))]
         magnitude = _as_float(rng.uniform(0, 10))
-        return AugmentOp(
-            name, prob=1.0, magnitude=magnitude, hparams=self.hparams)(image, rng=rng)
+        return AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=self.hparams)(image, rng=rng)
 
 
 def augmix_ops(magnitude=10.0, hparams=None, transforms=None):
@@ -720,8 +841,7 @@ def augmix_ops(magnitude=10.0, hparams=None, transforms=None):
         transforms = _AUGMIX_TRANSFORMS
     if isinstance(transforms, dict):
         transforms = list(transforms)
-    return [AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=hparams)
-            for name in transforms]
+    return [AugmentOp(name, prob=1.0, magnitude=magnitude, hparams=hparams) for name in transforms]
 
 
 class AugMixAugment:
@@ -747,8 +867,10 @@ class AugMixAugment:
         return _uint8_image((1.0 - mix) * base + mix * mixed)
 
     def __repr__(self):
-        return (f"{self.__class__.__name__}(alpha={self.alpha}, width={self.width}, "
-                f"depth={self.depth}, blended={self.blended})")
+        return (
+            f"{self.__class__.__name__}(alpha={self.alpha}, width={self.width}, "
+            f"depth={self.depth}, blended={self.blended})"
+        )
 
 
 def augment_and_mix_transform(config_str="augmix-m3-w3", hparams=None, transforms=None):
@@ -819,9 +941,17 @@ def _cutmix_box(height, width, lam, minmax=None):
 class MixupCutmix:
     """Timm-style Mixup/CutMix returning soft labels."""
 
-    def __init__(self, mixup_alpha=0.8, cutmix_alpha=1.0, prob=1.0,
-                 switch_prob=0.5, mode="batch", label_smoothing=0.0,
-                 num_classes=1000, cutmix_minmax=None):
+    def __init__(
+        self,
+        mixup_alpha=0.8,
+        cutmix_alpha=1.0,
+        prob=1.0,
+        switch_prob=0.5,
+        mode="batch",
+        label_smoothing=0.0,
+        num_classes=1000,
+        cutmix_minmax=None,
+    ):
         if mode not in ("batch", "pair", "elem"):
             raise ValueError("mode must be batch, pair, or elem")
         self.mixup_alpha = _as_float(mixup_alpha)
@@ -831,11 +961,18 @@ class MixupCutmix:
         self.mode = mode
         self.label_smoothing = _as_float(label_smoothing)
         self.num_classes = _as_int(num_classes)
-        if (not math.isfinite(self.mixup_alpha) or self.mixup_alpha < 0 or
-                not math.isfinite(self.cutmix_alpha) or self.cutmix_alpha < 0):
+        if (
+            not math.isfinite(self.mixup_alpha)
+            or self.mixup_alpha < 0
+            or not math.isfinite(self.cutmix_alpha)
+            or self.cutmix_alpha < 0
+        ):
             raise ValueError("mixup_alpha and cutmix_alpha must be finite and non-negative")
-        for name, value in (("prob", self.prob), ("switch_prob", self.switch_prob),
-                            ("label_smoothing", self.label_smoothing)):
+        for name, value in (
+            ("prob", self.prob),
+            ("switch_prob", self.switch_prob),
+            ("label_smoothing", self.label_smoothing),
+        ):
             if not math.isfinite(value) or not 0 <= value <= 1:
                 raise ValueError(f"{name} must be between 0 and 1")
         if self.num_classes <= 0:
@@ -866,13 +1003,13 @@ class MixupCutmix:
             return images, targets
         batch, height, width, _ = images.shape
         use_cutmix = self.cutmix_alpha > 0 and (
-            self.mixup_alpha <= 0 or np.random.rand() < self.switch_prob)
+            self.mixup_alpha <= 0 or np.random.rand() < self.switch_prob
+        )
         alpha = self.cutmix_alpha if use_cutmix else self.mixup_alpha
         if alpha <= 0:
             return images, targets
         indices = (
-            np.arange(batch - 1, -1, -1)
-            if self.mode == "pair" else np.random.permutation(batch)
+            np.arange(batch - 1, -1, -1) if self.mode == "pair" else np.random.permutation(batch)
         )
         if self.mode == "elem":
             mixed = images.copy()
@@ -881,9 +1018,11 @@ class MixupCutmix:
                 lam = _as_float(np.random.beta(alpha, alpha))
                 if use_cutmix:
                     top, left, bottom, right, lam = _cutmix_box(
-                        height, width, lam, self.cutmix_minmax)
+                        height, width, lam, self.cutmix_minmax
+                    )
                     mixed[index, top:bottom, left:right] = images[
-                        indices[index], top:bottom, left:right]
+                        indices[index], top:bottom, left:right
+                    ]
                 else:
                     mixed[index] = lam * images[index] + (1.0 - lam) * images[indices[index]]
                 lambdas[index] = lam
@@ -891,10 +1030,8 @@ class MixupCutmix:
         lam = _as_float(np.random.beta(alpha, alpha))
         mixed = images.copy()
         if use_cutmix:
-            top, left, bottom, right, lam = _cutmix_box(
-                height, width, lam, self.cutmix_minmax)
-            mixed[:, top:bottom, left:right] = images[
-                indices, top:bottom, left:right]
+            top, left, bottom, right, lam = _cutmix_box(height, width, lam, self.cutmix_minmax)
+            mixed[:, top:bottom, left:right] = images[indices, top:bottom, left:right]
         else:
             mixed = lam * images + (1.0 - lam) * images[indices]
         return mixed, lam * targets + (1.0 - lam) * targets[indices]

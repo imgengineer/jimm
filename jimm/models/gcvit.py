@@ -1,11 +1,13 @@
 """GCViT in flax nnx, NHWC. Mirrors timm.models.gcvit (global-context self-attention)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp
+from ..registry import _cfg, register_model
 from .swin_transformer import window_partition, window_reverse
 from .vision_transformer import Attention as _Attn
+
 
 class GlobalQuery(nnx.Module):
     """Small CNN producing a global context vector for the stage (pooled to one token)."""
@@ -17,6 +19,7 @@ class GlobalQuery(nnx.Module):
     def __call__(self, x):
         y = self.proj(self.pool(x))
         return jnp.mean(y, axis=(1, 2), keepdims=True)  # (B,1,1,C)
+
 
 class GCBlock(nnx.Module):
     """Window attention with a global context vector injected into the tokens."""
@@ -33,16 +36,29 @@ class GCBlock(nnx.Module):
     def __call__(self, x):
         B, H, W, C = x.shape
         gq = self.global_query(x)  # (B,1,1,C)
-        t = window_partition(x + gq, self.ws)  # (B*nW, ws*ws, C), global ctx broadcast to all tokens
+        t = window_partition(
+            x + gq, self.ws
+        )  # (B*nW, ws*ws, C), global ctx broadcast to all tokens
         t = t + self.drop_path(self.attn(self.norm1(t)))
         t = t + self.drop_path(self.mlp(self.norm2(t)))
         return window_reverse(t, self.ws, H, W, B)
 
-class GCViT(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
-                 window_size=7, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class GCViT(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(96, 192, 384, 768),
+        depths=(2, 2, 6, 2),
+        num_heads=(3, 6, 12, 24),
+        window_size=7,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
         self.stem = nnx.Conv(in_chans, channels[0], (4, 4), strides=(4, 4), rngs=rngs)
@@ -53,10 +69,15 @@ class GCViT(ClassifierMixin, nnx.Module):
             k += d
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            nnx.Sequential(nnx.LayerNorm(channels[i], rngs=rngs),
-                           nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
-            for i in range(3)])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(
+                    nnx.LayerNorm(channels[i], rngs=rngs),
+                    nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs),
+                )
+                for i in range(3)
+            ]
+        )
         self.norm = nnx.LayerNorm(channels[-1], rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
@@ -73,11 +94,13 @@ class GCViT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "gcvit_tiny": ((96, 192, 384, 768), (2, 2, 6, 2), (3, 6, 12, 24)),
     "gcvit_small": ((96, 192, 384, 768), (2, 2, 18, 2), (3, 6, 12, 24)),
     "gcvit_base": ((128, 256, 512, 1024), (2, 2, 18, 2), (4, 8, 16, 32)),
 }
+
 
 def _make(name):
     channels, depths, heads = _CFGS[name]
@@ -86,8 +109,10 @@ def _make(name):
         model = GCViT(channels, depths, heads, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

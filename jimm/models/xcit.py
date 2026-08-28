@@ -1,9 +1,11 @@
 """XCiT in flax nnx. Mirrors timm.models.xcit (cross-covariance attention + LPI + cls)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
+from ..registry import _cfg, register_model
+
 
 class XCA(nnx.Module):
     """Cross-Covariance Attention: attention over channels instead of tokens."""
@@ -25,6 +27,7 @@ class XCA(nnx.Module):
         x = (attn @ v.transpose(0, 1, 3, 2)).transpose(0, 3, 1, 2).reshape(B, N, C)
         return self.proj(x)
 
+
 class XCABlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop_path=0.0, init_values=1e-5, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -38,6 +41,7 @@ class XCABlock(nnx.Module):
     def __call__(self, x):
         x = x + self.drop_path(self.gamma1[...] * self.xca(self.norm1(x)))
         return x + self.drop_path(self.gamma2[...] * self.mlp(self.norm2(x)))
+
 
 class LPI(nnx.Module):
     """Local Patch Interaction: two 3x3 depthwise convs with residuals on 2D grid."""
@@ -53,13 +57,28 @@ class LPI(nnx.Module):
         t = t + self.dw2(t)
         return t.reshape(B, H * W, -1)
 
+
 class XCiT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
 
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
-                 global_pool="", embed_dim=384, depth=12, num_heads=8, mlp_ratio=4.0,
-                 drop_rate=0.0, drop_path_rate=0.0, init_values=1e-5, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="",
+        embed_dim=384,
+        depth=12,
+        num_heads=8,
+        mlp_ratio=4.0,
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        init_values=1e-5,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
@@ -68,8 +87,12 @@ class XCiT(ClassifierMixin, nnx.Module):
         self.pos_embed = nnx.Param(jnp.zeros((1, n, embed_dim)))
         self.cls_token = nnx.Param(jnp.zeros((1, 1, embed_dim)))
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
-        self.blocks = nnx.List([XCABlock(embed_dim, num_heads, mlp_ratio, dpr[i],
-                                         init_values, rngs=rngs) for i in range(depth)])
+        self.blocks = nnx.List(
+            [
+                XCABlock(embed_dim, num_heads, mlp_ratio, dpr[i], init_values, rngs=rngs)
+                for i in range(depth)
+            ]
+        )
         self.lpi = nnx.List([LPI(embed_dim, rngs=rngs) for _ in range(depth)])
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -78,7 +101,9 @@ class XCiT(ClassifierMixin, nnx.Module):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
         x = x + self.pos_embed[...]
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
+        x = jnp.concatenate(
+            [jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1
+        )
         G = self.grid
         for blk, lpi in zip(self.blocks, self.lpi):
             cls, tokens = x[:, :1], x[:, 1:]
@@ -94,18 +119,22 @@ class XCiT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _xcit(embed_dim, depth, num_heads, **kwargs):
     model = XCiT(embed_dim=embed_dim, depth=depth, num_heads=num_heads, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def xcit_tiny_12_p16_224(**kwargs):
     return _xcit(192, 12, 4, **kwargs)
 
+
 @register_model
 def xcit_small_12_p16_224(**kwargs):
     return _xcit(384, 12, 8, **kwargs)
+
 
 @register_model
 def xcit_medium_24_p16_224(**kwargs):

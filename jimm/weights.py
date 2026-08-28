@@ -5,12 +5,13 @@ Converts standard PyTorch/timm weight formats into JAX/Flax NNX native layout:
   - Linear weights: PyTorch (Out, In) -> JAX (In, Out)
   - Parameter paths: PyTorch hierarchical keys -> Flax NNX attribute trees
 """
+
 from pathlib import Path
 from typing import Any
 
-from flax import nnx
 import jax.numpy as jnp
 import numpy as np
+from flax import nnx
 
 __all__ = ["load_state_dict", "load_pretrained"]
 

@@ -8,12 +8,13 @@ Features:
   - `CheckpointManager`: step-numbered checkpoints with retention (`max_to_keep`)
     and best-checkpoint tracking.
 """
+
 import os
 from typing import Any, Callable
 
 import jax.numpy as jnp
-from flax import nnx
 import orbax.checkpoint as ocp
+from flax import nnx
 
 __all__ = [
     "save_checkpoint",
@@ -94,8 +95,11 @@ def _fix_int_keys(d: Any) -> Any:
     if isinstance(d, dict):
         new_d: dict[Any, Any] = {}
         for k, v in d.items():
-            key = (int(k) if isinstance(k, str)
-                   and (k.isdigit() or (k.startswith("-") and k[1:].isdigit())) else k)
+            key = (
+                int(k)
+                if isinstance(k, str) and (k.isdigit() or (k.startswith("-") and k[1:].isdigit()))
+                else k
+            )
             new_d[key] = _fix_int_keys(v)
         return new_d
     return d
@@ -110,29 +114,34 @@ def _validate_tree(expected: Any, restored: Any, path: str) -> Any:
     if isinstance(expected, dict):
         if not isinstance(restored, dict):
             raise ValueError(
-                f"{path}: checkpoint has {type(restored).__name__}, expected a dict subtree")
+                f"{path}: checkpoint has {type(restored).__name__}, expected a dict subtree"
+            )
         missing = sorted(set(expected) - set(restored), key=repr)
         unexpected = sorted(set(restored) - set(expected), key=repr)
         if missing or unexpected:
             raise ValueError(
                 f"{path}: checkpoint tree does not match model state "
-                f"(missing keys: {missing}, unexpected keys: {unexpected})")
-        return {key: _validate_tree(expected[key], restored[key], f"{path}.{key}")
-                for key in expected}
+                f"(missing keys: {missing}, unexpected keys: {unexpected})"
+            )
+        return {
+            key: _validate_tree(expected[key], restored[key], f"{path}.{key}") for key in expected
+        }
     if hasattr(expected, "shape"):
         value = jnp.asarray(restored)
         if tuple(value.shape) != tuple(expected.shape):
             raise ValueError(
                 f"{path}: shape mismatch (checkpoint {tuple(value.shape)} "
-                f"vs model {tuple(expected.shape)})")
+                f"vs model {tuple(expected.shape)})"
+            )
         if value.dtype != expected.dtype:
             value = value.astype(expected.dtype)
         return value
     return restored
 
 
-def _apply_restored(restored: Any, model: nnx.Module, optimizer: nnx.Optimizer | None,
-                    source: str) -> int:
+def _apply_restored(
+    restored: Any, model: nnx.Module, optimizer: nnx.Optimizer | None, source: str
+) -> int:
     """Validate a restored item against live state and load it in place."""
     if not isinstance(restored, dict) or "model" not in restored:
         raise ValueError(f"{source} is not a jimm checkpoint (no 'model' entry)")
@@ -217,17 +226,18 @@ class CheckpointManager:
         self.directory = os.path.abspath(directory)
         policy = ocp.checkpoint_managers.LatestN(max_to_keep)
         if best_fn is not None:
-            policy = ocp.checkpoint_managers.AnyPreservationPolicy([
-                policy,
-                ocp.checkpoint_managers.BestN(
-                    get_metric_fn=best_fn,
-                    reverse=best_mode == "min",
-                    n=1,
-                    keep_checkpoints_without_metrics=False,
-                ),
-            ])
-        options = ocp.CheckpointManagerOptions(
-            preservation_policy=policy)
+            policy = ocp.checkpoint_managers.AnyPreservationPolicy(
+                [
+                    policy,
+                    ocp.checkpoint_managers.BestN(
+                        get_metric_fn=best_fn,
+                        reverse=best_mode == "min",
+                        n=1,
+                        keep_checkpoints_without_metrics=False,
+                    ),
+                ]
+            )
+        options = ocp.CheckpointManagerOptions(preservation_policy=policy)
         self._manager = ocp.CheckpointManager(self.directory, options=options)
 
     def save(
@@ -256,14 +266,15 @@ class CheckpointManager:
             metrics=metrics,
         )
 
-    def restore(self, step: int, model: nnx.Module,
-                optimizer: nnx.Optimizer | None = None) -> int:
+    def restore(self, step: int, model: nnx.Module, optimizer: nnx.Optimizer | None = None) -> int:
         """Restore step ``step`` into live model/optimizer; returns its epoch."""
         restored = self._manager.restore(int(step), args=ocp.args.StandardRestore())
         return _apply_restored(restored, model, optimizer, f"{self.directory}/{step}")
 
     def restore_latest(
-        self, model: nnx.Module, optimizer: nnx.Optimizer | None = None,
+        self,
+        model: nnx.Module,
+        optimizer: nnx.Optimizer | None = None,
     ) -> tuple[int | None, int | None]:
         """Restore the newest checkpoint; returns ``(step, epoch)``, both None if empty."""
         step = self.latest_step()

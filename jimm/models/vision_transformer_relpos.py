@@ -1,9 +1,11 @@
 """ViT with 2D relative position bias in flax nnx. Mirrors timm.models.vision_transformer_relpos."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
+from ..registry import _cfg, register_model
+
 
 class RelPosAttention(nnx.Module):
     def __init__(self, dim, num_heads, grid, qkv_bias=True, *, rngs):
@@ -29,6 +31,7 @@ class RelPosAttention(nnx.Module):
         x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
 
+
 class RelPosBlock(nnx.Module):
     def __init__(self, dim, num_heads, grid, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
@@ -41,21 +44,39 @@ class RelPosBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
+
 class VisionTransformerRelPos(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
 
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
-                 global_pool="", embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0,
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="",
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4.0,
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
         self.cls_token = nnx.Param(jnp.zeros((1, 1, embed_dim)))
         grid = img_size // patch_size
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
-        self.blocks = nnx.List([RelPosBlock(embed_dim, num_heads, grid, mlp_ratio,
-                                            dpr[i], rngs=rngs) for i in range(depth)])
+        self.blocks = nnx.List(
+            [
+                RelPosBlock(embed_dim, num_heads, grid, mlp_ratio, dpr[i], rngs=rngs)
+                for i in range(depth)
+            ]
+        )
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -63,7 +84,9 @@ class VisionTransformerRelPos(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
+        x = jnp.concatenate(
+            [jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1
+        )
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)
@@ -76,11 +99,13 @@ class VisionTransformerRelPos(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def vit_relpos_base_patch16_224(**kwargs):
     model = VisionTransformerRelPos(**kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def vit_relpos_small_patch16_224(**kwargs):

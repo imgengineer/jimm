@@ -1,11 +1,13 @@
 """MobileViT in flax nnx, NHWC. Mirrors timm.models.mobilevit (conv blocks + transformer stages)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, DropPath, gelu
+from ..registry import _cfg, register_model
 from .mobilenetv2 import InvertedResidual
 from .vision_transformer import Attention
+
 
 class MViTTransformerBlock(nnx.Module):
     def __init__(self, dim, num_heads=4, mlp_ratio=2.0, drop_path=0.0, *, rngs):
@@ -20,14 +22,16 @@ class MViTTransformerBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm2(x)))))
 
+
 class MobileViTStage(nnx.Module):
     """conv to dim -> unfold patches -> transformer -> fold back -> fuse."""
 
     def __init__(self, in_chs, out_chs, depth, patch=2, num_heads=4, *, rngs):
         self.conv_in = ConvBNAct(in_chs, out_chs, 1, act="silu", rngs=rngs)
         self.patch = patch
-        self.blocks = nnx.List([MViTTransformerBlock(out_chs, num_heads, rngs=rngs)
-                                for _ in range(depth)])
+        self.blocks = nnx.List(
+            [MViTTransformerBlock(out_chs, num_heads, rngs=rngs) for _ in range(depth)]
+        )
         self.conv_out = ConvBNAct(out_chs, out_chs, 3, act="silu", rngs=rngs)
         self.fuse = ConvBNAct(in_chs + out_chs, out_chs, 3, act="silu", rngs=rngs)
 
@@ -43,17 +47,35 @@ class MobileViTStage(nnx.Module):
         y = self.conv_out(y)
         return self.fuse(jnp.concatenate([x, y], axis=-1))
 
-class MobileViT(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(32, 64, 96), tf_dims=(144, 192, 240), tf_depths=(2, 4, 3),
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
+class MobileViT(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(32, 64, 96),
+        tf_dims=(144, 192, 240),
+        tf_depths=(2, 4, 3),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = tf_dims[-1]
         self.stem = ConvBNAct(in_chans, channels[0], 3, 2, act="silu", rngs=rngs)
-        self.stage1 = nnx.List([InvertedResidual(channels[0], channels[0], 1, 1, rngs=rngs),
-                                InvertedResidual(channels[0], channels[1], 2, 4, rngs=rngs)])
-        self.stage2 = nnx.List([InvertedResidual(channels[1], channels[2], 1, 4, rngs=rngs),
-                                InvertedResidual(channels[2], channels[2], 1, 4, rngs=rngs)])
+        self.stage1 = nnx.List(
+            [
+                InvertedResidual(channels[0], channels[0], 1, 1, rngs=rngs),
+                InvertedResidual(channels[0], channels[1], 2, 4, rngs=rngs),
+            ]
+        )
+        self.stage2 = nnx.List(
+            [
+                InvertedResidual(channels[1], channels[2], 1, 4, rngs=rngs),
+                InvertedResidual(channels[2], channels[2], 1, 4, rngs=rngs),
+            ]
+        )
         self.mv2_3 = InvertedResidual(channels[2], tf_dims[0], 2, 4, rngs=rngs)
         self.tf1 = MobileViTStage(tf_dims[0], tf_dims[0], tf_depths[0], 2, 4, rngs=rngs)
         self.mv2_4 = InvertedResidual(tf_dims[0], tf_dims[1], 2, 4, rngs=rngs)
@@ -79,11 +101,13 @@ class MobileViT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "mobilevit_xxs": ((32, 64, 80), (96, 120, 144), (2, 4, 3)),
     "mobilevit_xs": ((48, 96, 120), (144, 160, 192), (2, 4, 3)),
     "mobilevit_s": ((64, 128, 160), (192, 256, 320), (2, 6, 4)),
 }
+
 
 def _make(name):
     channels, tf_dims, tf_depths = _CFGS[name]
@@ -92,8 +116,10 @@ def _make(name):
         model = MobileViT(channels, tf_dims, tf_depths, **kwargs)
         model.default_cfg = _cfg(input_size=(3, 256, 256))
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

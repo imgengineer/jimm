@@ -1,17 +1,26 @@
 """ReXNet in flax nnx, NHWC. Mirrors timm.models.rexnet (swish + SE inverted residuals)."""
+
 from flax import nnx
 
-from ..layers import SqueezeExcite, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, SqueezeExcite
+from ..registry import _cfg, register_model
 from .mobilenetv2 import ConvBN, round_chs
+
 
 class ReXBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand, use_se, *, rngs):
         mid = int(round(in_chs * expand))
         self.use_residual = stride == 1 and in_chs == out_chs
         self.expand = ConvBN(in_chs, mid, rngs=rngs) if expand != 1 else None
-        self.dw = nnx.Conv(mid, mid, (3, 3), strides=(stride, stride), use_bias=False,
-                           feature_group_count=mid, rngs=rngs)
+        self.dw = nnx.Conv(
+            mid,
+            mid,
+            (3, 3),
+            strides=(stride, stride),
+            use_bias=False,
+            feature_group_count=mid,
+            rngs=rngs,
+        )
         self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
         self.se = SqueezeExcite(mid, rngs=rngs, rd_ratio=1 / 12) if use_se else None
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
@@ -25,6 +34,7 @@ class ReXBlock(nnx.Module):
         y = self.bn2(self.pw(y))
         return x + y if self.use_residual else y
 
+
 # (expand, out, repeats, stride, se)
 REXNET_CFG = [
     (1, 16, 1, 1, False),
@@ -36,14 +46,23 @@ REXNET_CFG = [
     (6, 320, 1, 1, True),
 ]
 
-class ReXNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, width_mult=1.0, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, *, rngs):
+class ReXNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        width_mult=1.0,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         stem = round_chs(32, width_mult)
-        self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False,
-                              padding="VALID", rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, padding="VALID", rngs=rngs
+        )
         self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for e, c, n, s, se in REXNET_CFG:
@@ -68,22 +87,27 @@ class ReXNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _rexnet(width_mult, **kwargs):
     model = ReXNet(width_mult, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def rexnet_100(**kwargs):
     return _rexnet(1.0, **kwargs)
+
 
 @register_model
 def rexnet_130(**kwargs):
     return _rexnet(1.3, **kwargs)
 
+
 @register_model
 def rexnet_150(**kwargs):
     return _rexnet(1.5, **kwargs)
+
 
 @register_model
 def rexnet_200(**kwargs):

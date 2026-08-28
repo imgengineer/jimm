@@ -1,9 +1,11 @@
 """SwiftFormer in flax nnx, NHWC. Mirrors timm.models.swiftformer (conv encoder + eff additive attention)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, DropPath, gelu
+from ..registry import _cfg, register_model
+
 
 class ConvEncoder(nnx.Module):
     """dw 3x3 + two 1x1 pointwise, residual."""
@@ -16,6 +18,7 @@ class ConvEncoder(nnx.Module):
 
     def __call__(self, x):
         return x + self.drop_path(self.pw2(self.pw1(self.dw(x))))
+
 
 class SwiftAttention(nnx.Module):
     """Additive attention: query->score weights context vector."""
@@ -30,9 +33,10 @@ class SwiftAttention(nnx.Module):
     def __call__(self, x):
         B, N, C = x.shape
         w = nnx.softmax(self.score(self.k(x)).transpose(0, 2, 1), axis=-1)  # (B,1,N)
-        ctx = (w @ self.v(x))  # (B,1,C)
+        ctx = w @ self.v(x)  # (B,1,C)
         ctx = jnp.broadcast_to(ctx, (B, N, C))
         return self.proj(self.q(x) * ctx)
+
 
 class SwiftFormerBlock(nnx.Module):
     def __init__(self, dim, drop_path=0.0, *, rngs):
@@ -50,16 +54,29 @@ class SwiftFormerBlock(nnx.Module):
         t = t + self.drop_path(self.fc2(gelu(self.fc1(self.norm2(t)))))
         return t.reshape(B, H, W, C)
 
-class SwiftFormer(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(48, 56, 112, 224), depths=(3, 3, 9, 3), swift_from=2,
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,
-                 drop_path_rate=0.0, *, rngs):
+class SwiftFormer(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(48, 56, 112, 224),
+        depths=(3, 3, 9, 3),
+        swift_from=2,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
-        self.stem = nnx.List([
-            ConvBNAct(in_chans, channels[0] // 2, 3, 2, rngs=rngs),
-            ConvBNAct(channels[0] // 2, channels[0], 3, 2, rngs=rngs)])
+        self.stem = nnx.List(
+            [
+                ConvBNAct(in_chans, channels[0] // 2, 3, 2, rngs=rngs),
+                ConvBNAct(channels[0] // 2, channels[0], 3, 2, rngs=rngs),
+            ]
+        )
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
         stages, k = [], 0
         for i, (c, d) in enumerate(zip(channels, depths)):
@@ -72,8 +89,9 @@ class SwiftFormer(ClassifierMixin, nnx.Module):
                 k += 1
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            ConvBNAct(channels[i], channels[i + 1], 3, 2, rngs=rngs) for i in range(3)])
+        self.downsamples = nnx.List(
+            [ConvBNAct(channels[i], channels[i + 1], 3, 2, rngs=rngs) for i in range(3)]
+        )
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
@@ -90,11 +108,13 @@ class SwiftFormer(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "swiftformer_xs": ((48, 56, 112, 224), (3, 3, 9, 3)),
     "swiftformer_s": ((48, 64, 168, 224), (3, 3, 9, 3)),
     "swiftformer_l1": ((48, 96, 192, 384), (3, 4, 12, 4)),
 }
+
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -103,8 +123,10 @@ def _make(name):
         model = SwiftFormer(channels, depths, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

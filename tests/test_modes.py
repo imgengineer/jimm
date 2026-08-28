@@ -1,7 +1,8 @@
 """Tests for train and eval mode behavior across special layers (Dropout, BatchNorm, DropPath)."""
+
 import jax.numpy as jnp
 from flax import nnx
-import pytest
+
 import jimm
 from jimm.layers import DropPath
 
@@ -46,7 +47,9 @@ def test_batchnorm_train_and_eval_mode():
 
 
 def test_model_dropout_and_droppath_stochasticity():
-    m_vit = jimm.create_model("vit_base_patch16_224", num_classes=10, drop_rate=0.2, drop_path_rate=0.2, rngs=nnx.Rngs(0))
+    m_vit = jimm.create_model(
+        "vit_base_patch16_224", num_classes=10, drop_rate=0.2, drop_path_rate=0.2, rngs=nnx.Rngs(0)
+    )
     x = jnp.ones((2, 224, 224, 3), jnp.float32)
 
     # Eval mode: deterministic

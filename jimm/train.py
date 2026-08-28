@@ -28,6 +28,7 @@ Examples:
   # Profile execution with JAX profiler / Perfetto:
   python -m jimm.train --model resnet50 --data-dir /path/to/imagenet --profile-step 5 --profile-dir ./profiles
 """
+
 import argparse
 import collections
 import functools
@@ -48,6 +49,7 @@ from .registry import create_model
 
 class StepMetrics(NamedTuple):
     """Structured metrics returned by training step."""
+
     loss: jax.Array
     accuracy: jax.Array
     grad_norm: jax.Array
@@ -76,7 +78,11 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
     for path, node in nnx.graph.iter_graph(model_or_opt):
         if isinstance(node, nnx.Variable):
             val = node.get_value()
-            if isinstance(val, (jax.Array, np.ndarray)) and val.ndim >= 1 and val.shape[0] % num_devices == 0:
+            if (
+                isinstance(val, (jax.Array, np.ndarray))
+                and val.ndim >= 1
+                and val.shape[0] % num_devices == 0
+            ):
                 spec = P(mesh_axis, *(None,) * (val.ndim - 1))
             elif isinstance(val, (jax.Array, np.ndarray)):
                 spec = P()  # replicate if leading dimension is not evenly divisible
@@ -86,14 +92,19 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
             node.set_value(jax.device_put(val, sharding))
 
 
-def prefetch_to_device(data_iter, data_sharding, label_sharding, prefetch_size=2,
-                       mask_sharding=None):
+def prefetch_to_device(
+    data_iter, data_sharding, label_sharding, prefetch_size=2, mask_sharding=None
+):
     """Asynchronously prefetches and shards host data onto devices (double buffering).
 
     MaxText/MaxDiffusion pattern: overlaps host CPU data loading/decoding & Host-to-Device (H2D)
     transfer with on-device accelerator execution, preventing GPU/TPU idle starvation bubbles.
     """
-    if isinstance(prefetch_size, bool) or not isinstance(prefetch_size, (int, np.integer)) or prefetch_size <= 0:
+    if (
+        isinstance(prefetch_size, bool)
+        or not isinstance(prefetch_size, (int, np.integer))
+        or prefetch_size <= 0
+    ):
         raise ValueError("prefetch_size must be a positive integer")
     queue = collections.deque()
 
@@ -101,8 +112,7 @@ def prefetch_to_device(data_iter, data_sharding, label_sharding, prefetch_size=2
         images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
         labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
         if mask_sharding is not None:
-            valid = jax.make_array_from_process_local_data(
-                mask_sharding, batch["valid"])
+            valid = jax.make_array_from_process_local_data(mask_sharding, batch["valid"])
             return images, labels, valid
         return images, labels
 
@@ -170,8 +180,11 @@ def _mean_metrics(losses, accuracies, counts=None):
         means = metrics.mean(axis=1)
     else:
         weights = np.asarray(counts, dtype=np.float32)
-        if (weights.shape != (len(losses),) or not np.all(np.isfinite(weights))
-                or np.any(weights <= 0)):
+        if (
+            weights.shape != (len(losses),)
+            or not np.all(np.isfinite(weights))
+            or np.any(weights <= 0)
+        ):
             raise ValueError("counts must contain one positive finite value per batch")
         device_weights = jnp.asarray(weights)
         means = (metrics * device_weights).sum(axis=1) / device_weights.sum()
@@ -199,11 +212,11 @@ def _mixup_cutmix_jax(images, labels, rng, config):
         use_cutmix = jax.random.uniform(switch_key) < config.switch_prob
     else:
         use_cutmix = config.cutmix_alpha > 0
-    alpha = jnp.maximum(
-        jnp.where(use_cutmix, config.cutmix_alpha, config.mixup_alpha), 1e-6)
+    alpha = jnp.maximum(jnp.where(use_cutmix, config.cutmix_alpha, config.mixup_alpha), 1e-6)
     indices = (
         jnp.arange(batch - 1, -1, -1)
-        if config.mode == "pair" else jax.random.permutation(perm_key, batch)
+        if config.mode == "pair"
+        else jax.random.permutation(perm_key, batch)
     )
 
     def mixup(_):
@@ -244,12 +257,17 @@ def _mixup_cutmix_jax(images, labels, rng, config):
             yy = jnp.arange(height)[None, :, None]
             xx = jnp.arange(width)[None, None, :]
             mask = (
-                (yy >= top[:, None, None]) & (yy < bottom[:, None, None])
-                & (xx >= left[:, None, None]) & (xx < right[:, None, None])
+                (yy >= top[:, None, None])
+                & (yy < bottom[:, None, None])
+                & (xx >= left[:, None, None])
+                & (xx < right[:, None, None])
             )
             actual_lam = 1.0 - (bottom - top) * (right - left) / (height * width)
             mixed_images = jnp.where(mask[..., None], images[indices], images)
-            mixed_labels = actual_lam[:, None] * mixed_targets + (1.0 - actual_lam[:, None]) * mixed_targets[indices]
+            mixed_labels = (
+                actual_lam[:, None] * mixed_targets
+                + (1.0 - actual_lam[:, None]) * mixed_targets[indices]
+            )
             return mixed_images, mixed_labels
 
         lam = jax.random.beta(alpha_key, alpha, alpha)
@@ -259,8 +277,12 @@ def _mixup_cutmix_jax(images, labels, rng, config):
             box_w = jnp.rint(width * ratio).astype(jnp.int32)
         else:
             low, high = config.cutmix_minmax
-            box_h = jnp.rint(height * jax.random.uniform(box_keys[0], minval=low, maxval=high)).astype(jnp.int32)
-            box_w = jnp.rint(width * jax.random.uniform(box_keys[1], minval=low, maxval=high)).astype(jnp.int32)
+            box_h = jnp.rint(
+                height * jax.random.uniform(box_keys[0], minval=low, maxval=high)
+            ).astype(jnp.int32)
+            box_w = jnp.rint(
+                width * jax.random.uniform(box_keys[1], minval=low, maxval=high)
+            ).astype(jnp.int32)
         center_y = jax.random.randint(box_keys[2], (), 0, height)
         center_x = jax.random.randint(box_keys[3], (), 0, width)
         top = jnp.maximum(0, center_y - box_h // 2)
@@ -269,9 +291,7 @@ def _mixup_cutmix_jax(images, labels, rng, config):
         right = jnp.minimum(width, center_x + box_w // 2)
         yy = jnp.arange(height)[:, None]
         xx = jnp.arange(width)[None, :]
-        mask = (
-            (yy >= top) & (yy < bottom) & (xx >= left) & (xx < right)
-        )
+        mask = (yy >= top) & (yy < bottom) & (xx >= left) & (xx < right)
         actual_lam = 1.0 - (bottom - top) * (right - left) / (height * width)
         mixed_images = jnp.where(mask[None, ..., None], images[indices], images)
         mixed_labels = actual_lam * mixed_targets + (1.0 - actual_lam) * mixed_targets[indices]
@@ -290,8 +310,16 @@ def _mixup_cutmix_jax(images, labels, rng, config):
     )
 
 
-def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0.0,
-                   warmup_ratio=0.1, min_lr_ratio=0.01):
+def make_optimizer(
+    model,
+    lr,
+    weight_decay,
+    epochs,
+    steps_per_epoch,
+    clip_grad=0.0,
+    warmup_ratio=0.1,
+    min_lr_ratio=0.01,
+):
     """AdamW (warmup + cosine decay) with timm-style weight-decay grouping.
 
     Following timm's default (`param_groups_weight_decay`), weight decay only
@@ -310,22 +338,31 @@ def make_optimizer(model, lr, weight_decay, epochs, steps_per_epoch, clip_grad=0
     if total == 1:
         schedule = optax.constant_schedule(lr)
     else:
-        warmup_steps = min(
-            total - 1, 5 * steps_per_epoch, 10000,
-            max(int(total * warmup_ratio), 1))
+        warmup_steps = min(total - 1, 5 * steps_per_epoch, 10000, max(int(total * warmup_ratio), 1))
         schedule = optax.warmup_cosine_decay_schedule(
-            init_value=0.0, peak_value=lr,
+            init_value=0.0,
+            peak_value=lr,
             warmup_steps=warmup_steps,
-            decay_steps=total, end_value=lr * min_lr_ratio)
+            decay_steps=total,
+            end_value=lr * min_lr_ratio,
+        )
     tx = optax.clip_by_global_norm(clip_grad) if clip_grad > 0 else optax.identity()
     decay_mask = lambda params: jax.tree.map(lambda p: p.ndim >= 2, params)  # noqa: E731
     adamw = optax.adamw(schedule, weight_decay=weight_decay, mask=decay_mask)
-    return nnx.Optimizer(model, optax.chain(tx, adamw),
-                         wrt=nnx.Param)
+    return nnx.Optimizer(model, optax.chain(tx, adamw), wrt=nnx.Param)
 
 
-def _train_step(model, optimizer, images, labels, smoothing=0.0, amp=False,
-                mixup=None, rng=None, with_metrics=False):
+def _train_step(
+    model,
+    optimizer,
+    images,
+    labels,
+    smoothing=0.0,
+    amp=False,
+    mixup=None,
+    rng=None,
+    with_metrics=False,
+):
     _validate_batch(images, labels)
     if mixup is not None:
         if rng is None:
@@ -341,22 +378,27 @@ def _train_step(model, optimizer, images, labels, smoothing=0.0, amp=False,
 
     (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
     if with_metrics:
-        grad_norm = optax.tree.norm(grads) if hasattr(optax, "tree") and hasattr(optax.tree, "norm") else optax.global_norm(grads)
+        grad_norm = (
+            optax.tree.norm(grads)
+            if hasattr(optax, "tree") and hasattr(optax.tree, "norm")
+            else optax.global_norm(grads)
+        )
     optimizer.update(model, grads)
     acc = _accuracy(logits, labels)
-    return (StepMetrics(loss=loss, accuracy=acc, grad_norm=grad_norm)
-            if with_metrics else (loss, acc))
+    return (
+        StepMetrics(loss=loss, accuracy=acc, grad_norm=grad_norm) if with_metrics else (loss, acc)
+    )
 
 
 @nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
-def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False,
-               mixup=None, rng=None):
+def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False, mixup=None, rng=None):
     return _train_step(model, optimizer, images, labels, smoothing, amp, mixup, rng)
 
 
 @nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
-def train_step_with_metrics(model, optimizer, images, labels, smoothing=0.0, amp=False,
-                            mixup=None, rng=None):
+def train_step_with_metrics(
+    model, optimizer, images, labels, smoothing=0.0, amp=False, mixup=None, rng=None
+):
     """Executes a training step, computing pre-clipping grad_norm for monitoring."""
     return _train_step(model, optimizer, images, labels, smoothing, amp, mixup, rng, True)
 
@@ -377,14 +419,12 @@ def eval_step(model, images, labels, amp=False, valid=None):
     valid_count = weights.sum()
     target = jnp.argmax(labels, axis=-1) if labels.ndim == logits.ndim else labels
     correct = (jnp.argmax(logits, -1) == target).astype(logits.dtype)
-    return ((losses * weights).sum() / valid_count,
-            (correct * weights).sum() / valid_count)
+    return ((losses * weights).sum() / valid_count, (correct * weights).sum() / valid_count)
 
 
 def make_cached_train_step(model, optimizer, amp=False, mixup=None):
     """Create one cached JIT train step with AMP and batch mixing bound."""
-    return nnx.cached_partial(
-        functools.partial(train_step, amp=amp, mixup=mixup), model, optimizer)
+    return nnx.cached_partial(functools.partial(train_step, amp=amp, mixup=mixup), model, optimizer)
 
 
 def make_cached_eval_step(model, amp=False):
@@ -395,10 +435,16 @@ def make_cached_eval_step(model, amp=False):
 def main(argv=None):
     p = argparse.ArgumentParser(prog="jimm.train")
     p.add_argument("--model", default="resnet50", help="model architecture name")
-    p.add_argument("--data-dir", required=True, help="dataset root containing train/ and val/ directories")
+    p.add_argument(
+        "--data-dir", required=True, help="dataset root containing train/ and val/ directories"
+    )
     p.add_argument("--epochs", type=int, default=90)
-    p.add_argument("--batch-size", type=int, default=128,
-                   help="process-local batch size (each host processes this batch size)")
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        default=128,
+        help="process-local batch size (each host processes this batch size)",
+    )
     p.add_argument("--img-size", type=int, default=224)
     p.add_argument("--num-classes", type=int, default=1000)
     p.add_argument("--lr", type=float, default=5e-4)
@@ -406,23 +452,51 @@ def main(argv=None):
     p.add_argument("--smoothing", type=float, default=0.1)
     p.add_argument("--drop-path", type=float, default=0.0)
     p.add_argument("--workers", type=int, default=4, help="data loader worker count per host")
-    p.add_argument("--prefetch", type=int, default=2, help="batches to prefetch to device (double buffering)")
-    p.add_argument("--clip-grad", type=float, default=1.0,
-                   help="global-norm gradient clipping (0 = disabled)")
-    p.add_argument("--steps-per-epoch", type=int, default=None,
-                   help="cap train steps per epoch (default: full epoch)")
-    p.add_argument("--log-interval", type=int, default=50, help="steps interval for logging throughput metrics")
+    p.add_argument(
+        "--prefetch", type=int, default=2, help="batches to prefetch to device (double buffering)"
+    )
+    p.add_argument(
+        "--clip-grad", type=float, default=1.0, help="global-norm gradient clipping (0 = disabled)"
+    )
+    p.add_argument(
+        "--steps-per-epoch",
+        type=int,
+        default=None,
+        help="cap train steps per epoch (default: full epoch)",
+    )
+    p.add_argument(
+        "--log-interval", type=int, default=50, help="steps interval for logging throughput metrics"
+    )
     p.add_argument("--output", default="./output", help="output directory for checkpoints")
-    p.add_argument("--max-to-keep", type=int, default=None,
-                   help="retain only the N most recent epoch checkpoints (default: keep all)")
-    p.add_argument("--resume", action="store_true", default=False,
-                   help="resume training from the latest checkpoint under --output (starts fresh if none)")
-    p.add_argument("--fsdp", action="store_true", default=False,
-                   help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)")
-    p.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True,
-                   help="enable AMP bfloat16 compute on Tensor Cores (default: true)")
-    p.add_argument("--auto-augment", default=None,
-                   help="timm policy: v0, original, rand-m9-n2, augmix-m3-w3-d-1, or trivialaugment")
+    p.add_argument(
+        "--max-to-keep",
+        type=int,
+        default=None,
+        help="retain only the N most recent epoch checkpoints (default: keep all)",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help="resume training from the latest checkpoint under --output (starts fresh if none)",
+    )
+    p.add_argument(
+        "--fsdp",
+        action="store_true",
+        default=False,
+        help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)",
+    )
+    p.add_argument(
+        "--amp",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="enable AMP bfloat16 compute on Tensor Cores (default: true)",
+    )
+    p.add_argument(
+        "--auto-augment",
+        default=None,
+        help="timm policy: v0, original, rand-m9-n2, augmix-m3-w3-d-1, or trivialaugment",
+    )
     p.add_argument("--vflip", type=float, default=0.0)
     p.add_argument("--grayscale-prob", type=float, default=0.0)
     p.add_argument("--gaussian-blur-prob", type=float, default=0.0)
@@ -432,14 +506,29 @@ def main(argv=None):
     p.add_argument("--mixup-mode", choices=("batch", "pair", "elem"), default="batch")
 
     # Profiler & Diagnostics
-    p.add_argument("--profile-step", type=int, default=None, help="step index to trigger JAX profiler trace")
-    p.add_argument("--profile-dir", type=str, default=None, help="directory to store JAX profile traces")
+    p.add_argument(
+        "--profile-step", type=int, default=None, help="step index to trigger JAX profiler trace"
+    )
+    p.add_argument(
+        "--profile-dir", type=str, default=None, help="directory to store JAX profile traces"
+    )
 
     # Multi-node / distributed options
-    p.add_argument("--dist-coordinator-address", type=str, default=None,
-                   help="IP:port of master coordinator for multi-node training (e.g. 192.168.1.1:12345)")
-    p.add_argument("--dist-num-processes", type=int, default=None, help="total number of nodes/hosts")
-    p.add_argument("--dist-process-id", type=int, default=None, help="rank/id of current node (0..num_processes-1)")
+    p.add_argument(
+        "--dist-coordinator-address",
+        type=str,
+        default=None,
+        help="IP:port of master coordinator for multi-node training (e.g. 192.168.1.1:12345)",
+    )
+    p.add_argument(
+        "--dist-num-processes", type=int, default=None, help="total number of nodes/hosts"
+    )
+    p.add_argument(
+        "--dist-process-id",
+        type=int,
+        default=None,
+        help="rank/id of current node (0..num_processes-1)",
+    )
     args = p.parse_args(argv)
 
     for name in ("epochs", "batch_size", "img_size", "num_classes", "prefetch", "log_interval"):
@@ -465,14 +554,14 @@ def main(argv=None):
         p.error("--profile-step and --profile-dir must be used together")
     if args.profile_step is not None and args.profile_step < 0:
         p.error("--profile-step must be non-negative")
-    dist_options = (
-        args.dist_coordinator_address, args.dist_num_processes, args.dist_process_id)
+    dist_options = (args.dist_coordinator_address, args.dist_num_processes, args.dist_process_id)
     if any(value is not None for value in dist_options) and not all(
-            value is not None for value in dist_options):
+        value is not None for value in dist_options
+    ):
         p.error("all three --dist-* options must be used together")
     if args.dist_num_processes is not None and (
-            args.dist_num_processes <= 0
-            or not 0 <= args.dist_process_id < args.dist_num_processes):
+        args.dist_num_processes <= 0 or not 0 <= args.dist_process_id < args.dist_num_processes
+    ):
         p.error("distributed process count/id must satisfy 0 <= id < count")
 
     # 1. Initialize distributed cluster if needed
@@ -485,16 +574,20 @@ def main(argv=None):
     global_batch_size = args.batch_size * world_size
 
     if rank == 0:
-        print(f"=== JAX Distributed Training Setup (MaxText / MaxDiffusion Pipeline) ===")
-        print(f"  Parallel mode:       {'FSDP (ZeRO-3 Sharded)' if args.fsdp else 'DDP (Replicated Weights)'}")
+        print("=== JAX Distributed Training Setup (MaxText / MaxDiffusion Pipeline) ===")
+        print(
+            f"  Parallel mode:       {'FSDP (ZeRO-3 Sharded)' if args.fsdp else 'DDP (Replicated Weights)'}"
+        )
         print(f"  Hosts (processes):   {world_size}")
-        print(f"  Total devices:       {len(total_devices)} (devices: {[d.id for d in total_devices]})")
+        print(
+            f"  Total devices:       {len(total_devices)} (devices: {[d.id for d in total_devices]})"
+        )
         print(f"  Local devices/host:  {len(local_devices)}")
         print(f"  Process-local batch: {args.batch_size}")
         print(f"  Global batch size:   {global_batch_size}")
         print(f"  Architecture:        {args.model} (classes: {args.num_classes})")
         print(f"  AMP (bfloat16):      {args.amp}")
-        print(f"=========================================================================")
+        print("=========================================================================")
 
     mixup = None
     if args.mixup_alpha > 0 or args.cutmix_alpha > 0:
@@ -508,44 +601,65 @@ def main(argv=None):
         )
 
     # 2. Setup 1D Data-Parallel Mesh & SPMD NamedSharding
-    mesh = jax.sharding.Mesh(total_devices, ('data',))
+    mesh = jax.sharding.Mesh(total_devices, ("data",))
     P = jax.sharding.PartitionSpec
-    data_sharding = jax.sharding.NamedSharding(mesh, P('data', None, None, None))
-    train_label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
-    eval_label_sharding = jax.sharding.NamedSharding(mesh, P('data',))
+    data_sharding = jax.sharding.NamedSharding(mesh, P("data", None, None, None))
+    train_label_sharding = jax.sharding.NamedSharding(
+        mesh,
+        P(
+            "data",
+        ),
+    )
+    eval_label_sharding = jax.sharding.NamedSharding(
+        mesh,
+        P(
+            "data",
+        ),
+    )
 
     # 3. Instantiate model and data pipeline
-    model = create_model(args.model, num_classes=args.num_classes,
-                         drop_path_rate=args.drop_path, rngs=nnx.Rngs(0))
+    model = create_model(
+        args.model, num_classes=args.num_classes, drop_path_rate=args.drop_path, rngs=nnx.Rngs(0)
+    )
     model.train()
 
     if args.batch_size % len(local_devices) != 0:
         raise ValueError(
             f"batch_size {args.batch_size} must be divisible by local device count "
             f"{len(local_devices)} for SPMD data sharding (each device gets "
-            f"batch_size / num_devices examples)")
+            f"batch_size / num_devices examples)"
+        )
 
     train_loader = create_loader(
-        f"{args.data_dir}/train", args.batch_size,
-        img_size=args.img_size, is_training=True,
+        f"{args.data_dir}/train",
+        args.batch_size,
+        img_size=args.img_size,
+        is_training=True,
         auto_augment=args.auto_augment,
         vflip=args.vflip,
         grayscale_prob=args.grayscale_prob,
         gaussian_blur_prob=args.gaussian_blur_prob,
-        num_workers=args.workers, seed=rank,
+        num_workers=args.workers,
+        seed=rank,
     )
-    steps_per_epoch = args.steps_per_epoch if args.steps_per_epoch is not None else max(1, len(train_loader))
+    steps_per_epoch = (
+        args.steps_per_epoch if args.steps_per_epoch is not None else max(1, len(train_loader))
+    )
 
     val_loader = None
     if os.path.isdir(f"{args.data_dir}/val"):
         val_loader = create_loader(
-            f"{args.data_dir}/val", args.batch_size,
-            img_size=args.img_size, is_training=False,
+            f"{args.data_dir}/val",
+            args.batch_size,
+            img_size=args.img_size,
+            is_training=False,
             num_workers=args.workers,
-            pad_remainder=True)
+            pad_remainder=True,
+        )
 
-    optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs,
-                               steps_per_epoch, clip_grad=args.clip_grad)
+    optimizer = make_optimizer(
+        model, args.lr, args.weight_decay, args.epochs, steps_per_epoch, clip_grad=args.clip_grad
+    )
 
     # Step-numbered checkpoint manager with retention; when validation runs,
     # additionally retain the epoch with the best val accuracy.
@@ -562,8 +676,10 @@ def main(argv=None):
         if step is not None:
             start_epoch = epoch + 1
             if rank == 0:
-                print(f"  [Resume] Restored checkpoint at epoch {epoch}; "
-                      f"resuming at epoch {start_epoch}")
+                print(
+                    f"  [Resume] Restored checkpoint at epoch {epoch}; "
+                    f"resuming at epoch {start_epoch}"
+                )
         elif rank == 0:
             print("  [Resume] No checkpoint found; starting fresh")
 
@@ -579,16 +695,19 @@ def main(argv=None):
 
     # Construct cached train & eval steps
     model.train()
-    cached_train_step = make_cached_train_step(
-        model, optimizer, amp=args.amp, mixup=mixup)
+    cached_train_step = make_cached_train_step(model, optimizer, amp=args.amp, mixup=mixup)
     train_rng = jax.random.fold_in(jax.random.PRNGKey(0), rank) if mixup is not None else None
     model.eval()
-    cached_eval_step = make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
+    cached_eval_step = (
+        make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
+    )
     model.train()
 
     # Async Host-to-Device prefetch pipeline (MaxText pattern)
     device_data_stream = prefetch_to_device(
-        iter(train_loader), data_sharding, train_label_sharding,
+        iter(train_loader),
+        data_sharding,
+        train_label_sharding,
         prefetch_size=args.prefetch,
     )
 
@@ -606,7 +725,9 @@ def main(argv=None):
                 # Start JAX profiler trace if requested
                 if args.profile_dir and global_step == args.profile_step:
                     if rank == 0:
-                        print(f"  [Profiler] Starting JAX trace at global step {global_step} -> {args.profile_dir}")
+                        print(
+                            f"  [Profiler] Starting JAX trace at global step {global_step} -> {args.profile_dir}"
+                        )
                     jax.profiler.start_trace(args.profile_dir)
                     profile_active = True
 
@@ -615,8 +736,7 @@ def main(argv=None):
 
                 if train_rng is not None:
                     step_rng = jax.random.fold_in(train_rng, global_step)
-                    loss, acc = cached_train_step(
-                        images, labels, args.smoothing, rng=step_rng)
+                    loss, acc = cached_train_step(images, labels, args.smoothing, rng=step_rng)
                 else:
                     loss, acc = cached_train_step(images, labels, args.smoothing)
 
@@ -625,7 +745,10 @@ def main(argv=None):
                     loss.block_until_ready()
                     compile_time = time.time() - t_step_start
                     if rank == 0:
-                        print(f"  [XLA] Step 0 compiled and executed in {compile_time:.2f}s", flush=True)
+                        print(
+                            f"  [XLA] Step 0 compiled and executed in {compile_time:.2f}s",
+                            flush=True,
+                        )
                     compiled_first_step = True
                     t_steady_start = time.time()
                 else:
@@ -636,14 +759,19 @@ def main(argv=None):
                 del images, labels
 
                 # Periodic step logging (MaxText style)
-                if (step + 1) % args.log_interval == 0 and rank == 0 and t_steady_start is not None and steady_steps > 0:
+                if (
+                    (step + 1) % args.log_interval == 0
+                    and rank == 0
+                    and t_steady_start is not None
+                    and steady_steps > 0
+                ):
                     elapsed_steady = time.time() - t_steady_start
                     step_time_ms = (elapsed_steady / steady_steps) * 1000.0
                     img_per_sec = (global_batch_size * steady_steps) / max(elapsed_steady, 1e-6)
                     step_loss = float(loss)
                     step_acc = float(acc)
                     print(
-                        f"epoch {epoch:>3} [{step+1:>4}/{steps_per_epoch}]: "
+                        f"epoch {epoch:>3} [{step + 1:>4}/{steps_per_epoch}]: "
                         f"loss {step_loss:.4f} acc {step_acc:.4f} | "
                         f"{img_per_sec:7.1f} img/s ({step_time_ms:.1f}ms/step)",
                         flush=True,
@@ -674,19 +802,21 @@ def main(argv=None):
                 # transfer with compute, like the training loop.
                 v_losses, v_accuracies, v_counts = [], [], []
                 val_stream = prefetch_to_device(
-                    iter(val_loader), data_sharding, eval_label_sharding,
+                    iter(val_loader),
+                    data_sharding,
+                    eval_label_sharding,
                     prefetch_size=args.prefetch,
-                    mask_sharding=eval_label_sharding)
+                    mask_sharding=eval_label_sharding,
+                )
                 for v_images, v_labels, v_valid in val_stream:
-                    l, a = cached_eval_step(v_images, v_labels, valid=v_valid)
-                    v_losses.append(l)
-                    v_accuracies.append(a)
+                    val_loss, val_acc = cached_eval_step(v_images, v_labels, valid=v_valid)
+                    v_losses.append(val_loss)
+                    v_accuracies.append(val_acc)
                     v_counts.append(v_valid.sum())
                 if not v_losses:
                     raise ValueError("validation loader produced no batches")
                 if rank == 0:
-                    v_loss_avg, v_acc_avg = _mean_metrics(
-                        v_losses, v_accuracies, v_counts)
+                    v_loss_avg, v_acc_avg = _mean_metrics(v_losses, v_accuracies, v_counts)
                     msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"
 
             if rank == 0:
@@ -696,7 +826,8 @@ def main(argv=None):
                 metrics = (
                     {"val_acc": v_acc_avg}
                     if val_loader is not None and cached_eval_step is not None
-                    else None)
+                    else None
+                )
                 ckpt_manager.save(epoch, model, optimizer, metrics=metrics)
 
     finally:

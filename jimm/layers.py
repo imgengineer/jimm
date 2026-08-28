@@ -6,6 +6,7 @@ Layout Convention:
   - Dense token sequences follow BNC: (Batch, Num_Tokens, Channels).
   - DropPath and BatchNorm modes automatically switch via `model.train()` and `model.eval()`.
 """
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -220,7 +221,9 @@ class ClassifierMixin:
         setattr(
             self,
             self._classifier_attr,
-            nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0)) if num_classes > 0 else None,
+            nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0))
+            if num_classes > 0
+            else None,
         )
 
     def forward_head(self, x: jax.Array) -> jax.Array:

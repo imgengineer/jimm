@@ -1,8 +1,10 @@
 """StarNet in flax nnx, NHWC. Mirrors timm.models.starnet (elementwise-mul blocks)."""
+
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, DropPath
+from ..registry import _cfg, register_model
+
 
 class StarBlock(nnx.Module):
     """dw 7x7 -> two 1x1 branches -> elementwise mul -> 1x1 (star operation)."""
@@ -22,14 +24,28 @@ class StarBlock(nnx.Module):
         y = self.bn(self.g(y))
         return x + self.drop_path(y)
 
-class StarNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(48, 96, 192, 384), depths=(3, 3, 12, 5), num_classes=1000,
-                 in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class StarNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(48, 96, 192, 384),
+        depths=(3, 3, 12, 5),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
-        self.stem = nnx.List([ConvBNAct(in_chans, channels[0] // 2, 3, 2, rngs=rngs),
-                              ConvBNAct(channels[0] // 2, channels[0], 3, 2, rngs=rngs)])
+        self.stem = nnx.List(
+            [
+                ConvBNAct(in_chans, channels[0] // 2, 3, 2, rngs=rngs),
+                ConvBNAct(channels[0] // 2, channels[0], 3, 2, rngs=rngs),
+            ]
+        )
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
         stages, chs, k = [], channels[0], 0
         for i, (c, d) in enumerate(zip(channels, depths)):
@@ -56,11 +72,13 @@ class StarNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "starnet_s050": ((32, 64, 128, 256), (1, 1, 3, 1)),
     "starnet_s1": ((48, 96, 192, 384), (2, 2, 6, 2)),
     "starnet_s2": ((64, 128, 256, 512), (2, 3, 8, 3)),
 }
+
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -69,8 +87,10 @@ def _make(name):
         model = StarNet(channels, depths, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

@@ -1,8 +1,10 @@
 """Pre-activation ResNet (ResNetV2) in flax nnx, NHWC. Mirrors timm.models.resnetv2."""
+
 from flax import nnx
 
 from ..layers import ClassifierMixin
-from ..registry import register_model, _cfg
+from ..registry import _cfg, register_model
+
 
 class PreActBottleneck(nnx.Module):
     expansion = 4
@@ -15,8 +17,11 @@ class PreActBottleneck(nnx.Module):
         self.conv2 = nnx.Conv(chs, chs, (3, 3), strides=(stride, stride), use_bias=False, rngs=rngs)
         self.bn3 = nnx.BatchNorm(chs, rngs=rngs)
         self.conv3 = nnx.Conv(chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.short_conv = nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride),
-                                   use_bias=False, rngs=rngs) if (stride != 1 or in_chs != out_chs) else None
+        self.short_conv = (
+            nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride), use_bias=False, rngs=rngs)
+            if (stride != 1 or in_chs != out_chs)
+            else None
+        )
 
     def __call__(self, x):
         x_preact = nnx.relu(self.bn1(x))
@@ -26,14 +31,22 @@ class PreActBottleneck(nnx.Module):
         y = self.conv3(nnx.relu(self.bn3(y)))
         return y + sc
 
-class ResNetV2(ClassifierMixin, nnx.Module):
 
-    def __init__(self, layers, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, *, rngs):
+class ResNetV2(ClassifierMixin, nnx.Module):
+    def __init__(
+        self, layers, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = 512 * PreActBottleneck.expansion
-        self.conv1 = nnx.Conv(in_chans, 64, (7, 7), strides=(2, 2), padding=[(3, 3), (3, 3)],
-                              use_bias=False, rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans,
+            64,
+            (7, 7),
+            strides=(2, 2),
+            padding=[(3, 3), (3, 3)],
+            use_bias=False,
+            rngs=rngs,
+        )
         chs, stages = 64, []
         for i, (n, stride) in enumerate(zip(layers, [1, 2, 2, 2])):
             width = 64 * 2**i
@@ -57,18 +70,22 @@ class ResNetV2(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _resnetv2(layers, **kwargs):
     model = ResNetV2(layers, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def resnetv2_50(**kwargs):
     return _resnetv2([3, 4, 6, 3], **kwargs)
 
+
 @register_model
 def resnetv2_101(**kwargs):
     return _resnetv2([3, 4, 23, 3], **kwargs)
+
 
 @register_model
 def resnetv2_152(**kwargs):

@@ -7,6 +7,7 @@ Checks, on representative architecture families:
 4. finite-difference gradient check vs autodiff,
 5. real optimization: loss decreases over repeated steps on a fixed batch.
 """
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -22,6 +23,7 @@ SEED = 0
 def _compute_grads(model, x, y):
     def loss_fn(model):
         return cross_entropy(model(x), y)
+
     return nnx.grad(loss_fn)(model)
 
 
@@ -39,11 +41,15 @@ def check_gradient_presence(names):
         model.train()
         grads = _grad_tree(model)
         state = nnx.state(grads)
-        leaves = jax.tree.leaves(jax.tree.map(lambda v: getattr(v, "value", v), state.to_pure_dict()))
+        leaves = jax.tree.leaves(
+            jax.tree.map(lambda v: getattr(v, "value", v), state.to_pure_dict())
+        )
         n_zero = sum(1 for g in leaves if float(jnp.abs(g).sum()) == 0.0)
         n_bad = sum(1 for g in leaves if not bool(jnp.isfinite(g).all()))
         assert n_bad == 0, f"{name}: {n_bad} non-finite gradients"
-        assert n_zero < len(leaves) * 0.2, f"{name}: too many dead gradients ({n_zero}/{len(leaves)})"
+        assert n_zero < len(leaves) * 0.2, (
+            f"{name}: too many dead gradients ({n_zero}/{len(leaves)})"
+        )
         assert len(leaves) > 0
         print(f"  {name}: {len(leaves)} param grads, dead={n_zero}, finite=True OK")
 
@@ -63,8 +69,10 @@ def check_layer_grad_flow():
             grp = "first" if i < n / 3 else ("middle" if i < 2 * n / 3 else "last")
             groups[grp] += g
         assert all(v > 0 for v in groups.values()), f"{name}: dead layer group {groups}"
-        print(f"  {name}: grad norms first/mid/last = "
-              f"{groups['first']:.2e}/{groups['middle']:.2e}/{groups['last']:.2e} OK")
+        print(
+            f"  {name}: grad norms first/mid/last = "
+            f"{groups['first']:.2e}/{groups['middle']:.2e}/{groups['last']:.2e} OK"
+        )
 
 
 def check_finite_difference():
@@ -73,8 +81,11 @@ def check_finite_difference():
     cpu = jax.devices("cpu")[0]
     model = jimm.create_model("vit_tiny_patch16_224", num_classes=3, rngs=nnx.Rngs(SEED))
     model.train()
-    model = jax.tree.map(lambda a: jax.device_put(a, cpu) if isinstance(a, jax.Array) else a,
-                         model, is_leaf=lambda a: isinstance(a, jax.Array))
+    model = jax.tree.map(
+        lambda a: jax.device_put(a, cpu) if isinstance(a, jax.Array) else a,
+        model,
+        is_leaf=lambda a: isinstance(a, jax.Array),
+    )
     x = jax.device_put(jax.random.normal(jax.random.PRNGKey(1), (1, 224, 224, 3)) * 0.1, cpu)
     y = jnp.array([1], jnp.int32)
 
@@ -85,9 +96,11 @@ def check_finite_difference():
     gpure = nnx.state(grads).to_pure_dict()
 
     # pick a few scalar positions in different layers
-    targets = [("patch_embed", "proj", "kernel", (0, 0, 0, 0)),
-               ("blocks", 0, "attn", "qkv", "kernel", (0, 0)),
-               ("head", "kernel", (0, 0))]
+    targets = [
+        ("patch_embed", "proj", "kernel", (0, 0, 0, 0)),
+        ("blocks", 0, "attn", "qkv", "kernel", (0, 0)),
+        ("head", "kernel", (0, 0)),
+    ]
     eps = 1e-2  # fp32: larger eps needed to clear forward reduction noise
 
     def get(d, keys):
@@ -118,36 +131,72 @@ def check_finite_difference():
         nnx.update(model, mpure)
         g_fd = (l_plus - l_minus) / (2 * eps)
         rel = abs(g_ad - g_fd) / max(abs(g_fd), 1e-8)
-        assert rel < 1e-1, f"finite-diff mismatch at {keys}: ad={g_ad:.6f} fd={g_fd:.6f} rel={rel:.3f}"
-        print(f"  fd-check {'.'.join(str(k) for k in keys)}: ad={g_ad:.5f} fd={g_fd:.5f} rel={rel:.2e} OK")
+        assert rel < 1e-1, (
+            f"finite-diff mismatch at {keys}: ad={g_ad:.6f} fd={g_fd:.6f} rel={rel:.3f}"
+        )
+        print(
+            f"  fd-check {'.'.join(str(k) for k in keys)}: ad={g_ad:.5f} fd={g_fd:.5f} rel={rel:.2e} OK"
+        )
 
 
 def check_loss_decreases():
     """Real optimization: loss strictly decreases on a fixed random batch."""
-    for name in ["resnet18", "vit_tiny_patch16_224", "convnext_tiny", "swin_tiny_patch4_window7_224"]:
+    for name in [
+        "resnet18",
+        "vit_tiny_patch16_224",
+        "convnext_tiny",
+        "swin_tiny_patch4_window7_224",
+    ]:
         model = jimm.create_model(name, num_classes=5, rngs=nnx.Rngs(SEED))
         model.train()
-        opt = make_optimizer(model, lr=5e-4, weight_decay=0.0, epochs=10, steps_per_epoch=10, clip_grad=1.0)
+        opt = make_optimizer(
+            model, lr=5e-4, weight_decay=0.0, epochs=10, steps_per_epoch=10, clip_grad=1.0
+        )
         rng = np.random.RandomState(SEED)
         images = jnp.array(rng.randn(8, 224, 224, 3), jnp.float32)
         labels = jnp.array(rng.randint(0, 5, 8), jnp.int32)
         losses = [float(train_step(model, opt, images, labels, 0.0)[0]) for _ in range(25)]
-        assert losses[-1] < losses[0], f"{name}: loss did not decrease {losses[0]:.3f} -> {losses[-1]:.3f}"
+        assert losses[-1] < losses[0], (
+            f"{name}: loss did not decrease {losses[0]:.3f} -> {losses[-1]:.3f}"
+        )
         assert all(np.isfinite(losses))
         print(f"  {name}: loss {losses[0]:.3f} -> {losses[-1]:.3f} (decreasing) OK")
 
 
 if __name__ == "__main__":
     import sys
-    names = [
-        "resnet18", "vgg11_bn", "densenet121", "efficientnet_b0",
-        "convnext_tiny", "vit_tiny_patch16_224", "swin_tiny_patch4_window7_224", "cait_xxs24_224"
-    ] if "--all" not in sys.argv else [
-        "resnet18", "vgg11_bn", "densenet121", "inception_v3", "efficientnet_b0",
-        "mobilenetv2_100", "convnext_tiny", "regnetx_002", "dpn68", "dla34",
-        "vit_tiny_patch16_224", "swin_tiny_patch4_window7_224", "cait_xxs24_224",
-        "maxvit_tiny_rw_224", "hrnet_w18_small", "volo_d1_224"
-    ]
+
+    names = (
+        [
+            "resnet18",
+            "vgg11_bn",
+            "densenet121",
+            "efficientnet_b0",
+            "convnext_tiny",
+            "vit_tiny_patch16_224",
+            "swin_tiny_patch4_window7_224",
+            "cait_xxs24_224",
+        ]
+        if "--all" not in sys.argv
+        else [
+            "resnet18",
+            "vgg11_bn",
+            "densenet121",
+            "inception_v3",
+            "efficientnet_b0",
+            "mobilenetv2_100",
+            "convnext_tiny",
+            "regnetx_002",
+            "dpn68",
+            "dla34",
+            "vit_tiny_patch16_224",
+            "swin_tiny_patch4_window7_224",
+            "cait_xxs24_224",
+            "maxvit_tiny_rw_224",
+            "hrnet_w18_small",
+            "volo_d1_224",
+        ]
+    )
     print(f"== 1. gradient presence across {len(names)} families ==")
     check_gradient_presence(names)
     print("== 2. per-layer gradient flow ==")

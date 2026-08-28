@@ -3,9 +3,10 @@
 Provides dynamic model registration, fuzzy query/filtering across 1,344 architectures,
 and instantiation with Flax NNX lifecycle & RNG management.
 """
+
+import fnmatch
 from collections import defaultdict
 from collections.abc import Callable, Sequence
-import fnmatch
 from typing import Any
 
 from flax import nnx
@@ -26,7 +27,9 @@ _model_default_cfgs: dict[str, dict[str, Any]] = {}
 _module_to_models: dict[str, set[str]] = defaultdict(set)
 
 
-def register_model(fn: Callable[..., nnx.Module] | None = None, *, default_cfg: dict[str, Any] | None = None):
+def register_model(
+    fn: Callable[..., nnx.Module] | None = None, *, default_cfg: dict[str, Any] | None = None
+):
     """Decorator to register a model architecture entrypoint into the jimm global registry.
 
     Args:
@@ -166,6 +169,7 @@ def create_model(
     # Load pretrained weights if requested
     if pretrained:
         from . import weights
+
         if isinstance(pretrained, str):
             weights.load_pretrained(model, pretrained)
         elif isinstance(pretrained, dict):
@@ -185,6 +189,7 @@ def create_model(
     # Wrap as FeatureExtractor if features_only is requested
     if features_only:
         from . import features
+
         return features.create_feature_extractor(model, out_indices=out_indices)
 
     return model

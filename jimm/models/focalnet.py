@@ -1,8 +1,10 @@
 """FocalNet in flax nnx, NHWC. Mirrors timm.models.focalnet (focal modulation)."""
+
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, gelu
+from ..registry import _cfg, register_model
+
 
 class FocalModulation(nnx.Module):
     """Multi-scale dw convs produce gates aggregated into a modulator."""
@@ -10,9 +12,14 @@ class FocalModulation(nnx.Module):
     def __init__(self, dim, levels=3, *, rngs):
         self.levels = levels
         self.in_proj = nnx.Conv(dim, dim, (1, 1), rngs=rngs)
-        self.dw = nnx.List([
-            nnx.Conv(dim, dim, (2 * l + 3, 2 * l + 3), feature_group_count=dim, rngs=rngs)
-            for l in range(levels)])
+        self.dw = nnx.List(
+            [
+                nnx.Conv(
+                    dim, dim, (2 * level + 3, 2 * level + 3), feature_group_count=dim, rngs=rngs
+                )
+                for level in range(levels)
+            ]
+        )
         self.gate_proj = nnx.Conv(dim, levels + 1, (1, 1), rngs=rngs)
         self.out_proj = nnx.Conv(dim, dim, (1, 1), rngs=rngs)
 
@@ -26,9 +33,10 @@ class FocalModulation(nnx.Module):
             ctxs.append(ctx)
         gates = self.gate_proj(x)  # (B,H,W,levels+1)
         agg = gates[..., :1] * h
-        for l, c in enumerate(ctxs):
-            agg = agg + gates[..., l + 1:l + 2] * c
+        for level, context in enumerate(ctxs):
+            agg = agg + gates[..., level + 1 : level + 2] * context
         return self.out_proj(agg)
+
 
 class FocalBlock(nnx.Module):
     def __init__(self, dim, levels=3, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -43,11 +51,21 @@ class FocalBlock(nnx.Module):
         x = x + self.drop_path(self.mod(self.norm1(x)))
         return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm2(x)))))
 
-class FocalNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(96, 192, 384, 768), depths=(2, 2, 6, 2), levels=3,
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0,
-                 drop_path_rate=0.0, *, rngs):
+class FocalNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(96, 192, 384, 768),
+        depths=(2, 2, 6, 2),
+        levels=3,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
         self.stem = nnx.Conv(in_chans, channels[0], (4, 4), strides=(4, 4), rngs=rngs)
@@ -59,10 +77,15 @@ class FocalNet(ClassifierMixin, nnx.Module):
             k += d
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            nnx.Sequential(nnx.LayerNorm(channels[i], rngs=rngs),
-                           nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
-            for i in range(3)])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(
+                    nnx.LayerNorm(channels[i], rngs=rngs),
+                    nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs),
+                )
+                for i in range(3)
+            ]
+        )
         self.head_norm = nnx.LayerNorm(channels[-1], rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
@@ -79,11 +102,13 @@ class FocalNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "focalnet_tiny_srf": ((96, 192, 384, 768), (2, 2, 6, 2)),
     "focalnet_small_srf": ((96, 192, 384, 768), (2, 2, 18, 2)),
     "focalnet_base_srf": ((128, 256, 512, 1024), (2, 2, 18, 2)),
 }
+
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -92,8 +117,10 @@ def _make(name):
         model = FocalNet(channels, depths, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

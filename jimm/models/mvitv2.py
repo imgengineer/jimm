@@ -1,9 +1,11 @@
 """MViT v2 in flax nnx. Mirrors timm.models.mvitv2 (pooled attention with rel-pos bias)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp
+from ..registry import _cfg, register_model
+
 
 class PooledAttention(nnx.Module):
     """Attention with pooled K/V (spatial stride) + 2D relative position bias."""
@@ -42,9 +44,14 @@ class PooledAttention(nnx.Module):
         # (B, heads, N, hd) -> pool on spatial -> back
         B, h, N, d = t.shape
         t = t.transpose(0, 2, 1, 3).reshape(B, H, W, h * d)
-        t = nnx.avg_pool(t, (self.pool_stride, self.pool_stride),
-                         strides=(self.pool_stride, self.pool_stride), padding="SAME")
+        t = nnx.avg_pool(
+            t,
+            (self.pool_stride, self.pool_stride),
+            strides=(self.pool_stride, self.pool_stride),
+            padding="SAME",
+        )
         return t.reshape(B, -1, h, d).transpose(0, 2, 1, 3)
+
 
 class MViTBlock(nnx.Module):
     def __init__(self, dim, num_heads, pool_stride, grid, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -58,12 +65,25 @@ class MViTBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
+
 class MViTv2(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
 
-    def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="avg",
-                 embed_dim=96, depths=(2, 3, 16, 3), num_heads=(1, 2, 4, 8),
-                 pool_strides=(1, 2, 2, 2), drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="avg",
+        embed_dim=96,
+        depths=(2, 3, 16, 3),
+        num_heads=(1, 2, 4, 8),
+        pool_strides=(1, 2, 2, 2),
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         # MViT stem: 7x7 conv stride 4 (overlapping), not patch_size-strided
         self.patch_embed = nnx.Conv(in_chans, embed_dim, (7, 7), strides=(4, 4), rngs=rngs)
@@ -71,12 +91,18 @@ class MViTv2(ClassifierMixin, nnx.Module):
         dims = [embed_dim * 2**i for i in range(len(depths))]
         self.num_features = dims[-1]
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
-        self.stage_projs = nnx.List([
-            nnx.Linear(chs if i == 0 else dims[i - 1], dims[i], rngs=rngs) for i in range(len(depths))])
+        self.stage_projs = nnx.List(
+            [
+                nnx.Linear(chs if i == 0 else dims[i - 1], dims[i], rngs=rngs)
+                for i in range(len(depths))
+            ]
+        )
         for i, (d, h) in enumerate(zip(depths, num_heads)):
             grid = img_size // 4 // 2**i
-            blocks = [MViTBlock(dims[i], h, pool_strides[i], (grid, grid), 4.0, dpr[k + j], rngs=rngs)
-                      for j in range(d)]
+            blocks = [
+                MViTBlock(dims[i], h, pool_strides[i], (grid, grid), 4.0, dpr[k + j], rngs=rngs)
+                for j in range(d)
+            ]
             k += d
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
@@ -105,21 +131,27 @@ class MViTv2(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {  # embed_dim, depths, num_heads, pool_strides
     "mvitv2_tiny": (96, (1, 2, 5, 2), (1, 2, 4, 8), (1, 2, 2, 2)),
     "mvitv2_small": (96, (2, 4, 11, 2), (1, 2, 4, 8), (1, 2, 2, 2)),
     "mvitv2_base": (96, (2, 6, 18, 2), (1, 2, 4, 8), (1, 2, 2, 2)),
 }
 
+
 def _make(name):
     embed_dim, depths, heads, ps = _CFGS[name]
 
     def entry(**kwargs):
-        model = MViTv2(embed_dim=embed_dim, depths=depths, num_heads=heads, pool_strides=ps, **kwargs)
+        model = MViTv2(
+            embed_dim=embed_dim, depths=depths, num_heads=heads, pool_strides=ps, **kwargs
+        )
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

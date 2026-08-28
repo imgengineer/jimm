@@ -1,14 +1,16 @@
 """HieraDet / SAM2 Hiera in flax nnx, NHWC. Mirrors timm.models.hieradet_sam2."""
+
 from flax import nnx
 
-from ..layers import DropPath, Mlp, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp
+from ..registry import _cfg, register_model
+
 
 class MultiScaleAttention(nnx.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=True, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.qkv = nnx.Linear(dim, dim * 3, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
 
@@ -18,6 +20,7 @@ class MultiScaleAttention(nnx.Module):
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(out)
+
 
 class MultiScaleBlock(nnx.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop_path=0.0, *, rngs):
@@ -31,33 +34,47 @@ class MultiScaleBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
-class HieraDet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, embed_dim: int = 96, num_heads: int = 1, stages=(1, 2, 7, 2),
-                 mlp_ratio: float = 4.0, num_classes: int = 1000, in_chans: int = 3,
-                 global_pool: str = "avg", drop_rate: float = 0.0, drop_path_rate: float = 0.0, *, rngs):
+class HieraDet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        embed_dim: int = 96,
+        num_heads: int = 1,
+        stages=(1, 2, 7, 2),
+        mlp_ratio: float = 4.0,
+        num_classes: int = 1000,
+        in_chans: int = 3,
+        global_pool: str = "avg",
+        drop_rate: float = 0.0,
+        drop_path_rate: float = 0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        
+
         self.stem = nnx.Conv(in_chans, embed_dim, (7, 7), strides=(4, 4), padding="SAME", rngs=rngs)
-        
-        dims = [embed_dim * (2 ** i) for i in range(len(stages))]
-        heads = [max(num_heads * (2 ** i), 1) for i in range(len(stages))]
+
+        dims = [embed_dim * (2**i) for i in range(len(stages))]
+        heads = [max(num_heads * (2**i), 1) for i in range(len(stages))]
         self.num_features = dims[-1]
 
         dpr = [drop_path_rate * i / max(sum(stages) - 1, 1) for i in range(sum(stages))]
         stages_list = []
         k = 0
         for i, (d, dim, h) in enumerate(zip(stages, dims, heads)):
-            stage_blocks = [MultiScaleBlock(dim, h, mlp_ratio, dpr[k + j], rngs=rngs) for j in range(d)]
+            stage_blocks = [
+                MultiScaleBlock(dim, h, mlp_ratio, dpr[k + j], rngs=rngs) for j in range(d)
+            ]
             k += d
             stages_list.append(nnx.List(stage_blocks))
         self.stages = nnx.List(stages_list)
 
-        self.downsamples = nnx.List([
-            nnx.Sequential(
-                nnx.Conv(dims[i], dims[i + 1], (2, 2), strides=(2, 2), rngs=rngs)
-            ) for i in range(len(stages) - 1)
-        ])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(nnx.Conv(dims[i], dims[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
+                for i in range(len(stages) - 1)
+            ]
+        )
 
         self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
@@ -78,6 +95,7 @@ class HieraDet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "sam2_hiera_tiny": dict(embed_dim=96, num_heads=1, stages=(1, 2, 7, 2)),
     "sam2_hiera_small": dict(embed_dim=96, num_heads=1, stages=(1, 2, 11, 2)),
@@ -86,6 +104,7 @@ _CFGS = {
     "hieradet_small": dict(embed_dim=96, num_heads=1, stages=(1, 2, 11, 2)),
 }
 
+
 def _make(name):
     cfg = _CFGS[name]
 
@@ -93,8 +112,10 @@ def _make(name):
         model = HieraDet(**dict(cfg, **kwargs))
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

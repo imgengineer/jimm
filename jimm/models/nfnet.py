@@ -1,18 +1,23 @@
 """NFNet in flax nnx, NHWC. Mirrors timm.models.nfnet (normalizer-free, ScWS convs)."""
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import SqueezeExcite, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, SqueezeExcite, gelu
+from ..registry import _cfg, register_model
+
 
 class ScaledStdConv(nnx.Module):
     """Weight-standardized conv (NFNet): w' = (w - mean) / sqrt(var * fan_in), NHWC."""
 
     def __init__(self, in_chs, out_chs, kernel=3, stride=1, groups=1, *, rngs):
         self.stride, self.groups = stride, groups
-        self.kernel = nnx.Param(nnx.initializers.lecun_normal()(
-            rngs.params(), (kernel, kernel, in_chs // groups, out_chs)))
+        self.kernel = nnx.Param(
+            nnx.initializers.lecun_normal()(
+                rngs.params(), (kernel, kernel, in_chs // groups, out_chs)
+            )
+        )
         self.bias = nnx.Param(jnp.zeros(out_chs))
 
     def __call__(self, x):
@@ -21,16 +26,25 @@ class ScaledStdConv(nnx.Module):
         var = jnp.var(w, axis=(0, 1, 2), keepdims=True)
         fan_in = w.shape[0] * w.shape[1] * w.shape[2]
         w = (w - mean) * jax.lax.rsqrt(var * fan_in + 1e-4)
-        return jax.lax.conv_general_dilated(
-            x, w, (self.stride, self.stride), "SAME",
-            dimension_numbers=("NHWC", "HWIO", "NHWC"),
-            feature_group_count=self.groups) + self.bias[...]
+        return (
+            jax.lax.conv_general_dilated(
+                x,
+                w,
+                (self.stride, self.stride),
+                "SAME",
+                dimension_numbers=("NHWC", "HWIO", "NHWC"),
+                feature_group_count=self.groups,
+            )
+            + self.bias[...]
+        )
+
 
 class NFBlock(nnx.Module):
     """NFNet bottleneck block: residual scaled by beta, activation gamma scaled."""
 
-    def __init__(self, in_chs, out_chs, stride, expansion=2, se_ratio=0.5,
-                 alpha=0.2, beta=1.0, *, rngs):
+    def __init__(
+        self, in_chs, out_chs, stride, expansion=2, se_ratio=0.5, alpha=0.2, beta=1.0, *, rngs
+    ):
         mid = out_chs * expansion // 2  # nfnet bottleneck
         out = out_chs * expansion
         self.alpha, self.beta = alpha, beta
@@ -39,8 +53,9 @@ class NFBlock(nnx.Module):
         self.conv3 = ScaledStdConv(mid, out, 1, rngs=rngs)
         self.se = SqueezeExcite(mid, rd_ratio=se_ratio, rngs=rngs)
         self.do_pool = stride == 2
-        self.short_conv = nnx.Conv(in_chs, out, (1, 1), use_bias=False, rngs=rngs) \
-            if in_chs != out else None
+        self.short_conv = (
+            nnx.Conv(in_chs, out, (1, 1), use_bias=False, rngs=rngs) if in_chs != out else None
+        )
 
     def __call__(self, x):
         y = gelu(self.conv1(x))
@@ -53,23 +68,38 @@ class NFBlock(nnx.Module):
             x = self.short_conv(x)
         return (y + x) * self.beta
 
-class NFNet(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(256, 512, 1536, 1536), depths=(1, 2, 6, 3), alpha=0.2,
-                 num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
+class NFNet(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(256, 512, 1536, 1536),
+        depths=(1, 2, 6, 3),
+        alpha=0.2,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.stem = nnx.List([ScaledStdConv(in_chans, 32, 3, 2, rngs=rngs),
-                              ScaledStdConv(32, 64, 3, 1, rngs=rngs),
-                              ScaledStdConv(64, 128, 3, 2, rngs=rngs),
-                              ScaledStdConv(128, channels[0] // 2, 3, 1, rngs=rngs)])
+        self.stem = nnx.List(
+            [
+                ScaledStdConv(in_chans, 32, 3, 2, rngs=rngs),
+                ScaledStdConv(32, 64, 3, 1, rngs=rngs),
+                ScaledStdConv(64, 128, 3, 2, rngs=rngs),
+                ScaledStdConv(128, channels[0] // 2, 3, 1, rngs=rngs),
+            ]
+        )
         # beta schedule: 1.0 for first block of net, then residual-preserving
         stages, chs = [], channels[0] // 2
         for i, (c, d) in enumerate(zip(channels, depths)):
             blocks = []
             for j in range(d):
                 beta = 1.0 if (i == 0 and j == 0) else 1.0  # simplified: beta=1
-                blocks.append(NFBlock(chs, c, 2 if j == 0 and i > 0 else 1, alpha=alpha,
-                                      beta=beta, rngs=rngs))
+                blocks.append(
+                    NFBlock(chs, c, 2 if j == 0 and i > 0 else 1, alpha=alpha, beta=beta, rngs=rngs)
+                )
                 chs = c * 2
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
@@ -88,12 +118,14 @@ class NFNet(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {  # channels, depths, alpha
     "nfnet_f0": ((256, 512, 1536, 1536), (1, 2, 6, 3), 0.2),
     "nfnet_f1": ((256, 512, 1536, 1536), (2, 4, 12, 6), 0.2),
     "nfnet_f2": ((256, 512, 1536, 1536), (3, 6, 18, 9), 0.2),
     "nfnet_f3": ((256, 512, 1536, 1536), (4, 8, 24, 12), 0.2),
 }
+
 
 def _make(name):
     channels, depths, alpha = _CFGS[name]
@@ -102,8 +134,10 @@ def _make(name):
         model = NFNet(channels, depths, alpha, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

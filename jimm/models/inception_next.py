@@ -1,9 +1,11 @@
 """InceptionNeXt in flax nnx, NHWC. Mirrors timm.models.inception_next (Inception depthwise convs)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, gelu
+from ..registry import _cfg, register_model
+
 
 class InceptionDWConv(nnx.Module):
     """dw conv split into square/horizontal/vertical/identity channel bands."""
@@ -19,6 +21,7 @@ class InceptionDWConv(nnx.Module):
         x1, x2, x3, x4 = jnp.split(x, 4, axis=-1)
         return jnp.concatenate([self.dw_sq(x1), self.dw_h(x2), self.dw_v(x3), x4], axis=-1)
 
+
 class InceptionBlock(nnx.Module):
     def __init__(self, dim, mlp_ratio=4.0, drop_path=0.0, *, rngs):
         self.idw = InceptionDWConv(dim, rngs=rngs)
@@ -31,10 +34,20 @@ class InceptionBlock(nnx.Module):
         x = x + self.drop_path(self.idw(x))
         return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm(x)))))
 
-class InceptionNeXt(ClassifierMixin, nnx.Module):
 
-    def __init__(self, channels=(96, 192, 384, 768), depths=(3, 3, 9, 3), num_classes=1000,
-                 in_chans=3, global_pool="avg", drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+class InceptionNeXt(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        channels=(96, 192, 384, 768),
+        depths=(3, 3, 9, 3),
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = channels[-1]
         self.stem = nnx.Conv(in_chans, channels[0], (4, 4), strides=(4, 4), rngs=rngs)
@@ -46,10 +59,15 @@ class InceptionNeXt(ClassifierMixin, nnx.Module):
             k += d
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.downsamples = nnx.List([
-            nnx.Sequential(nnx.LayerNorm(channels[i], rngs=rngs),
-                           nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs))
-            for i in range(3)])
+        self.downsamples = nnx.List(
+            [
+                nnx.Sequential(
+                    nnx.LayerNorm(channels[i], rngs=rngs),
+                    nnx.Conv(channels[i], channels[i + 1], (2, 2), strides=(2, 2), rngs=rngs),
+                )
+                for i in range(3)
+            ]
+        )
         self.head_norm = nnx.LayerNorm(channels[-1], rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
@@ -66,11 +84,13 @@ class InceptionNeXt(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "inception_next_atto": ((40, 80, 160, 320), (2, 2, 6, 2)),
     "inception_next_tiny": ((96, 192, 384, 768), (3, 3, 9, 3)),
     "inception_next_small": ((96, 192, 384, 768), (3, 3, 27, 3)),
 }
+
 
 def _make(name):
     channels, depths = _CFGS[name]
@@ -79,8 +99,10 @@ def _make(name):
         model = InceptionNeXt(channels, depths, **kwargs)
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

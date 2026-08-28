@@ -1,10 +1,12 @@
 """Visformer in flax nnx. Mirrors timm.models.visformer (conv stem + BN-in-transformer stages)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, Mlp, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, DropPath, Mlp
+from ..registry import _cfg, register_model
 from .vision_transformer import Attention
+
 
 class VisBlock(nnx.Module):
     """Transformer block with BatchNorm (visformer style) on token dim."""
@@ -20,23 +22,44 @@ class VisBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
+
 class Visformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
 
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
-                 global_pool="avg", embed_dim=384, depth=12, num_heads=6, mlp_ratio=4.0,
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="avg",
+        embed_dim=384,
+        depth=12,
+        num_heads=6,
+        mlp_ratio=4.0,
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         # conv stem: 2x conv3x3 s2 then patch-embed-ish conv
-        self.stem = nnx.List([
-            ConvBNAct(in_chans, embed_dim // 2, 3, 2, rngs=rngs),
-            ConvBNAct(embed_dim // 2, embed_dim, 3, 2, rngs=rngs)])
+        self.stem = nnx.List(
+            [
+                ConvBNAct(in_chans, embed_dim // 2, 3, 2, rngs=rngs),
+                ConvBNAct(embed_dim // 2, embed_dim, 3, 2, rngs=rngs),
+            ]
+        )
         n = (img_size // 4) ** 2
         self.pos_embed = nnx.Param(jnp.zeros((1, n, embed_dim)))
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
-        self.blocks = nnx.List([VisBlock(embed_dim, num_heads, mlp_ratio, drop_rate,
-                                         dpr[i], rngs=rngs) for i in range(depth)])
+        self.blocks = nnx.List(
+            [
+                VisBlock(embed_dim, num_heads, mlp_ratio, drop_rate, dpr[i], rngs=rngs)
+                for i in range(depth)
+            ]
+        )
         self.norm = nnx.BatchNorm(embed_dim, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
@@ -56,11 +79,13 @@ class Visformer(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def visformer_tiny(**kwargs):
     model = Visformer(embed_dim=192, depth=12, num_heads=3, **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def visformer_small(**kwargs):

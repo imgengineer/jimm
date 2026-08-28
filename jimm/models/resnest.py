@@ -1,17 +1,26 @@
 """ResNeSt (Split-Attention) in flax nnx, NHWC. Mirrors timm.models.resnest."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, DropPath, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, DropPath
+from ..registry import _cfg, register_model
+
 
 class SplitAttnConv(nnx.Module):
     """3x3 conv split into radix branches with cardinal groups, fused by attention."""
 
     def __init__(self, chs, stride=1, radix=2, cardinality=1, *, rngs):
         self.radix = radix
-        self.conv = nnx.Conv(chs, chs * radix, (3, 3), strides=(stride, stride),
-                             use_bias=False, feature_group_count=cardinality * radix, rngs=rngs)
+        self.conv = nnx.Conv(
+            chs,
+            chs * radix,
+            (3, 3),
+            strides=(stride, stride),
+            use_bias=False,
+            feature_group_count=cardinality * radix,
+            rngs=rngs,
+        )
         self.bn = nnx.BatchNorm(chs * radix, rngs=rngs)
         self.fc1 = nnx.Linear(chs, max(chs // 2, 32), rngs=rngs)
         self.fc2 = nnx.Linear(max(chs // 2, 32), chs * radix, rngs=rngs)
@@ -25,6 +34,7 @@ class SplitAttnConv(nnx.Module):
         u = u.reshape(B, H, W, self.radix, -1)
         return (u * a[:, None, None, :, :]).sum(axis=3)
 
+
 class ResNeStBottleneck(nnx.Module):
     expansion = 4
 
@@ -37,8 +47,11 @@ class ResNeStBottleneck(nnx.Module):
         self.conv3 = nnx.Conv(chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
         self._sc_stride = stride
-        self.short_conv = ConvBNAct(in_chs, out_chs, kernel=1, stride=1, act="identity", rngs=rngs) \
-            if (stride != 1 or in_chs != out_chs) else None
+        self.short_conv = (
+            ConvBNAct(in_chs, out_chs, kernel=1, stride=1, act="identity", rngs=rngs)
+            if (stride != 1 or in_chs != out_chs)
+            else None
+        )
         self.drop_path = DropPath(drop_path_rate, rngs=rngs)
 
     def __call__(self, x):
@@ -56,17 +69,30 @@ class ResNeStBottleneck(nnx.Module):
             sc = x
         return nnx.relu(y + self.drop_path(sc))
 
-class ResNeSt(ClassifierMixin, nnx.Module):
 
-    def __init__(self, layers, num_classes=1000, in_chans=3, global_pool="avg",
-                 drop_rate=0.0, drop_path_rate=0.0, deep_stem=True, *, rngs):
+class ResNeSt(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        layers,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        deep_stem=True,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = 512 * ResNeStBottleneck.expansion
         if deep_stem:
-            self.stem = nnx.List([
-                ConvBNAct(in_chans, 32, 3, 2, rngs=rngs),
-                ConvBNAct(32, 32, 3, 1, rngs=rngs),
-                ConvBNAct(32, 64, 3, 1, rngs=rngs)])
+            self.stem = nnx.List(
+                [
+                    ConvBNAct(in_chans, 32, 3, 2, rngs=rngs),
+                    ConvBNAct(32, 32, 3, 1, rngs=rngs),
+                    ConvBNAct(32, 64, 3, 1, rngs=rngs),
+                ]
+            )
         else:
             self.stem = nnx.List([ConvBNAct(in_chans, 64, 7, 2, rngs=rngs)])
         dpr = [drop_path_rate * i / max(sum(layers) - 1, 1) for i in range(sum(layers))]
@@ -75,7 +101,9 @@ class ResNeSt(ClassifierMixin, nnx.Module):
             width = 64 * 2**i
             blocks = []
             for j in range(n):
-                blocks.append(ResNeStBottleneck(chs, width, stride if j == 0 else 1, dpr[k], rngs=rngs))
+                blocks.append(
+                    ResNeStBottleneck(chs, width, stride if j == 0 else 1, dpr[k], rngs=rngs)
+                )
                 chs = width * ResNeStBottleneck.expansion
                 k += 1
             stages.append(nnx.List(blocks))
@@ -95,18 +123,22 @@ class ResNeSt(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _resnest(layers, deep_stem=True, **kwargs):
     model = ResNeSt(layers, deep_stem=deep_stem, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def resnest14d(**kwargs):
     return _resnest([1, 1, 1, 1], **kwargs)
 
+
 @register_model
 def resnest50d(**kwargs):
     return _resnest([3, 4, 6, 3], **kwargs)
+
 
 @register_model
 def resnest101e(**kwargs):

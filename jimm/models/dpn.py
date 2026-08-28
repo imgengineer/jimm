@@ -4,17 +4,21 @@ Block: c1x1_a (in->r) -> c3x3_b (r->r, groups) -> c1x1_c (r->bw+inc).
 Shortcut path: 1x1 proj (in->bw+2*inc) split into residual (bw) + dense-seed (2*inc);
 output = residual (bw ch) concat dense (2*inc + inc per block, accumulating).
 """
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ConvBNAct, global_pool_nhwc, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, ConvBNAct, global_pool_nhwc
+from ..registry import _cfg, register_model
+
 
 class DualPathBlock(nnx.Module):
     def __init__(self, in_chs, r, bw, inc, groups, key_stride, has_proj, b, *, rngs):
         self.bw, self.inc = bw, inc
         self.has_proj = has_proj
-        self.c1x1_w = ConvBNAct(in_chs, bw + 2 * inc, 1, key_stride, rngs=rngs) if has_proj else None
+        self.c1x1_w = (
+            ConvBNAct(in_chs, bw + 2 * inc, 1, key_stride, rngs=rngs) if has_proj else None
+        )
         self.c1x1_a = ConvBNAct(in_chs, r, 1, rngs=rngs)
         self.c3x3_b = ConvBNAct(r, r, 3, key_stride, groups=groups, rngs=rngs)
         if b:
@@ -29,13 +33,13 @@ class DualPathBlock(nnx.Module):
     def __call__(self, x):
         if self.c1x1_w is not None:
             x_s = self.c1x1_w(x)
-            x_s1, x_s2 = x_s[..., :self.bw], x_s[..., self.bw:]
+            x_s1, x_s2 = x_s[..., : self.bw], x_s[..., self.bw :]
         else:
-            x_s1, x_s2 = x[..., :self.bw], x[..., self.bw:]
+            x_s1, x_s2 = x[..., : self.bw], x[..., self.bw :]
         y = self.c3x3_b(self.c1x1_a(x))
         if self.c1x1_c is not None:
             y = self.c1x1_c(y)
-            out1, out2 = y[..., :self.bw], y[..., self.bw:]
+            out1, out2 = y[..., : self.bw], y[..., self.bw :]
         else:
             if self.c_bn is None or self.c1 is None or self.c2 is None:
                 raise RuntimeError("DPN projected branch is missing its bottleneck layers")
@@ -45,10 +49,24 @@ class DualPathBlock(nnx.Module):
         dense = jnp.concatenate([x_s2, out2], axis=-1)
         return jnp.concatenate([resid, dense], axis=-1)
 
-class DPN(ClassifierMixin, nnx.Module):
 
-    def __init__(self, k_sec, inc_sec, k_r, groups, small=False, num_init_features=64,
-                 b=False, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs):
+class DPN(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        k_sec,
+        inc_sec,
+        k_r,
+        groups,
+        small=False,
+        num_init_features=64,
+        b=False,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         bw_factor = 1 if small else 4
         self.conv1_1 = ConvBNAct(in_chans, num_init_features, 3 if small else 7, 2, rngs=rngs)
@@ -57,7 +75,9 @@ class DPN(ClassifierMixin, nnx.Module):
             bw = 64 * bw_factor * 2**i
             inc = inc_sec[i]
             r = (k_r * bw) // (64 * bw_factor)
-            blocks = [DualPathBlock(in_chs, r, bw, inc, groups, 1 if i == 0 else 2, True, b, rngs=rngs)]
+            blocks = [
+                DualPathBlock(in_chs, r, bw, inc, groups, 1 if i == 0 else 2, True, b, rngs=rngs)
+            ]
             in_chs = bw + 3 * inc
             for _ in range(2, k + 1):
                 blocks.append(DualPathBlock(in_chs, r, bw, inc, groups, 1, False, b, rngs=rngs))
@@ -86,6 +106,7 @@ class DPN(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {  # k_sec, inc_sec, k_r, groups, small, num_init_features, b
     "dpn68": ((3, 4, 12, 3), (16, 32, 32, 64), 128, 32, True, 10, False),
     "dpn68b": ((3, 4, 12, 3), (16, 32, 32, 64), 128, 32, True, 10, True),
@@ -95,6 +116,7 @@ _CFGS = {  # k_sec, inc_sec, k_r, groups, small, num_init_features, b
     "dpn131": ((4, 8, 28, 3), (16, 32, 32, 128), 160, 40, False, 128, False),
 }
 
+
 def _make(name):
     k_sec, inc_sec, k_r, groups, small, nif, b = _CFGS[name]
 
@@ -102,8 +124,10 @@ def _make(name):
         model = DPN(k_sec, inc_sec, k_r, groups, small, nif, b, **kwargs)
         model.default_cfg = _cfg(input_size=(3, 224, 224))
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

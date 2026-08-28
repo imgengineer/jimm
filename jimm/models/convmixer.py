@@ -1,8 +1,10 @@
 """ConvMixer in flax nnx, NHWC. Mirrors timm.models.convmixer."""
+
 from flax import nnx
 
-from ..layers import global_pool_nhwc, ClassifierMixin, gelu
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, gelu, global_pool_nhwc
+from ..registry import _cfg, register_model
+
 
 class ConvMixerBlock(nnx.Module):
     def __init__(self, dim, kernel=9, *, rngs):
@@ -16,13 +18,25 @@ class ConvMixerBlock(nnx.Module):
         x = x + y
         return gelu(self.bn2(self.pw(x)))
 
-class ConvMixer(ClassifierMixin, nnx.Module):
 
-    def __init__(self, dim=1536, depth=20, patch_size=7, kernel=9, num_classes=1000,
-                 in_chans=3, global_pool="avg", *, rngs):
+class ConvMixer(ClassifierMixin, nnx.Module):
+    def __init__(
+        self,
+        dim=1536,
+        depth=20,
+        patch_size=7,
+        kernel=9,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = dim
-        self.stem = nnx.Conv(in_chans, dim, (patch_size, patch_size), strides=(patch_size, patch_size), rngs=rngs)
+        self.stem = nnx.Conv(
+            in_chans, dim, (patch_size, patch_size), strides=(patch_size, patch_size), rngs=rngs
+        )
         self.stem_bn = nnx.BatchNorm(dim, rngs=rngs)
         self.blocks = nnx.List([ConvMixerBlock(dim, kernel, rngs=rngs) for _ in range(depth)])
         self.fc = nnx.Linear(dim, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -40,17 +54,20 @@ class ConvMixer(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def convmixer_768_32(**kwargs):
     model = ConvMixer(768, 32, patch_size=7, kernel=9, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def convmixer_1024_20(**kwargs):
     model = ConvMixer(1024, 20, patch_size=14, kernel=9, **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def convmixer_1536_20(**kwargs):

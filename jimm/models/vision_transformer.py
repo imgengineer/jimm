@@ -1,9 +1,11 @@
 """Vision Transformer in flax nnx, NHWC input. Mirrors timm.models.vision_transformer."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
+from ..registry import _cfg, register_model
+
 
 class Attention(nnx.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=True, drop=0.0, *, rngs):
@@ -21,9 +23,11 @@ class Attention(nnx.Module):
         x = out.reshape(B, N, C)
         return self.drop(self.proj(x))
 
+
 class Block(nnx.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4.0, qkv_bias=True, drop=0.0,
-                 drop_path=0.0, *, rngs):
+    def __init__(
+        self, dim, num_heads, mlp_ratio=4.0, qkv_bias=True, drop=0.0, drop_path=0.0, *, rngs
+    ):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = Attention(dim, num_heads, qkv_bias, drop, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
@@ -34,13 +38,28 @@ class Block(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
+
 class VisionTransformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
 
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
-                 global_pool="", embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0,
-                 qkv_bias=True, drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="",
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
@@ -49,8 +68,12 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
         self.pos_embed = nnx.Param(jnp.zeros((1, n + 1, embed_dim)))
         self.pos_drop = nnx.Dropout(drop_rate, rngs=rngs)
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
-        self.blocks = nnx.List([Block(embed_dim, num_heads, mlp_ratio, qkv_bias,
-                                      drop_rate, dpr[i], rngs=rngs) for i in range(depth)])
+        self.blocks = nnx.List(
+            [
+                Block(embed_dim, num_heads, mlp_ratio, qkv_bias, drop_rate, dpr[i], rngs=rngs)
+                for i in range(depth)
+            ]
+        )
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -58,7 +81,9 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
+        x = jnp.concatenate(
+            [jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1
+        )
         x = self.pos_drop(x + self.pos_embed[...])
         for blk in self.blocks:
             x = blk(x)
@@ -72,57 +97,76 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 def _vit(img_size, patch_size, embed_dim, depth, num_heads, **kwargs):
-    model = VisionTransformer(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim,
-                              depth=depth, num_heads=num_heads, **kwargs)
+    model = VisionTransformer(
+        img_size=img_size,
+        patch_size=patch_size,
+        embed_dim=embed_dim,
+        depth=depth,
+        num_heads=num_heads,
+        **kwargs,
+    )
     model.default_cfg = _cfg(input_size=(3, img_size, img_size))
     return model
+
 
 @register_model
 def vit_tiny_patch16_224(**kwargs):
     return _vit(224, 16, 192, 12, 3, **kwargs)
 
+
 @register_model
 def vit_small_patch16_224(**kwargs):
     return _vit(224, 16, 384, 12, 6, **kwargs)
+
 
 @register_model
 def vit_base_patch16_224(**kwargs):
     return _vit(224, 16, 768, 12, 12, **kwargs)
 
+
 @register_model
 def vit_large_patch16_224(**kwargs):
     return _vit(224, 16, 1024, 24, 16, **kwargs)
+
 
 # DeiT: same architecture as ViT, different training recipe (timm registers both)
 @register_model
 def deit_tiny_patch16_224(**kwargs):
     return _vit(224, 16, 192, 12, 3, **kwargs)
 
+
 @register_model
 def deit_small_patch16_224(**kwargs):
     return _vit(224, 16, 384, 12, 6, **kwargs)
 
+
 @register_model
 def deit_base_patch16_224(**kwargs):
     return _vit(224, 16, 768, 12, 12, **kwargs)
+
 
 # BEiT v1 / DeiT-III: ViT architecture, different pretraining/recipes
 @register_model
 def beit_base_patch16_224(**kwargs):
     return _vit(224, 16, 768, 12, 12, **kwargs)
 
+
 @register_model
 def beit_large_patch16_224(**kwargs):
     return _vit(224, 16, 1024, 24, 16, **kwargs)
+
 
 @register_model
 def deit3_small_patch16_224(**kwargs):
     return _vit(224, 16, 384, 12, 6, **kwargs)
 
+
 @register_model
 def deit3_base_patch16_224(**kwargs):
     return _vit(224, 16, 768, 12, 12, **kwargs)
+
 
 @register_model
 def deit3_large_patch16_224(**kwargs):

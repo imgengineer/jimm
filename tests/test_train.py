@@ -1,4 +1,5 @@
 """Unit tests for jimm.train."""
+
 import os
 import shutil
 import tempfile
@@ -97,14 +98,17 @@ def test_batch_validation_and_metric_aggregation():
 
 def test_make_optimizer():
     m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
-    opt1 = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10, clip_grad=0.0)
+    opt1 = make_optimizer(
+        m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10, clip_grad=0.0
+    )
     assert isinstance(opt1, nnx.Optimizer)
 
-    opt2 = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10, clip_grad=1.0)
+    opt2 = make_optimizer(
+        m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10, clip_grad=1.0
+    )
     assert isinstance(opt2, nnx.Optimizer)
 
-    one_step = make_optimizer(
-        m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=1)
+    one_step = make_optimizer(m, lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=1)
     assert isinstance(one_step, nnx.Optimizer)
 
     for kwargs in (
@@ -112,8 +116,7 @@ def test_make_optimizer():
         {"warmup_ratio": -1},
         {"min_lr_ratio": 2},
     ):
-        options = dict(
-            lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
+        options = dict(lr=1e-3, weight_decay=0.01, epochs=1, steps_per_epoch=10)
         options.update(kwargs)
         with pytest.raises(ValueError):
             make_optimizer(m, **options)
@@ -130,8 +133,7 @@ def test_make_optimizer_weight_decay_excludes_1d_params():
     def run(weight_decay):
         m = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(0))
         init = jax.tree.map(lambda p: jnp.array(p), nnx.to_pure_dict(nnx.state(m, nnx.Param)))
-        opt = make_optimizer(m, lr=1e-3, weight_decay=weight_decay,
-                             epochs=1, steps_per_epoch=10)
+        opt = make_optimizer(m, lr=1e-3, weight_decay=weight_decay, epochs=1, steps_per_epoch=10)
         # step 0 is a no-op (warmup lr=0); step 1 applies lr=peak
         zero_grad_step(m, opt)
         zero_grad_step(m, opt)
@@ -142,10 +144,14 @@ def test_make_optimizer_weight_decay_excludes_1d_params():
 
     # zero grads + wd=0 -> nothing moves
     for path, leaf in jax.tree.flatten_with_path(after_no_wd)[0]:
-        ref = {tuple(p): l for p, l in jax.tree.flatten_with_path(init)[0]}[tuple(path)]
+        ref = {
+            tuple(param_path): value for param_path, value in jax.tree.flatten_with_path(init)[0]
+        }[tuple(path)]
         assert float(jnp.abs(jnp.asarray(leaf) - jnp.asarray(ref)).max()) == 0.0
 
-    flat_init = {tuple(p): l for p, l in jax.tree.flatten_with_path(init)[0]}
+    flat_init = {
+        tuple(param_path): value for param_path, value in jax.tree.flatten_with_path(init)[0]
+    }
     saw_kernel = False
     for path, leaf in jax.tree.flatten_with_path(after_wd)[0]:
         ref = flat_init[tuple(path)]
@@ -192,8 +198,7 @@ def test_train_and_eval_step():
 
     mixup = MixupCutmix(mixup_alpha=0.8, cutmix_alpha=1.0, num_classes=5)
     mixed_train = make_cached_train_step(m, opt, mixup=mixup)
-    mixed_loss, mixed_acc = mixed_train(
-        images, labels, 0.1, rng=jax.random.PRNGKey(0))
+    mixed_loss, mixed_acc = mixed_train(images, labels, 0.1, rng=jax.random.PRNGKey(0))
     assert float(mixed_loss) > 0.0
     assert 0.0 <= float(mixed_acc) <= 1.0
 
@@ -219,11 +224,13 @@ def test_eval_step_ignores_padded_examples():
         def __call__(self, images):
             return images[:, 0, 0, :]
 
-    logits = jnp.array([
-        [4.0, 1.0, 0.0],
-        [0.0, 4.0, 1.0],
-        [10.0, 0.0, 0.0],
-    ])
+    logits = jnp.array(
+        [
+            [4.0, 1.0, 0.0],
+            [0.0, 4.0, 1.0],
+            [10.0, 0.0, 0.0],
+        ]
+    )
     images = logits[:, None, None, :]
     labels = jnp.array([0, 1, 2], dtype=jnp.int32)
     valid = jnp.array([True, True, False])
@@ -247,7 +254,8 @@ def test_jax_mixup_cutmix_modes():
                 num_classes=4,
             )
             mixed_images, mixed_labels = _mixup_cutmix_jax(
-                images, labels, jax.random.PRNGKey(0), config)
+                images, labels, jax.random.PRNGKey(0), config
+            )
             assert mixed_images.shape == images.shape
             assert mixed_labels.shape == (4, 4)
             np.testing.assert_allclose(np.asarray(mixed_labels).sum(axis=1), 1.0)
@@ -257,12 +265,16 @@ def test_jax_mixup_identity_applies_label_smoothing():
     images = jnp.ones((4, 8, 8, 3), dtype=jnp.float32)
     labels = jnp.array([0, 1, 2, 3], dtype=jnp.int32)
     config = MixupCutmix(
-        mixup_alpha=0.8, cutmix_alpha=0.0, prob=0.5,
-        mode="batch", label_smoothing=0.1, num_classes=4)
+        mixup_alpha=0.8,
+        cutmix_alpha=0.0,
+        prob=0.5,
+        mode="batch",
+        label_smoothing=0.1,
+        num_classes=4,
+    )
     # PRNGKey(0) draws uniform ~0.948 >= prob, so this batch takes the
     # identity (skip-mixing) branch.
-    mixed_images, mixed_labels = _mixup_cutmix_jax(
-        images, labels, jax.random.PRNGKey(0), config)
+    mixed_images, mixed_labels = _mixup_cutmix_jax(images, labels, jax.random.PRNGKey(0), config)
     # Batches that skip mixing must still receive smoothed soft targets.
     expected = np.eye(4) * 0.9 + 0.1 / 4
     np.testing.assert_allclose(np.asarray(mixed_labels), expected)
@@ -293,11 +305,13 @@ def test_init_distributed(monkeypatch):
         lambda **kwargs: calls.append(kwargs),
     )
     init_distributed("127.0.0.1:12345", num_processes=2, process_id=1)
-    assert calls == [{
-        "coordinator_address": "127.0.0.1:12345",
-        "num_processes": 2,
-        "process_id": 1,
-    }]
+    assert calls == [
+        {
+            "coordinator_address": "127.0.0.1:12345",
+            "num_processes": 2,
+            "process_id": 1,
+        }
+    ]
 
     def fail_initialize():
         raise RuntimeError("synthetic failure")
@@ -315,25 +329,38 @@ def test_main_training_cli(temp_dataset, monkeypatch):
         os.remove(f"{temp_dataset}/val/cat/img_3.png")
         profile_calls = []
         monkeypatch.setattr(
-            jax.profiler, "start_trace",
-            lambda path: profile_calls.append(("start", path)))
+            jax.profiler, "start_trace", lambda path: profile_calls.append(("start", path))
+        )
         monkeypatch.setattr(
-            jax.profiler, "stop_trace",
-            lambda: profile_calls.append(("stop", None)))
+            jax.profiler, "stop_trace", lambda: profile_calls.append(("stop", None))
+        )
         # Run 1 quick epoch CLI on synthetic dataset
-        main([
-            "--model", "resnet18",
-            "--data-dir", temp_dataset,
-            "--epochs", "1",
-            "--batch-size", "4",
-            "--img-size", "32",
-            "--num-classes", "2",
-            "--workers", "0",
-            "--steps-per-epoch", "1",
-            "--profile-step", "0",
-            "--profile-dir", f"{out_dir}/profiles",
-            "--output", out_dir,
-        ])
+        main(
+            [
+                "--model",
+                "resnet18",
+                "--data-dir",
+                temp_dataset,
+                "--epochs",
+                "1",
+                "--batch-size",
+                "4",
+                "--img-size",
+                "32",
+                "--num-classes",
+                "2",
+                "--workers",
+                "0",
+                "--steps-per-epoch",
+                "1",
+                "--profile-step",
+                "0",
+                "--profile-dir",
+                f"{out_dir}/profiles",
+                "--output",
+                out_dir,
+            ]
+        )
         assert profile_calls == [
             ("start", f"{out_dir}/profiles"),
             ("stop", None),
@@ -342,48 +369,73 @@ def test_main_training_cli(temp_dataset, monkeypatch):
         assert os.path.exists(f"{out_dir}/resnet18/0")
 
         # Run with --fsdp
-        main([
-            "--model", "resnet18",
-            "--data-dir", temp_dataset,
-            "--epochs", "1",
-            "--batch-size", "4",
-            "--img-size", "32",
-            "--num-classes", "2",
-            "--workers", "0",
-            "--fsdp",
-            "--output", out_dir,
-        ])
+        main(
+            [
+                "--model",
+                "resnet18",
+                "--data-dir",
+                temp_dataset,
+                "--epochs",
+                "1",
+                "--batch-size",
+                "4",
+                "--img-size",
+                "32",
+                "--num-classes",
+                "2",
+                "--workers",
+                "0",
+                "--fsdp",
+                "--output",
+                out_dir,
+            ]
+        )
 
         # Test batch size divisibility error by mocking local_devices
         monkeypatch.setattr(jax, "local_devices", lambda: [None, None])
         with pytest.raises(ValueError, match="divisible by local device count"):
-            main([
-                "--model", "resnet18",
-                "--data-dir", temp_dataset,
-                "--batch-size", "3",  # 3 is not divisible by 2
-                "--output", out_dir,
-            ])
+            main(
+                [
+                    "--model",
+                    "resnet18",
+                    "--data-dir",
+                    temp_dataset,
+                    "--batch-size",
+                    "3",  # 3 is not divisible by 2
+                    "--output",
+                    out_dir,
+                ]
+            )
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
 
 
-@pytest.mark.parametrize("options", [
-    ["--prefetch", "0"],
-    ["--log-interval", "0"],
-    ["--steps-per-epoch", "0"],
-    ["--max-to-keep", "0"],
-    ["--workers", "-1"],
-    ["--profile-step", "0"],
-    ["--profile-dir", "profiles"],
-    ["--profile-step", "-1", "--profile-dir", "profiles"],
-    ["--lr", "nan"],
-    ["--mixup-alpha", "-1"],
-    ["--smoothing", "1.1"],
-    ["--drop-path", "1"],
-    ["--dist-num-processes", "2"],
-    ["--dist-coordinator-address", "localhost:1", "--dist-num-processes", "2",
-     "--dist-process-id", "2"],
-])
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--prefetch", "0"],
+        ["--log-interval", "0"],
+        ["--steps-per-epoch", "0"],
+        ["--max-to-keep", "0"],
+        ["--workers", "-1"],
+        ["--profile-step", "0"],
+        ["--profile-dir", "profiles"],
+        ["--profile-step", "-1", "--profile-dir", "profiles"],
+        ["--lr", "nan"],
+        ["--mixup-alpha", "-1"],
+        ["--smoothing", "1.1"],
+        ["--drop-path", "1"],
+        ["--dist-num-processes", "2"],
+        [
+            "--dist-coordinator-address",
+            "localhost:1",
+            "--dist-num-processes",
+            "2",
+            "--dist-process-id",
+            "2",
+        ],
+    ],
+)
 def test_main_rejects_invalid_cli(options):
     with pytest.raises(SystemExit, match="2"):
         main(["--data-dir", "unused", *options])
@@ -393,13 +445,20 @@ def test_main_training_cli_resume(temp_dataset, capsys):
     out_dir = tempfile.mkdtemp()
     try:
         common = [
-            "--model", "resnet18",
-            "--data-dir", temp_dataset,
-            "--batch-size", "4",
-            "--img-size", "32",
-            "--num-classes", "2",
-            "--workers", "0",
-            "--output", out_dir,
+            "--model",
+            "resnet18",
+            "--data-dir",
+            temp_dataset,
+            "--batch-size",
+            "4",
+            "--img-size",
+            "32",
+            "--num-classes",
+            "2",
+            "--workers",
+            "0",
+            "--output",
+            out_dir,
         ]
         main(common + ["--epochs", "2", "--max-to-keep", "1"])
         assert os.path.exists(f"{out_dir}/resnet18/1")
@@ -416,11 +475,22 @@ def test_prefetch_to_device():
     mesh = jax.sharding.Mesh(jax.devices(), ("data",))
     P = jax.sharding.PartitionSpec
     data_sharding = jax.sharding.NamedSharding(mesh, P("data", None, None, None))
-    label_sharding = jax.sharding.NamedSharding(mesh, P("data",))
+    label_sharding = jax.sharding.NamedSharding(
+        mesh,
+        P(
+            "data",
+        ),
+    )
 
     dummy_batches = [
-        {"image": np.ones((2, 16, 16, 3), dtype=np.float32), "label": np.array([0, 1], dtype=np.int32)},
-        {"image": np.ones((2, 16, 16, 3), dtype=np.float32) * 2, "label": np.array([1, 0], dtype=np.int32)},
+        {
+            "image": np.ones((2, 16, 16, 3), dtype=np.float32),
+            "label": np.array([0, 1], dtype=np.int32),
+        },
+        {
+            "image": np.ones((2, 16, 16, 3), dtype=np.float32) * 2,
+            "label": np.array([1, 0], dtype=np.int32),
+        },
     ]
 
     stream = prefetch_to_device(iter(dummy_batches), data_sharding, label_sharding, prefetch_size=2)
@@ -433,17 +503,24 @@ def test_prefetch_to_device():
         assert labels.shape == (2,)
 
     masked_batches = [dict(dummy_batches[0], valid=np.array([True, False]))]
-    masked_items = list(prefetch_to_device(
-        iter(masked_batches), data_sharding, label_sharding,
-        prefetch_size=1, mask_sharding=label_sharding))
+    masked_items = list(
+        prefetch_to_device(
+            iter(masked_batches),
+            data_sharding,
+            label_sharding,
+            prefetch_size=1,
+            mask_sharding=label_sharding,
+        )
+    )
     assert len(masked_items) == 1
     _, _, valid = masked_items[0]
     assert valid.shape == (2,)
     assert valid.dtype == jnp.bool_
 
     with pytest.raises(ValueError, match="prefetch_size"):
-        list(prefetch_to_device(
-            iter(dummy_batches), data_sharding, label_sharding, prefetch_size=0))
+        list(
+            prefetch_to_device(iter(dummy_batches), data_sharding, label_sharding, prefetch_size=0)
+        )
 
 
 def test_train_step_with_metrics():

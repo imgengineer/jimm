@@ -8,6 +8,7 @@ Architecture & Conventions:
   - Weights Layout: Conv kernels stored in (H, W, In, Out), Linear weights in (In, Out).
   - Registry: 100% compatible coverage of timm entrypoints and architectures.
 """
+
 import logging
 
 import jax
@@ -21,7 +22,17 @@ except (AttributeError, ValueError, KeyError):
         exc_info=True,
     )
 
-from . import augment, checkpoint, data, features, layers, models, registry, train, weights  # noqa: F401
+from . import (  # noqa: F401
+    augment,
+    checkpoint,
+    data,
+    features,
+    layers,
+    models,
+    registry,
+    train,
+    weights,
+)
 from .checkpoint import (
     CheckpointManager,
     load_checkpoint,

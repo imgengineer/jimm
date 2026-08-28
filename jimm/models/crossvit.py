@@ -1,10 +1,12 @@
 """CrossViT in flax nnx. Mirrors timm.models.crossvit (dual-scale patches + cross attention)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
+from ..registry import _cfg, register_model
 from .vision_transformer import Attention
+
 
 class CrossAttention(nnx.Module):
     """cls token of one branch attends to tokens of the other branch."""
@@ -12,7 +14,7 @@ class CrossAttention(nnx.Module):
     def __init__(self, q_dim, kv_dim, num_heads, *, rngs):
         self.num_heads = num_heads
         self.head_dim = q_dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.q = nnx.Linear(q_dim, q_dim, rngs=rngs)
         self.kv = nnx.Linear(kv_dim, q_dim * 2, rngs=rngs)
         self.proj = nnx.Linear(q_dim, q_dim, rngs=rngs)
@@ -24,6 +26,7 @@ class CrossAttention(nnx.Module):
         k, v = kv[:, :, 0], kv[:, :, 1]
         out = nnx.dot_product_attention(q, k, v).reshape(B, 1, -1)
         return self.proj(out)
+
 
 class ViTBlock(nnx.Module):
     def __init__(self, dim, num_heads, drop_path=0.0, *, rngs):
@@ -37,32 +40,58 @@ class ViTBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
+
 class CrossViT(ClassifierMixin, nnx.Module):
     _default_global_pool = ""
 
-    def __init__(self, img_size=224, in_chans=3, num_classes=1000, global_pool="",
-                 embed_dims=(384, 768), patch_sizes=(12, 16), depths=(2, 2), num_heads=(6, 12),
-                 cross_depths=(1, 1), drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="",
+        embed_dims=(384, 768),
+        patch_sizes=(12, 16),
+        depths=(2, 2),
+        num_heads=(6, 12),
+        cross_depths=(1, 1),
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = sum(embed_dims)
         self.branches = nnx.List([])
         branches = []
         for dim, ps, d, h in zip(embed_dims, patch_sizes, depths, num_heads):
             grid = -(-img_size // ps)  # ceil: matches SAME-padded conv output
-            branches.append(nnx.List([
-                PatchEmbed(img_size, ps, in_chans, dim, rngs=rngs),
-                nnx.Param(jnp.zeros((1, grid * grid + 1, dim))),
-                nnx.Param(jnp.zeros((1, 1, dim))),
-                nnx.List([ViTBlock(dim, h, drop_path_rate, rngs=rngs) for _ in range(d)]),
-            ]))
+            branches.append(
+                nnx.List(
+                    [
+                        PatchEmbed(img_size, ps, in_chans, dim, rngs=rngs),
+                        nnx.Param(jnp.zeros((1, grid * grid + 1, dim))),
+                        nnx.Param(jnp.zeros((1, 1, dim))),
+                        nnx.List([ViTBlock(dim, h, drop_path_rate, rngs=rngs) for _ in range(d)]),
+                    ]
+                )
+            )
         self.branches = nnx.List(branches)
         # cross attention: for each branch, a cross-attn that pulls from the other
-        self.cross = nnx.List([
-            nnx.List([CrossAttention(embed_dims[0], embed_dims[1], num_heads[0], rngs=rngs),
-                      CrossAttention(embed_dims[1], embed_dims[0], num_heads[1], rngs=rngs)])
-            for _ in range(cross_depths[0])])
-        self.norms = nnx.List([nnx.LayerNorm(embed_dims[0], rngs=rngs),
-                               nnx.LayerNorm(embed_dims[1], rngs=rngs)])
+        self.cross = nnx.List(
+            [
+                nnx.List(
+                    [
+                        CrossAttention(embed_dims[0], embed_dims[1], num_heads[0], rngs=rngs),
+                        CrossAttention(embed_dims[1], embed_dims[0], num_heads[1], rngs=rngs),
+                    ]
+                )
+                for _ in range(cross_depths[0])
+            ]
+        )
+        self.norms = nnx.List(
+            [nnx.LayerNorm(embed_dims[0], rngs=rngs), nnx.LayerNorm(embed_dims[1], rngs=rngs)]
+        )
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
@@ -93,21 +122,26 @@ class CrossViT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 _CFGS = {
     "crossvit_tiny_224": ((384, 768), (12, 16), (2, 2), (6, 12)),
     "crossvit_small_224": ((480, 960), (12, 16), (2, 2), (6, 12)),
 }
 
+
 def _make(name):
     embed_dims, patch_sizes, depths, heads = _CFGS[name]
 
     def entry(**kwargs):
-        model = CrossViT(embed_dims=embed_dims, patch_sizes=patch_sizes, depths=depths,
-                         num_heads=heads, **kwargs)
+        model = CrossViT(
+            embed_dims=embed_dims, patch_sizes=patch_sizes, depths=depths, num_heads=heads, **kwargs
+        )
         model.default_cfg = _cfg()
         return model
+
     entry.__name__ = name
     return entry
+
 
 for _name in _CFGS:
     register_model(_make(_name))

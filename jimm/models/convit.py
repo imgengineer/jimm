@@ -1,9 +1,11 @@
 """ConViT in flax nnx. Mirrors timm.models.convit (GPSA: gated positional self-attention)."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
+from ..registry import _cfg, register_model
+
 
 class GPSA(nnx.Module):
     """Gated positional self-attention (ConViT): content attn + gated positional attn."""
@@ -11,7 +13,7 @@ class GPSA(nnx.Module):
     def __init__(self, dim, num_heads, grid, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.qkv = nnx.Linear(dim, dim * 3, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
         self.gate = nnx.Param(jnp.ones((num_heads, 1, 1)))
@@ -35,12 +37,17 @@ class GPSA(nnx.Module):
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, N, C)
         return self.proj(x)
 
+
 class ConViTBlock(nnx.Module):
     def __init__(self, dim, num_heads, grid, use_gpsa, drop_path=0.0, *, rngs):
         from .vision_transformer import Attention
+
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
-        self.attn = GPSA(dim, num_heads, grid, rngs=rngs) if use_gpsa \
+        self.attn = (
+            GPSA(dim, num_heads, grid, rngs=rngs)
+            if use_gpsa
             else Attention(dim, num_heads, rngs=rngs)
+        )
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, dim * 4, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
@@ -49,13 +56,27 @@ class ConViTBlock(nnx.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 
+
 class ConViT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
 
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
-                 global_pool="", embed_dim=432, depth=12, num_heads=9, gpsa_depth=10,
-                 drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="",
+        embed_dim=432,
+        depth=12,
+        num_heads=9,
+        gpsa_depth=10,
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
@@ -64,16 +85,21 @@ class ConViT(ClassifierMixin, nnx.Module):
         self.cls_token = nnx.Param(jnp.zeros((1, 1, embed_dim)))
         self.pos_embed = nnx.Param(jnp.zeros((1, n + 1, embed_dim)))
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
-        self.blocks = nnx.List([
-            ConViTBlock(embed_dim, num_heads, self.grid, i < gpsa_depth, dpr[i], rngs=rngs)
-            for i in range(depth)])
+        self.blocks = nnx.List(
+            [
+                ConViTBlock(embed_dim, num_heads, self.grid, i < gpsa_depth, dpr[i], rngs=rngs)
+                for i in range(depth)
+            ]
+        )
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1)
+        x = jnp.concatenate(
+            [jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1
+        )
         x = x + self.pos_embed[...]
         for blk in self.blocks:
             x = blk(x)
@@ -86,17 +112,20 @@ class ConViT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def convit_tiny(**kwargs):
     model = ConViT(embed_dim=432, depth=12, num_heads=9, **kwargs)
     model.default_cfg = _cfg()
     return model
 
+
 @register_model
 def convit_small(**kwargs):
     model = ConViT(embed_dim=576, depth=12, num_heads=12, **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def convit_base(**kwargs):

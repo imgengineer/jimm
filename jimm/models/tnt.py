@@ -1,10 +1,12 @@
 """TNT (Transformer-iN-Transformer) in flax nnx. Mirrors timm.models.tnt."""
+
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import DropPath, Mlp, PatchEmbed, ClassifierMixin
-from ..registry import register_model, _cfg
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
+from ..registry import _cfg, register_model
 from .vision_transformer import Attention
+
 
 class TNTBlock(nnx.Module):
     """outer token attention + inner pixel-level attention per patch."""
@@ -32,16 +34,32 @@ class TNTBlock(nnx.Module):
         B = tokens.shape[0]
         inner_agg = self.proj(inner)
         tokens = tokens + jnp.concatenate(
-            [jnp.zeros((B, 1, tokens.shape[-1]), tokens.dtype), inner_agg], axis=1)
+            [jnp.zeros((B, 1, tokens.shape[-1]), tokens.dtype), inner_agg], axis=1
+        )
         return tokens, inner
+
 
 class TNT(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
     _default_global_pool = ""
 
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000,
-                 global_pool="", embed_dim=384, depth=12, num_heads=6, inner_dim=24,
-                 inner_heads=4, drop_rate=0.0, drop_path_rate=0.0, *, rngs):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        num_classes=1000,
+        global_pool="",
+        embed_dim=384,
+        depth=12,
+        num_heads=6,
+        inner_dim=24,
+        inner_heads=4,
+        drop_rate=0.0,
+        drop_path_rate=0.0,
+        *,
+        rngs,
+    ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
@@ -52,8 +70,12 @@ class TNT(ClassifierMixin, nnx.Module):
         # inner pixel embedding: patch is patch_size x patch_size, split into inner patches
         self.inner_embed = nnx.Linear(patch_size * patch_size * in_chans, inner_dim, rngs=rngs)
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
-        self.blocks = nnx.List([TNTBlock(embed_dim, num_heads, inner_dim, inner_heads,
-                                         dpr[i], rngs=rngs) for i in range(depth)])
+        self.blocks = nnx.List(
+            [
+                TNTBlock(embed_dim, num_heads, inner_dim, inner_heads, dpr[i], rngs=rngs)
+                for i in range(depth)
+            ]
+        )
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -63,8 +85,9 @@ class TNT(ClassifierMixin, nnx.Module):
         patches = self.patch_embed(x)  # (B, G, G, embed)
         G = patches.shape[1]
         tokens = patches.reshape(B, -1, self.num_features)
-        tokens = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)),
-                                  tokens], axis=1)
+        tokens = jnp.concatenate(
+            [jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), tokens], axis=1
+        )
         tokens = tokens + self.pos_embed[...]
         # inner: raw patch pixels -> inner_dim
         B2, H, W, C = x.shape
@@ -83,11 +106,13 @@ class TNT(ClassifierMixin, nnx.Module):
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
+
 @register_model
 def tnt_tiny_patch16_224(**kwargs):
     model = TNT(embed_dim=384, depth=12, num_heads=6, **kwargs)
     model.default_cfg = _cfg()
     return model
+
 
 @register_model
 def tnt_small_patch16_224(**kwargs):

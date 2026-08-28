@@ -127,7 +127,16 @@ print(batch["label"].shape)  # (128,) int32
 
 With `in_memory=True`, decoded images use a shared read-only cache under
 `~/.cache/jimm/image-cache` (override with `JIMM_CACHE_DIR`) so Grain workers
-reuse the same pages instead of copying the full image cache.
+reuse the same pages instead of copying the full image cache. Cached images
+retain their source resolution; resizing and stochastic crops still run in the
+transform pipeline, so enabling the cache does not change augmentation
+semantics. Cache keys include image metadata and class labels to prevent stale
+labels after the class index changes.
+
+For manually constructed SPMD validation loaders, pass `pad_remainder=True`.
+Grain then emits equal, full batches on every process and adds a boolean
+`batch["valid"]` mask for excluding padded examples from metrics. The
+`jimm.train` CLI enables this behavior automatically.
 
 ---
 
@@ -156,6 +165,25 @@ python -m jimm.train \
     --data-dir /path/to/imagenet \
     --fsdp \
     --batch-size 128
+```
+
+The process-local batch size must be divisible by the number of local devices.
+Validation keeps every real sample: the CLI pads the final distributed batch
+and applies its validity mask to loss and accuracy instead of dropping the
+tail.
+
+Resume the latest epoch checkpoint under `<output>/<model>` with the same data,
+batch, sharding, and steps-per-epoch settings to preserve the uninterrupted
+training data sequence:
+
+```bash
+python -m jimm.train \
+    --model convnext_tiny \
+    --data-dir /path/to/imagenet \
+    --epochs 90 \
+    --batch-size 128 \
+    --output ./checkpoints \
+    --resume
 ```
 
 #### Multi-Node Multi-GPU (e.g. 2 Nodes, 8 GPUs each)
@@ -226,6 +254,11 @@ loss, acc = train_step(model, optimizer, images, labels, smoothing=0.1)
 
 ### 4. Checkpoint Save and Restore (Orbax)
 
+The training CLI writes asynchronous, epoch-numbered model and optimizer
+checkpoints and saves only from process rank 0. `--resume` restores the newest
+checkpoint and advances the Grain sampler to the first batch of the next epoch.
+The lower-level helpers below support explicit checkpoint paths.
+
 ```python
 from jimm.checkpoint import load_checkpoint, save_checkpoint, wait_for_checkpoints
 
@@ -295,6 +328,29 @@ pytest tests/ --cov=jimm --cov-report=term-missing
 # Or run parallel testing across all CPU cores
 pytest tests/ -n auto --cov=jimm
 ```
+
+Force the CPU backend when GPU experiments should remain disabled:
+
+```bash
+JAX_PLATFORMS=cpu pytest tests/
+```
+
+To exercise single-host SPMD without GPUs, expose eight host CPU devices and
+use a process-local batch size divisible by eight:
+
+```bash
+XLA_FLAGS=--xla_force_host_platform_device_count=8 \
+JAX_PLATFORMS=cpu \
+python -m jimm.train \
+    --model resnet18 \
+    --data-dir /path/to/dataset \
+    --epochs 1 \
+    --batch-size 8 \
+    --workers 0
+```
+
+This checks multi-device SPMD on one process; a real multi-host run is still
+required to validate cluster networking and cross-host coordination.
 
 ### Self-Check Regression Suite
 

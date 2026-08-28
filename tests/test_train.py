@@ -214,6 +214,26 @@ def test_train_and_eval_step():
     assert 0.0 <= float(plain_v_acc) <= 1.0
 
 
+def test_eval_step_ignores_padded_examples():
+    class LogitModel(nnx.Module):
+        def __call__(self, images):
+            return images[:, 0, 0, :]
+
+    logits = jnp.array([
+        [4.0, 1.0, 0.0],
+        [0.0, 4.0, 1.0],
+        [10.0, 0.0, 0.0],
+    ])
+    images = logits[:, None, None, :]
+    labels = jnp.array([0, 1, 2], dtype=jnp.int32)
+    valid = jnp.array([True, True, False])
+
+    loss, accuracy = eval_step(LogitModel(), images, labels, valid=valid)
+    expected_loss = cross_entropy(logits[:2], labels[:2])
+    assert float(loss) == pytest.approx(float(expected_loss))
+    assert float(accuracy) == pytest.approx(1.0)
+
+
 def test_jax_mixup_cutmix_modes():
     images = jnp.ones((4, 8, 8, 3), dtype=jnp.float32)
     labels = jnp.array([0, 1, 2, 3], dtype=jnp.int32)
@@ -291,6 +311,8 @@ def test_init_distributed(monkeypatch):
 def test_main_training_cli(temp_dataset, monkeypatch):
     out_dir = tempfile.mkdtemp()
     try:
+        # Keep a validation tail so the CLI exercises padding and metric masking.
+        os.remove(f"{temp_dataset}/val/cat/img_3.png")
         profile_calls = []
         monkeypatch.setattr(
             jax.profiler, "start_trace",
@@ -409,6 +431,15 @@ def test_prefetch_to_device():
         assert isinstance(labels, jax.Array)
         assert images.shape == (2, 16, 16, 3)
         assert labels.shape == (2,)
+
+    masked_batches = [dict(dummy_batches[0], valid=np.array([True, False]))]
+    masked_items = list(prefetch_to_device(
+        iter(masked_batches), data_sharding, label_sharding,
+        prefetch_size=1, mask_sharding=label_sharding))
+    assert len(masked_items) == 1
+    _, _, valid = masked_items[0]
+    assert valid.shape == (2,)
+    assert valid.dtype == jnp.bool_
 
     with pytest.raises(ValueError, match="prefetch_size"):
         list(prefetch_to_device(

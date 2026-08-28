@@ -86,7 +86,8 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
             node.set_value(jax.device_put(val, sharding))
 
 
-def prefetch_to_device(data_iter, data_sharding, label_sharding, prefetch_size=2):
+def prefetch_to_device(data_iter, data_sharding, label_sharding, prefetch_size=2,
+                       mask_sharding=None):
     """Asynchronously prefetches and shards host data onto devices (double buffering).
 
     MaxText/MaxDiffusion pattern: overlaps host CPU data loading/decoding & Host-to-Device (H2D)
@@ -99,6 +100,10 @@ def prefetch_to_device(data_iter, data_sharding, label_sharding, prefetch_size=2
     def _put(batch):
         images = jax.make_array_from_process_local_data(data_sharding, batch["image"])
         labels = jax.make_array_from_process_local_data(label_sharding, batch["label"])
+        if mask_sharding is not None:
+            valid = jax.make_array_from_process_local_data(
+                mask_sharding, batch["valid"])
+            return images, labels, valid
         return images, labels
 
     # Prime the queue
@@ -120,7 +125,7 @@ def prefetch_to_device(data_iter, data_sharding, label_sharding, prefetch_size=2
         yield item
 
 
-def cross_entropy(logits, labels, smoothing=0.0):
+def _cross_entropy_losses(logits, labels, smoothing=0.0):
     # Mixup/CutMix supplies soft one-hot targets; ordinary batches use class ids.
     if logits.ndim != 2 or labels.ndim not in (1, 2):
         raise ValueError("logits must be 2-D and labels must be 1-D or 2-D")
@@ -137,7 +142,11 @@ def cross_entropy(logits, labels, smoothing=0.0):
     one_hot = one_hot.astype(logits.dtype)
     if labels.ndim != logits.ndim:
         one_hot = one_hot * (1 - smoothing) + smoothing / logits.shape[-1]
-    return optax.softmax_cross_entropy(logits, one_hot).mean()
+    return optax.softmax_cross_entropy(logits, one_hot)
+
+
+def cross_entropy(logits, labels, smoothing=0.0):
+    return _cross_entropy_losses(logits, labels, smoothing).mean()
 
 
 def _accuracy(logits, labels):
@@ -353,13 +362,23 @@ def train_step_with_metrics(model, optimizer, images, labels, smoothing=0.0, amp
 
 
 @nnx.jit(static_argnames=("amp",))
-def eval_step(model, images, labels, amp=False):
+def eval_step(model, images, labels, amp=False, valid=None):
     _validate_batch(images, labels)
+    if valid is not None and (valid.ndim != 1 or valid.shape != (images.shape[0],)):
+        raise ValueError("valid mask must be 1-D and match the image batch size")
     x = images.astype(jnp.bfloat16) if amp else images
     logits = model(x)
     if amp:
         logits = logits.astype(jnp.float32)
-    return cross_entropy(logits, labels), _accuracy(logits, labels)
+    losses = _cross_entropy_losses(logits, labels)
+    if valid is None:
+        return losses.mean(), _accuracy(logits, labels)
+    weights = valid.astype(logits.dtype)
+    valid_count = weights.sum()
+    target = jnp.argmax(labels, axis=-1) if labels.ndim == logits.ndim else labels
+    correct = (jnp.argmax(logits, -1) == target).astype(logits.dtype)
+    return ((losses * weights).sum() / valid_count,
+            (correct * weights).sum() / valid_count)
 
 
 def make_cached_train_step(model, optimizer, amp=False, mixup=None):
@@ -515,19 +534,15 @@ def main(argv=None):
         gaussian_blur_prob=args.gaussian_blur_prob,
         num_workers=args.workers, seed=rank,
     )
-    train_loader.start_prefetch()
     steps_per_epoch = args.steps_per_epoch if args.steps_per_epoch is not None else max(1, len(train_loader))
 
     val_loader = None
     if os.path.isdir(f"{args.data_dir}/val"):
-        # SPMD evaluation requires batch sizes divisible by the device count and
-        # an identical batch count on every host, so drop the tail batch when
-        # running distributed; single-device keeps full val-set coverage.
         val_loader = create_loader(
             f"{args.data_dir}/val", args.batch_size,
             img_size=args.img_size, is_training=False,
             num_workers=args.workers,
-            drop_remainder=len(total_devices) > 1)
+            pad_remainder=True)
 
     optimizer = make_optimizer(model, args.lr, args.weight_decay, args.epochs,
                                steps_per_epoch, clip_grad=args.clip_grad)
@@ -552,6 +567,10 @@ def main(argv=None):
         elif rank == 0:
             print("  [Resume] No checkpoint found; starting fresh")
 
+    global_step = start_epoch * steps_per_epoch
+    train_loader.set_start_step(global_step)
+    train_loader.start_prefetch()
+
     # Apply FSDP sharding if enabled (after any resume so restored arrays get
     # sharded too)
     if args.fsdp:
@@ -573,7 +592,6 @@ def main(argv=None):
         prefetch_size=args.prefetch,
     )
 
-    global_step = start_epoch * steps_per_epoch
     compiled_first_step = False
     profile_active = False
 
@@ -657,12 +675,13 @@ def main(argv=None):
                 v_losses, v_accuracies, v_counts = [], [], []
                 val_stream = prefetch_to_device(
                     iter(val_loader), data_sharding, eval_label_sharding,
-                    prefetch_size=args.prefetch)
-                for v_images, v_labels in val_stream:
-                    l, a = cached_eval_step(v_images, v_labels)
+                    prefetch_size=args.prefetch,
+                    mask_sharding=eval_label_sharding)
+                for v_images, v_labels, v_valid in val_stream:
+                    l, a = cached_eval_step(v_images, v_labels, valid=v_valid)
                     v_losses.append(l)
                     v_accuracies.append(a)
-                    v_counts.append(v_labels.shape[0])
+                    v_counts.append(v_valid.sum())
                 if not v_losses:
                     raise ValueError("validation loader produced no batches")
                 if rank == 0:

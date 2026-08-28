@@ -67,16 +67,32 @@ def test_image_folder(temp_dataset):
         shutil.rmtree(empty_dir, ignore_errors=True)
 
 
-def test_in_memory_cache_resizes_to_img_size(temp_dataset):
-    # create_dataset must forward img_size so the decode cache stores
-    # img_size x img_size images instead of full-resolution sources.
+def test_in_memory_cache_preserves_source_resolution(temp_dataset):
+    # Caching must not change the source image before stochastic augmentation.
     source, transform = create_dataset(
         f"{temp_dataset}/train", in_memory=True, img_size=32)
     assert source._cache is not None
     shapes = {tuple(shape) for _, _, shape, _ in source._cache.records}
-    assert shapes == {(32, 32, 3)}  # fixture images are 48x48
+    assert shapes == {(48, 48, 3)}
     sample = transform.map(source[0])
     assert sample["image"].shape == (32, 32, 3)
+
+
+def test_in_memory_cache_invalidates_when_labels_change(
+        temp_dataset, tmp_path, monkeypatch):
+    monkeypatch.setattr(data_module, "_IMAGE_CACHE_ROOT", tmp_path / "cache")
+    root = Path(temp_dataset) / "train"
+
+    first = ImageFolder(root, in_memory=True)
+    assert first[0]["label"] == 0  # bird
+
+    # An empty class changes the sorted class indices without changing image
+    # paths or file metadata, so labels must participate in the cache key.
+    (root / "aardvark").mkdir()
+    second = ImageFolder(root, in_memory=True)
+    assert second.class_to_idx["bird"] == 1
+    assert second[0]["label"] == 1
+    assert first._cache.data_path != second._cache.data_path
 
 
 def test_create_loader_drop_remainder(temp_dataset):
@@ -102,6 +118,94 @@ def test_create_loader_drop_remainder(temp_dataset):
         create_loader(
             f"{temp_dataset}/val", batch_size=5, img_size=32,
             is_training=False, num_workers=0, drop_remainder="yes")
+
+
+def test_create_loader_pads_eval_without_losing_records(temp_dataset):
+    loader = create_loader(
+        f"{temp_dataset}/val", batch_size=5, img_size=32,
+        is_training=False, num_workers=0, pad_remainder=True)
+    try:
+        batches = list(loader)
+        assert len(batches) == len(loader) == 5
+        assert all(batch["image"].shape[0] == 5 for batch in batches)
+        assert sum(int(np.asarray(batch["valid"]).sum()) for batch in batches) == 24
+    finally:
+        loader.close()
+
+    shard_loaders = [
+        create_loader(
+            f"{temp_dataset}/val", batch_size=5, img_size=32,
+            is_training=False, num_workers=0, pad_remainder=True,
+            shard_options=grain.ShardOptions(
+                shard_index=shard_index, shard_count=2, drop_remainder=False),
+        )
+        for shard_index in range(2)
+    ]
+    try:
+        sharded_batches = [list(shard_loader) for shard_loader in shard_loaders]
+        assert [len(batches) for batches in sharded_batches] == [3, 3]
+        assert all(
+            batch["image"].shape[0] == 5
+            for batches in sharded_batches for batch in batches)
+        assert sum(
+            int(np.asarray(batch["valid"]).sum())
+            for batches in sharded_batches for batch in batches) == 24
+    finally:
+        for shard_loader in shard_loaders:
+            shard_loader.close()
+
+
+def test_sharded_loader_keeps_record_remainder(temp_dataset):
+    root = Path(temp_dataset) / "val"
+    image = np.full((48, 48, 3), 127, dtype=np.uint8)
+    assert cv2.imwrite(str(root / "cat" / "extra.png"), image)
+
+    loaders = [
+        create_loader(
+            root, batch_size=5, img_size=32, is_training=False,
+            num_workers=0, drop_remainder=False,
+            shard_options=grain.ShardOptions(
+                shard_index=shard_index, shard_count=2, drop_remainder=False),
+        )
+        for shard_index in range(2)
+    ]
+    try:
+        batches = [list(loader) for loader in loaders]
+        counts = [sum(len(batch["label"]) for batch in shard) for shard in batches]
+        assert counts == [13, 12]
+        assert sum(counts) == 25
+        assert [len(loader) for loader in loaders] == [3, 3]
+    finally:
+        for loader in loaders:
+            loader.close()
+
+
+def test_loader_start_step_restores_training_stream(temp_dataset):
+    kwargs = dict(
+        batch_size=4,
+        img_size=32,
+        is_training=True,
+        num_workers=0,
+        seed=17,
+        shard_options=grain.ShardOptions(
+            shard_index=1, shard_count=2, drop_remainder=True),
+    )
+    continuous = create_loader(f"{temp_dataset}/train", **kwargs)
+    resumed = create_loader(f"{temp_dataset}/train", **kwargs)
+    continuous_iter = iter(continuous)
+    try:
+        for _ in range(len(continuous)):
+            next(continuous_iter)
+        expected = next(continuous_iter)
+
+        resumed.set_start_step(len(resumed))
+        actual = next(iter(resumed))
+        assert np.array_equal(actual["label"], expected["label"])
+        assert np.array_equal(actual["image"], expected["image"])
+    finally:
+        continuous_iter.close()
+        continuous.close()
+        resumed.close()
 
 
 def test_augmentations(monkeypatch):
@@ -488,7 +592,7 @@ def test_create_dataset_and_loader(temp_dataset):
     # 2. in-memory source and training loader (infinite stream)
     memory_ds = ImageFolder(f"{temp_dataset}/train", in_memory=True, img_size=16)
     assert len(memory_ds) == 24
-    assert memory_ds[0]["image"].shape == (16, 16, 3)
+    assert memory_ds[0]["image"].shape == (48, 48, 3)
 
     train_loader = create_loader(
         f"{temp_dataset}/train",

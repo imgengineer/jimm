@@ -52,9 +52,9 @@ def test_feature_info_get_timm_semantics():
         {"num_chs": 512, "reduction": 8},
     ]
     fi = FeatureInfo(info, out_indices=(0, 2))
-    # idx=None lists every stage; an idx indexes the selected stages.
-    assert fi.get("num_chs") == [64, 256, 512]
+    # idx=None lists selected stages; an idx addresses the full metadata list.
+    assert fi.get("num_chs") == [64, 512]
     assert fi.get("num_chs", 0) == 64
-    assert fi.get("num_chs", 1) == 512
+    assert fi.get("num_chs", 1) == 256
     assert fi.channels() == [64, 512]
     assert fi.reduction() == [2, 8]

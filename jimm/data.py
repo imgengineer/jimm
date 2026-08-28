@@ -127,17 +127,20 @@ def _decode_file(path: Path) -> np.ndarray:
         raise ValueError(f"unable to cache image {path}") from exc
 
 
-def _cache_key(root: Path, samples, img_size) -> str:
+def _cache_key(root: Path, samples) -> str:
     digest = hashlib.sha256()
+    digest.update(b"full-resolution-v1\0")
     digest.update(str(root).encode())
-    digest.update(str(img_size).encode())
-    for path, _ in samples:
+    digest.update(b"\0")
+    for path, label in samples:
         try:
             stat = path.stat()
         except OSError as exc:
             raise ValueError(f"unable to stat image {path}") from exc
         digest.update(path.relative_to(root).as_posix().encode())
-        digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+        digest.update(b"\0")
+        digest.update(f"{label}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+        digest.update(b"\0")
     return digest.hexdigest()
 
 
@@ -189,8 +192,8 @@ def _load_memmap_cache(data_path: Path, metadata_path: Path):
         return None
 
 
-def _build_memmap_cache(root: Path, samples, img_size):
-    key = _cache_key(root, samples, img_size)
+def _build_memmap_cache(root: Path, samples):
+    key = _cache_key(root, samples)
     cache_dir = _IMAGE_CACHE_ROOT
     cache_dir.mkdir(parents=True, exist_ok=True)
     data_path = cache_dir / f"{key}.bin"
@@ -215,14 +218,11 @@ def _build_memmap_cache(root: Path, samples, img_size):
                 records = []
                 for path, label in samples:
                     image = _decode_file(path)
-                    if img_size:
-                        image = cv2.resize(
-                            image, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
                     image = np.ascontiguousarray(image, dtype=np.uint8)
-                    raw = image.tobytes()
-                    data_file.write(raw)
-                    records.append((offset, len(raw), list(image.shape), label))
-                    offset += len(raw)
+                    size = image.nbytes
+                    data_file.write(memoryview(image).cast("B"))
+                    records.append((offset, size, list(image.shape), label))
+                    offset += size
                 data_file.flush()
                 os.fsync(data_file.fileno())
             metadata = {"version": 1, "total_bytes": offset, "records": records}
@@ -278,7 +278,7 @@ class ImageFolder(grain.RandomAccessDataSource):
         if not samples:
             raise ValueError(f"no image files under class directories in {root!r}")
         self.samples = samples
-        self._cache = _build_memmap_cache(self.root, self.samples, img_size) if in_memory else None
+        self._cache = _build_memmap_cache(self.root, self.samples) if in_memory else None
 
     def __len__(self):
         return len(self._cache) if self._cache is not None else len(self.samples)
@@ -423,33 +423,92 @@ class _DecodeTransform(grain.RandomMapTransform):
 
         np.multiply(array, self._inv_std, out=array)
         np.add(array, self._shift, out=array)
-        return {
+        result = {
             "image": array,
             "label": np.int32(element["label"]),
         }
+        if "valid" in element:
+            result["valid"] = np.bool_(element["valid"])
+        return result
 
 
 def create_dataset(root, in_memory=False, **kwargs):
     """Return a Grain source and transform for one folder split.
 
-    ``img_size`` (consumed from ``kwargs``) pre-resizes the in-memory decode
-    cache; without it the cache stores full-resolution images and every sample
-    pays a large read + resize per epoch.
+    The optional decoded-image cache preserves source resolution so training
+    augmentations see the same input with and without caching.
     """
-    source = ImageFolder(root, in_memory=in_memory, img_size=kwargs.get("img_size"))
+    source = ImageFolder(root, in_memory=in_memory)
     return source, _DecodeTransform(**kwargs)
+
+
+class _PaddedDataSource(grain.RandomAccessDataSource):
+    """Pad a source to a batch-and-shard multiple and mark duplicate records."""
+
+    def __init__(self, source, multiple):
+        self._source = source
+        self._num_records = len(source)
+        self._length = -(-self._num_records // multiple) * multiple
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, index):
+        if not 0 <= index < self._length:
+            raise IndexError(index)
+        valid = index < self._num_records
+        element = dict(self._source[index if valid else 0])
+        element["valid"] = np.bool_(valid)
+        return element
+
+
+class _OffsetSampler:
+    """Apply a mutable global-record offset to an infinite training sampler."""
+
+    def __init__(self, sampler):
+        self._sampler = sampler
+        self.offset = 0
+
+    def __len__(self):
+        return len(self._sampler)
+
+    def __getitem__(self, index):
+        return self._sampler[index + self.offset]
+
+    def __repr__(self):
+        return f"_OffsetSampler({self._sampler!r}, offset={self.offset})"
+
+
+class _SamplerWithLength:
+    """Expose the finite per-shard length expected by Grain DataLoader."""
+
+    def __init__(self, sampler, length):
+        self._sampler = sampler
+        self._length = length
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, index):
+        return self._sampler[index]
+
+    def __repr__(self):
+        return f"_SamplerWithLength({self._sampler!r}, length={self._length})"
 
 
 class Loader:
     """Grain loader with a timm-style ``len`` and explicit worker cleanup."""
 
-    def __init__(self, loader, num_records, batch_size, drop_remainder):
+    def __init__(self, loader, num_records, batch_size, drop_remainder,
+                 sampler=None, shard_count=1):
         self._loader = loader
         self._prefetched_iterator = None
         self._active_iterator = None
         self.num_records = num_records
         self.batch_size = batch_size
         self._drop = drop_remainder
+        self._sampler = sampler
+        self._shard_count = shard_count
 
     @staticmethod
     def _close_iterator(iterator):
@@ -467,6 +526,16 @@ class Loader:
         if start is not None:
             start()
         self._prefetched_iterator = iterator
+
+    def set_start_step(self, step):
+        """Start an infinite training stream at process-local batch ``step``."""
+        if isinstance(step, bool) or not isinstance(step, (int, np.integer)) or step < 0:
+            raise ValueError("step must be a non-negative integer")
+        if self._sampler is None:
+            raise ValueError("set_start_step is only available for training loaders")
+        if self._prefetched_iterator is not None or self._active_iterator is not None:
+            raise RuntimeError("set_start_step must be called before iterating the loader")
+        self._sampler.offset = int(step) * self.batch_size * self._shard_count
 
     def __iter__(self):
         iterator = self._prefetched_iterator
@@ -512,14 +581,16 @@ def create_loader(
         force_color_jitter=False, re_prob=0.2, re_mode="const", re_count=1,
         mean=IMAGENET_MEAN, std=IMAGENET_STD, num_workers=4,
         worker_buffer_size=1, enable_profiling=False, seed=0, shuffle=None,
-        shard_options=None, in_memory=False, drop_remainder=None):
+        shard_options=None, in_memory=False, drop_remainder=None,
+        pad_remainder=False):
     """Create a Grain loader with timm-compatible augmentation options.
 
     Args:
       drop_remainder: Drop the final partial batch (and per-shard record
-        remainder). Defaults to ``is_training``. Distributed evaluation should
-        pass True: SPMD batch sharding requires batch sizes divisible by the
-        device count, and all hosts must iterate the same number of batches.
+        remainder). Defaults to ``is_training``.
+      pad_remainder: Pad the source across batches and shards, adding a boolean
+        ``valid`` field so distributed evaluation can retain every record while
+        using equal, full batches on every host.
     """
     _ensure_absl_flags_parsed()
     for name, value in (("batch_size", batch_size), ("img_size", img_size)):
@@ -532,7 +603,16 @@ def create_loader(
         raise ValueError("worker_buffer_size must be positive")
     if drop_remainder is not None and not isinstance(drop_remainder, bool):
         raise ValueError("drop_remainder must be a boolean or None")
+    if not isinstance(pad_remainder, bool):
+        raise ValueError("pad_remainder must be a boolean")
     drop = is_training if drop_remainder is None else drop_remainder
+    shuffle = is_training if shuffle is None else shuffle
+    if shard_options is None:
+        shard_options = grain.ShardOptions(
+            shard_index=jax.process_index(),
+            shard_count=jax.process_count(),
+            drop_remainder=drop,
+        )
     source, transform = create_dataset(
         root,
         in_memory=in_memory,
@@ -558,32 +638,38 @@ def create_loader(
         mean=mean,
         std=std,
     )
-    shuffle = is_training if shuffle is None else shuffle
-    if shard_options is None:
-        shard_options = grain.ShardOptions(
-            shard_index=jax.process_index(),
-            shard_count=jax.process_count(),
-            drop_remainder=drop,
-        )
+    if pad_remainder:
+        source = _PaddedDataSource(
+            source, int(batch_size) * shard_options.shard_count)
+    records = len(source)
+    shard_count = shard_options.shard_count
+    local_records, record_remainder = divmod(records, shard_count)
+    if (not shard_options.drop_remainder
+            and shard_options.shard_index < record_remainder):
+        local_records += 1
     sampler = grain.IndexSampler(
-        num_records=len(source),
+        num_records=records,
         shard_options=shard_options,
         shuffle=shuffle,
         seed=seed,
         num_epochs=None if is_training else 1,
     )
+    if not is_training:
+        # DataLoader divides sampler length evenly across shards. Advertise this
+        # shard's actual length so non-divisible record remainders are retained.
+        sampler = _SamplerWithLength(sampler, local_records * shard_count)
+    offset_sampler = _OffsetSampler(sampler) if is_training else None
+    loader_sampler = offset_sampler if offset_sampler is not None else sampler
+    batch_drop = drop or pad_remainder
     loader = grain.DataLoader(
         data_source=source,
-        sampler=sampler,
-        operations=[transform, grain.Batch(batch_size, drop_remainder=drop)],
+        sampler=loader_sampler,
+        operations=[transform, grain.Batch(batch_size, drop_remainder=batch_drop)],
         worker_count=num_workers,
         worker_buffer_size=worker_buffer_size,
+        shard_options=shard_options,
         enable_profiling=enable_profiling,
     )
-    records = len(source)
-    shard_count = shard_options.shard_count
-    local_records = (
-        records // shard_count if shard_options.drop_remainder
-        else -(-records // shard_count)
-    )
-    return Loader(loader, local_records, batch_size, drop)
+    return Loader(
+        loader, local_records, batch_size, batch_drop,
+        sampler=offset_sampler, shard_count=shard_count)

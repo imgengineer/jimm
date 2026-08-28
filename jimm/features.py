@@ -29,16 +29,16 @@ class FeatureInfo:
         return [self.info[i]["reduction"] for i in self.out_indices]
 
     def get(self, key: str, idx: int | None = None) -> Any:
-        """Retrieve metadata field for all stages or a selected stage (timm semantics).
+        """Retrieve metadata for selected stages or one absolute stage (timm semantics).
 
         Args:
             key: Metadata field name (e.g. 'num_chs', 'reduction').
-            idx: None returns the field for every stage; an integer indexes the
-                selected stages (``out_indices``), like timm's FeatureInfo.get.
+            idx: None returns the field for ``out_indices``; an integer indexes
+                the complete metadata list.
         """
         if idx is None:
-            return [stage[key] for stage in self.info]
-        return self.info[self.out_indices[idx]][key]
+            return [self.info[i][key] for i in self.out_indices]
+        return self.info[idx][key]
 
     def __len__(self) -> int:
         return len(self.out_indices)

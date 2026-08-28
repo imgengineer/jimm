@@ -1,6 +1,7 @@
 """ShuffleNetV2 in flax nnx, NHWC. Mirrors timm.models.shufflenetv2."""
 
 import jax.numpy as jnp
+from einops import rearrange
 from flax import nnx
 
 from ..layers import ClassifierMixin, global_pool_nhwc
@@ -8,9 +9,7 @@ from ..registry import _cfg, register_model
 
 
 def channel_shuffle(x, groups):
-    b, h, w, c = x.shape
-    x = x.reshape(b, h, w, groups, c // groups).transpose(0, 1, 2, 4, 3)
-    return x.reshape(b, h, w, c)
+    return rearrange(x, "b h w (groups channels) -> b h w (channels groups)", groups=groups)
 
 
 class LeftBranch(nnx.Module):

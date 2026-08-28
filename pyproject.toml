@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "JAX Image Models - timm-style API on JAX/Flax nnx"
 requires-python = ">=3.12"
 dependencies = [
+  "einops",
   "jax[cuda13]>=0.11.1",
   "grain",
   "flax>=0.12.9",

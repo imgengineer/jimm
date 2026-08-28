@@ -1,5 +1,6 @@
 """TResNet in flax nnx, NHWC. Mirrors timm.models.tresnet (SpaceToDepth stem + SE bottlenecks)."""
 
+from einops import rearrange
 from flax import nnx
 
 from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
@@ -8,9 +9,12 @@ from ..registry import _cfg, register_model
 
 def space_to_depth(x, block_size=2):
     """(B,H,W,C) -> (B,H/2,W/2,4C)."""
-    b, h, w, c = x.shape
-    x = x.reshape(b, h // block_size, block_size, w // block_size, block_size, c)
-    return x.transpose(0, 1, 3, 2, 4, 5).reshape(b, h // block_size, w // block_size, -1)
+    return rearrange(
+        x,
+        "b (h block_h) (w block_w) c -> b h w (block_h block_w c)",
+        block_h=block_size,
+        block_w=block_size,
+    )
 
 
 class TResNetBasic(nnx.Module):

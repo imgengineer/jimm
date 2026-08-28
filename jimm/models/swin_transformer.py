@@ -1,6 +1,7 @@
 """Swin Transformer in flax nnx, NHWC. Mirrors timm.models.swin_transformer."""
 
 import jax.numpy as jnp
+from einops import rearrange
 from flax import nnx
 
 from ..layers import ClassifierMixin, DropPath, Mlp
@@ -9,14 +10,24 @@ from ..registry import _cfg, register_model
 
 def window_partition(x, ws):
     """(B,H,W,C) -> (B*nH*nW, ws*ws, C)."""
-    B, H, W, C = x.shape
-    x = x.reshape(B, H // ws, ws, W // ws, ws, C).transpose(0, 1, 3, 2, 4, 5)
-    return x.reshape(-1, ws * ws, C)
+    return rearrange(
+        x,
+        "b (num_h win_h) (num_w win_w) c -> (b num_h num_w) (win_h win_w) c",
+        win_h=ws,
+        win_w=ws,
+    )
 
 
 def window_reverse(windows, ws, H, W, B):
-    x = windows.reshape(B, H // ws, W // ws, ws, ws, -1).transpose(0, 1, 3, 2, 4, 5)
-    return x.reshape(B, H, W, -1)
+    return rearrange(
+        windows,
+        "(b num_h num_w) (win_h win_w) c -> b (num_h win_h) (num_w win_w) c",
+        b=B,
+        num_h=H // ws,
+        num_w=W // ws,
+        win_h=ws,
+        win_w=ws,
+    )
 
 
 class WindowAttention(nnx.Module):

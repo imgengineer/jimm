@@ -1,6 +1,7 @@
 """MaxViT in flax nnx, NHWC. Mirrors timm.models.maxxvit (MBConv + window/grid attention)."""
 
 import jax.numpy as jnp
+from einops import rearrange
 from flax import nnx
 
 from ..layers import ClassifierMixin, DropPath, Mlp, SqueezeExcite, gelu
@@ -83,20 +84,31 @@ class MaxViTBlock(nnx.Module):
         self.mlp = Mlp(dim, dim * 4, rngs=rngs)
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _ = x.shape
         ws = self.ws
         if self.is_grid:
             # grid attention: tokens are strided (dilated) — transpose windows so each
             # "window" contains every ws-th pixel
-            t = x.reshape(B, ws, H // ws, ws, W // ws, C).transpose(0, 2, 4, 1, 3, 5)
-            t = t.reshape(-1, ws * ws, C)
+            t = rearrange(
+                x,
+                "b (grid_h cell_h) (grid_w cell_w) c -> (b cell_h cell_w) (grid_h grid_w) c",
+                grid_h=ws,
+                grid_w=ws,
+            )
         else:
             t = window_partition(x, ws)
         t = t + self.drop_path(self.attn(self.norm1(t)))
         t = t + self.drop_path(self.mlp(self.norm2(t)))
         if self.is_grid:
-            t = t.reshape(B, H // ws, W // ws, ws, ws, C).transpose(0, 1, 3, 2, 4, 5)
-            x = t.reshape(B, H, W, C)
+            x = rearrange(
+                t,
+                "(b cell_h cell_w) (grid_h grid_w) c -> b (cell_h grid_h) (cell_w grid_w) c",
+                b=B,
+                cell_h=H // ws,
+                cell_w=W // ws,
+                grid_h=ws,
+                grid_w=ws,
+            )
         else:
             x = window_reverse(t, ws, H, W, B)
         return x

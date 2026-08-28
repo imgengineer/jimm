@@ -1,6 +1,7 @@
 """MobileViT in flax nnx, NHWC. Mirrors timm.models.mobilevit (conv blocks + transformer stages)."""
 
 import jax.numpy as jnp
+from einops import rearrange
 from flax import nnx
 
 from ..layers import ClassifierMixin, ConvBNAct, DropPath, gelu
@@ -37,13 +38,25 @@ class MobileViTStage(nnx.Module):
 
     def __call__(self, x):
         y = self.conv_in(x)
-        B, H, W, C = y.shape
+        B, H, W, _ = y.shape
         p = self.patch
-        t = y.reshape(B, H // p, p, W // p, p, C).transpose(0, 1, 3, 2, 4, 5)
-        t = t.reshape(-1, p * p, C)
+        t = rearrange(
+            y,
+            "b (num_h patch_h) (num_w patch_w) c -> (b num_h num_w) (patch_h patch_w) c",
+            patch_h=p,
+            patch_w=p,
+        )
         for blk in self.blocks:
             t = blk(t)
-        y = t.reshape(B, H // p, W // p, p, p, C).transpose(0, 1, 3, 2, 4, 5).reshape(B, H, W, C)
+        y = rearrange(
+            t,
+            "(b num_h num_w) (patch_h patch_w) c -> b (num_h patch_h) (num_w patch_w) c",
+            b=B,
+            num_h=H // p,
+            num_w=W // p,
+            patch_h=p,
+            patch_w=p,
+        )
         y = self.conv_out(y)
         return self.fuse(jnp.concatenate([x, y], axis=-1))
 

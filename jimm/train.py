@@ -36,15 +36,33 @@ import os
 import time
 from typing import NamedTuple
 
-import jax
-import jax.numpy as jnp
+import jax  # pyright: ignore[reportMissingImports]
+import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
 import numpy as np
-import optax
-from flax import nnx
+import optax  # pyright: ignore[reportMissingImports]
+from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from .checkpoint import CheckpointManager
 from .data import MixupCutmix, create_loader
+from .loss import _cross_entropy_losses, cross_entropy
+from .optim import create_optimizer, make_optimizer
 from .registry import create_model
+
+__all__ = [
+    "StepMetrics",
+    "init_distributed",
+    "fsdp_shard_model",
+    "prefetch_to_device",
+    "cross_entropy",
+    "make_optimizer",
+    "create_optimizer",
+    "train_step",
+    "train_step_with_metrics",
+    "eval_step",
+    "make_cached_train_step",
+    "make_cached_eval_step",
+    "main",
+]
 
 
 class StepMetrics(NamedTuple):
@@ -78,14 +96,14 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
     for path, node in nnx.graph.iter_graph(model_or_opt):
         if isinstance(node, nnx.Variable):
             val = node.get_value()
-            if (
-                isinstance(val, (jax.Array, np.ndarray))
-                and val.ndim >= 1
-                and val.shape[0] % num_devices == 0
-            ):
-                spec = P(mesh_axis, *(None,) * (val.ndim - 1))
-            elif isinstance(val, (jax.Array, np.ndarray)):
-                spec = P()  # replicate if leading dimension is not evenly divisible
+            if isinstance(val, (jax.Array, np.ndarray)) and val.ndim >= 1:
+                if val.shape[0] % num_devices == 0:
+                    spec = P(mesh_axis, *(None,) * (val.ndim - 1))
+                elif val.ndim == 4 and val.shape[-1] % num_devices == 0:
+                    # Shard 4D Conv kernels (H, W, In, Out) along the output channel axis
+                    spec = P(None, None, None, mesh_axis)
+                else:
+                    spec = P()  # replicate if leading dimension is not evenly divisible
             else:
                 continue
             sharding = jax.sharding.NamedSharding(mesh, spec)
@@ -135,30 +153,6 @@ def prefetch_to_device(
         yield item
 
 
-def _cross_entropy_losses(logits, labels, smoothing=0.0):
-    # Mixup/CutMix supplies soft one-hot targets; ordinary batches use class ids.
-    if logits.ndim != 2 or labels.ndim not in (1, 2):
-        raise ValueError("logits must be 2-D and labels must be 1-D or 2-D")
-    expected = logits.shape if labels.ndim == 2 else (logits.shape[0],)
-    if labels.shape != expected:
-        raise ValueError(f"labels shape {labels.shape} must be {expected}")
-    if labels.ndim == 1 and not jnp.issubdtype(labels.dtype, jnp.integer):
-        raise ValueError("1-D labels must contain integer class ids")
-    if labels.ndim == 2 and not jnp.issubdtype(labels.dtype, jnp.floating):
-        raise ValueError("2-D labels must contain floating-point targets")
-    if not 0.0 <= smoothing <= 1.0:
-        raise ValueError("smoothing must be between 0 and 1")
-    one_hot = labels if labels.ndim == logits.ndim else nnx.one_hot(labels, logits.shape[-1])
-    one_hot = one_hot.astype(logits.dtype)
-    if labels.ndim != logits.ndim:
-        one_hot = one_hot * (1 - smoothing) + smoothing / logits.shape[-1]
-    return optax.softmax_cross_entropy(logits, one_hot)
-
-
-def cross_entropy(logits, labels, smoothing=0.0):
-    return _cross_entropy_losses(logits, labels, smoothing).mean()
-
-
 def _accuracy(logits, labels):
     target = jnp.argmax(labels, axis=-1) if labels.ndim == logits.ndim else labels
     return jnp.mean(jnp.argmax(logits, -1) == target)
@@ -191,7 +185,12 @@ def _mean_metrics(losses, accuracies, counts=None):
     values = np.asarray(jax.device_get(means))
     if not np.all(np.isfinite(values)):
         raise FloatingPointError("non-finite epoch metrics")
-    return float(values[0]), float(values[1])
+    try:
+        val0 = float(values[0])
+        val1 = float(values[1])
+    except (TypeError, ValueError) as exc:
+        raise FloatingPointError("non-finite epoch metrics") from exc
+    return val0, val1
 
 
 def _mixup_cutmix_jax(images, labels, rng, config):
@@ -310,49 +309,7 @@ def _mixup_cutmix_jax(images, labels, rng, config):
     )
 
 
-def make_optimizer(
-    model,
-    lr,
-    weight_decay,
-    epochs,
-    steps_per_epoch,
-    clip_grad=0.0,
-    warmup_ratio=0.1,
-    min_lr_ratio=0.01,
-):
-    """AdamW (warmup + cosine decay) with timm-style weight-decay grouping.
-
-    Following timm's default (`param_groups_weight_decay`), weight decay only
-    applies to parameters with ndim >= 2 (conv/linear kernels); 1-D parameters
-    (biases, norm scales) are exempt.
-    """
-    if epochs <= 0 or steps_per_epoch <= 0:
-        raise ValueError("epochs and steps_per_epoch must be positive")
-    if not np.all(np.isfinite((lr, weight_decay, clip_grad, warmup_ratio, min_lr_ratio))):
-        raise ValueError("optimizer settings must be finite")
-    if lr < 0 or weight_decay < 0 or clip_grad < 0:
-        raise ValueError("lr, weight_decay, and clip_grad must be non-negative")
-    if not 0 <= warmup_ratio <= 1 or not 0 <= min_lr_ratio <= 1:
-        raise ValueError("warmup_ratio and min_lr_ratio must be between 0 and 1")
-    total = epochs * steps_per_epoch
-    if total == 1:
-        schedule = optax.constant_schedule(lr)
-    else:
-        warmup_steps = min(total - 1, 5 * steps_per_epoch, 10000, max(int(total * warmup_ratio), 1))
-        schedule = optax.warmup_cosine_decay_schedule(
-            init_value=0.0,
-            peak_value=lr,
-            warmup_steps=warmup_steps,
-            decay_steps=total,
-            end_value=lr * min_lr_ratio,
-        )
-    tx = optax.clip_by_global_norm(clip_grad) if clip_grad > 0 else optax.identity()
-    decay_mask = lambda params: jax.tree.map(lambda p: p.ndim >= 2, params)  # noqa: E731
-    adamw = optax.adamw(schedule, weight_decay=weight_decay, mask=decay_mask)
-    return nnx.Optimizer(model, optax.chain(tx, adamw), wrt=nnx.Param)
-
-
-def _train_step(
+def _train_step_impl(
     model,
     optimizer,
     images,
@@ -361,7 +318,6 @@ def _train_step(
     amp=False,
     mixup=None,
     rng=None,
-    with_metrics=False,
 ):
     _validate_batch(images, labels)
     if mixup is not None:
@@ -377,22 +333,15 @@ def _train_step(
         return cross_entropy(logits, labels, smoothing), logits
 
     (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
-    if with_metrics:
-        grad_norm = (
-            optax.tree.norm(grads)
-            if hasattr(optax, "tree") and hasattr(optax.tree, "norm")
-            else optax.global_norm(grads)
-        )
     optimizer.update(model, grads)
     acc = _accuracy(logits, labels)
-    return (
-        StepMetrics(loss=loss, accuracy=acc, grad_norm=grad_norm) if with_metrics else (loss, acc)
-    )
+    return loss, logits, grads, acc
 
 
 @nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
 def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False, mixup=None, rng=None):
-    return _train_step(model, optimizer, images, labels, smoothing, amp, mixup, rng)
+    loss, _, _, acc = _train_step_impl(model, optimizer, images, labels, smoothing, amp, mixup, rng)
+    return loss, acc
 
 
 @nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
@@ -400,7 +349,31 @@ def train_step_with_metrics(
     model, optimizer, images, labels, smoothing=0.0, amp=False, mixup=None, rng=None
 ):
     """Executes a training step, computing pre-clipping grad_norm for monitoring."""
-    return _train_step(model, optimizer, images, labels, smoothing, amp, mixup, rng, True)
+    loss, _, grads, acc = _train_step_impl(
+        model, optimizer, images, labels, smoothing, amp, mixup, rng
+    )
+    grad_norm = (
+        optax.tree.norm(grads)
+        if hasattr(optax, "tree") and hasattr(optax.tree, "norm")
+        else optax.global_norm(grads)
+    )
+    return StepMetrics(loss=loss, accuracy=acc, grad_norm=grad_norm)
+
+
+def _train_step(
+    model,
+    optimizer,
+    images,
+    labels,
+    smoothing=0.0,
+    amp=False,
+    mixup=None,
+    rng=None,
+    with_metrics=False,
+):
+    if with_metrics:
+        return train_step_with_metrics(model, optimizer, images, labels, smoothing, amp, mixup, rng)
+    return train_step(model, optimizer, images, labels, smoothing, amp, mixup, rng)
 
 
 @nnx.jit(static_argnames=("amp",))
@@ -673,7 +646,7 @@ def main(argv=None):
     start_epoch = 0
     if args.resume:
         step, epoch = ckpt_manager.restore_latest(model, optimizer)
-        if step is not None:
+        if step is not None and isinstance(epoch, int):
             start_epoch = epoch + 1
             if rank == 0:
                 print(
@@ -796,6 +769,7 @@ def main(argv=None):
                 f"| {epoch_img_per_sec:7.1f} img/s ({epoch_time:.2f}s)"
             )
 
+            v_acc_avg = None
             if val_loader is not None and cached_eval_step is not None:
                 # Every host must execute the SPMD validation step; only rank 0 reports it.
                 # Reuse the async H2D prefetch pipeline so eval batches overlap

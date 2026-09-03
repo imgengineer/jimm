@@ -174,3 +174,37 @@ def test_checkpoint_manager_empty():
         mgr.close()
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_checkpoint_manager_context_manager():
+    root = tempfile.mkdtemp()
+    try:
+        with CheckpointManager(f"{root}/mgr") as mgr:
+            m = Mlp(8, rngs=nnx.Rngs(0))
+            mgr.save(0, m)
+            mgr.wait_until_finished()
+            assert mgr.latest_step() == 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_checkpoint_invalid_tree_and_corrupt_data():
+    from jimm.checkpoint import _apply_restored, _validate_tree
+
+    with pytest.raises(ValueError, match="expected a dict subtree"):
+        _validate_tree({"a": 1}, 123, "root")
+
+    with pytest.raises(ValueError, match="missing keys"):
+        _validate_tree({"a": 1, "b": 2}, {"a": 1}, "root")
+
+    with pytest.raises(ValueError, match="unexpected keys"):
+        _validate_tree({"a": 1}, {"a": 1, "extra": 2}, "root")
+
+    m = Mlp(8, rngs=nnx.Rngs(0))
+    with pytest.raises(ValueError, match="not a jimm checkpoint"):
+        _apply_restored("not_a_dict", m, None, "source")
+
+    with pytest.raises(ValueError, match="invalid epoch"):
+        _apply_restored(
+            {"model": nnx.to_pure_dict(nnx.state(m)), "epoch": "bad_epoch"}, m, None, "source"
+        )

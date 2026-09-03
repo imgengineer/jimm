@@ -97,5 +97,24 @@ from . import (  # noqa: F401  (imports trigger registration)
 )
 from .resnet import ResNet
 from .vision_transformer import VisionTransformer
+from ..registry import (
+    create_model,
+    get_default_cfg,
+    is_model,
+    list_models,
+    list_modules,
+    model_entrypoint,
+    register_model,
+)
 
-__all__ = ["ResNet", "VisionTransformer"]
+__all__ = [
+    "ResNet",
+    "VisionTransformer",
+    "create_model",
+    "list_models",
+    "list_modules",
+    "is_model",
+    "model_entrypoint",
+    "get_default_cfg",
+    "register_model",
+]

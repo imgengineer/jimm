@@ -1,10 +1,17 @@
 {
-  "pythonVersion": "3.13",
+  "pythonVersion": "3.12",
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": [
+    ".venv/lib/python3.12/site-packages"
+  ],
+  "reportMissingImports": "none",
+  "reportMissingTypeStubs": "none",
   "executionEnvironments": [
     {
       "root": ".",
       "pythonPath": ".venv/bin/python",
-      "extraPaths": [".venv/lib/python3.13/site-packages"]
+      "extraPaths": [".venv/lib/python3.12/site-packages"]
     }
   ]
 }

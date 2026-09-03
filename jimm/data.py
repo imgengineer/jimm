@@ -12,10 +12,10 @@ import tempfile
 from pathlib import Path
 
 import cv2  # pyright: ignore[reportMissingImports]
-import grain.python as grain
-import jax
+import grain.python as grain  # pyright: ignore[reportMissingImports]
+import jax  # pyright: ignore[reportMissingImports]
 import numpy as np
-from absl import flags
+from absl import flags  # pyright: ignore[reportMissingImports]
 
 from .augment import (
     AugmentOp,
@@ -56,6 +56,9 @@ from .augment import (
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
+
+# Ensure OpenCV worker processes do not spawn competing internal thread pools
+cv2.setNumThreads(0)
 _INV_255 = np.float32(1.0 / 255.0)
 _IMAGE_SUFFIXES = frozenset(
     {
@@ -430,6 +433,7 @@ class _DecodeTransform(grain.RandomMapTransform):
         # computed with in-place multiply/add instead of full-image temporaries.
         self._inv_std = (1.0 / self.std).astype(np.float32)
         self._shift = (-self.mean * self._inv_std).astype(np.float32)
+        self._scale = (self._inv_std * _INV_255).astype(np.float32)
 
     @staticmethod
     def _coerce_image(raw):
@@ -496,14 +500,15 @@ class _DecodeTransform(grain.RandomMapTransform):
             array = random_erasing(
                 array, self.re_prob, mode=self.re_mode, count=self.re_count, rng=rng
             )
+            np.multiply(array, self._inv_std, out=array)
+            np.add(array, self._shift, out=array)
         else:
             image = cv2.resize(image, (self.resize, self.resize), interpolation=cv2.INTER_LINEAR)
             image = center_crop_or_pad(image, self.img_size)
             array = image.astype(np.float32)
-            array *= _INV_255
+            np.multiply(array, self._scale, out=array)
+            np.add(array, self._shift, out=array)
 
-        np.multiply(array, self._inv_std, out=array)
-        np.add(array, self._shift, out=array)
         result = {
             "image": array,
             "label": np.int32(element["label"]),

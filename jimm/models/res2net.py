@@ -1,7 +1,7 @@
 """Res2Net in flax nnx, NHWC. Mirrors timm.models.res2net."""
 
-import jax.numpy as jnp
-from flax import nnx
+import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
+from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from ..layers import ClassifierMixin, DropPath
 from ..registry import _cfg, register_model
@@ -51,7 +51,7 @@ class Res2NetBottleneck(nnx.Module):
         y = jnp.concatenate(out, axis=-1)
         y = self.bn3(self.conv3(y))
         sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + self.drop_path(sc))
+        return nnx.relu(self.drop_path(y) + sc)
 
 
 class Res2Net(ClassifierMixin, nnx.Module):

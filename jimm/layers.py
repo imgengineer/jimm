@@ -13,6 +13,8 @@ from flax import nnx
 
 __all__ = [
     "DropPath",
+    "drop_path",
+    "create_act_layer",
     "PatchEmbed",
     "Mlp",
     "SqueezeExcite",
@@ -34,6 +36,25 @@ def gelu(x: jax.Array) -> jax.Array:
     return nnx.gelu(x, approximate=False)
 
 
+def drop_path(
+    x: jax.Array,
+    rate: float = 0.0,
+    deterministic: bool = False,
+    *,
+    rng: jax.Array | None = None,
+) -> jax.Array:
+    """Drop paths (Stochastic Depth) per sample (mirrors timm.layers.drop_path)."""
+    if rate == 0.0 or deterministic:
+        return x
+    keep_prob = 1.0 - rate
+    if rng is None:
+        rng = jax.random.PRNGKey(0)
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    random_tensor = keep_prob + jax.random.uniform(rng, shape, dtype=x.dtype)
+    binary_tensor = jnp.floor(random_tensor)
+    return (x / keep_prob) * binary_tensor
+
+
 class DropPath(nnx.Module):
     """Stochastic depth with per-sample keep mask (dimension-agnostic: NHWC or BNC).
 
@@ -50,6 +71,8 @@ class DropPath(nnx.Module):
         self.drop = nnx.Dropout(rate, broadcast_dims=(1,), rngs=rngs)
 
     def __call__(self, x: jax.Array) -> jax.Array:
+        if self.rate == 0.0 or self.deterministic:
+            return x
         shape = x.shape
         return self.drop(x.reshape((shape[0], -1)), deterministic=self.deterministic).reshape(shape)
 
@@ -117,6 +140,14 @@ _ACTS = {
 }
 
 
+def create_act_layer(act: str = "relu"):
+    """Retrieve activation function by name (mirrors timm.layers.create_act_layer)."""
+    act_lower = act.lower()
+    if act_lower not in _ACTS:
+        raise ValueError(f"unsupported activation: {act!r}. Available: {list(_ACTS)}")
+    return _ACTS[act_lower]
+
+
 class ConvBNAct(nnx.Module):
     """Universal CNN block: Convolution -> optional BatchNorm -> optional Activation.
 
@@ -128,7 +159,7 @@ class ConvBNAct(nnx.Module):
         in_chs: int,
         out_chs: int,
         kernel: int | tuple[int, int] = 3,
-        stride: int = 1,
+        stride: int | tuple[int, int] = 1,
         groups: int = 1,
         act: str = "relu",
         use_bn: bool = True,
@@ -138,11 +169,12 @@ class ConvBNAct(nnx.Module):
         rngs: nnx.Rngs,
     ):
         k = (kernel, kernel) if isinstance(kernel, int) else tuple(kernel)
+        s = (stride, stride) if isinstance(stride, int) else tuple(stride)
         self.conv = nnx.Conv(
             in_chs,
             out_chs,
             k,
-            strides=(stride, stride),
+            strides=s,
             padding=padding,
             use_bias=not use_bn,
             feature_group_count=groups,
@@ -163,7 +195,10 @@ class SqueezeExcite(nnx.Module):
     """Squeeze-and-Excitation (SE) channel-attention block on NHWC feature maps."""
 
     def __init__(self, chs: int, rd_ratio: float = 0.25, *, rngs: nnx.Rngs):
-        rd = max(int(chs * rd_ratio), 1)
+        try:
+            rd = max(int(chs * rd_ratio), 1)
+        except (TypeError, ValueError):
+            rd = 1
         self.fc1 = nnx.Linear(chs, rd, rngs=rngs)
         self.fc2 = nnx.Linear(rd, chs, rngs=rngs)
 

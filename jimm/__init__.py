@@ -28,7 +28,9 @@ from . import (  # noqa: F401
     data,
     features,
     layers,
+    loss,
     models,
+    optim,
     registry,
     train,
     weights,
@@ -48,9 +50,20 @@ from .layers import (
     Mlp,
     PatchEmbed,
     SqueezeExcite,
+    create_act_layer,
+    drop_path,
     global_pool_nhwc,
     hswish,
     relu6,
+)
+from .loss import (
+    LabelSmoothingCrossEntropy,
+    SoftTargetCrossEntropy,
+    cross_entropy,
+)
+from .optim import (
+    create_optimizer,
+    make_optimizer,
 )
 from .registry import (
     create_model,
@@ -76,6 +89,8 @@ __all__ = [
     "is_model",
     # Layers & Mixins
     "DropPath",
+    "drop_path",
+    "create_act_layer",
     "PatchEmbed",
     "Mlp",
     "SqueezeExcite",
@@ -84,6 +99,13 @@ __all__ = [
     "global_pool_nhwc",
     "hswish",
     "relu6",
+    # Loss functions
+    "cross_entropy",
+    "LabelSmoothingCrossEntropy",
+    "SoftTargetCrossEntropy",
+    # Optimizers
+    "create_optimizer",
+    "make_optimizer",
     # Feature Extraction
     "FeatureExtractor",
     "FeatureInfo",
@@ -109,4 +131,6 @@ __all__ = [
     "features",
     "weights",
     "train",
+    "loss",
+    "optim",
 ]

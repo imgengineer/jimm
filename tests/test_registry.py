@@ -100,5 +100,21 @@ def test_custom_register_model():
 
     assert is_model("dummy_custom_model")
     m = create_model("dummy_custom_model", num_classes=3)
-    assert m.num_classes == 3
+    assert getattr(m, "num_classes") == 3
     assert get_default_cfg("dummy_custom_model") == {"input_size": (3, 64, 64)}
+
+
+def test_models_submodule_registry_exports():
+    import jimm.models
+
+    assert hasattr(jimm.models, "create_model")
+    assert hasattr(jimm.models, "list_models")
+    assert hasattr(jimm.models, "is_model")
+    assert hasattr(jimm.models, "model_entrypoint")
+    assert hasattr(jimm.models, "get_default_cfg")
+    assert hasattr(jimm.models, "register_model")
+
+    m = jimm.models.create_model("resnet18", num_classes=5)
+    assert getattr(m, "num_classes") == 5
+    assert jimm.models.is_model("resnet18")
+    assert "resnet18" in jimm.models.list_models("resnet18*")

@@ -1,8 +1,8 @@
 """Swin Transformer in flax nnx, NHWC. Mirrors timm.models.swin_transformer."""
 
-import jax.numpy as jnp
-from einops import rearrange
-from flax import nnx
+import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
+from einops import rearrange  # pyright: ignore[reportMissingImports]
+from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from ..layers import ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
@@ -92,7 +92,11 @@ class SwinBlock(nnx.Module):
         self.attn = self.attn_cls(dim, window_size, num_heads, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
-        self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
+        try:
+            mlp_hidden = int(dim * mlp_ratio)
+        except (TypeError, ValueError):
+            mlp_hidden = int(dim * 4.0)
+        self.mlp = Mlp(dim, mlp_hidden, drop, rngs=rngs)
         attn_mask = None
         if shift > 0:
             # mask for SW-MSA, precomputed for fixed resolution (timm does the same)
@@ -202,7 +206,7 @@ class SwinTransformer(ClassifierMixin, nnx.Module):
         window_size=7,
         mlp_ratio=4.0,
         drop_rate=0.0,
-        drop_path_rate=0.1,
+        drop_path_rate=0.0,
         block_cls=SwinBlock,
         *,
         rngs,

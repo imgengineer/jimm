@@ -13,6 +13,8 @@ from jimm.layers import (
     Mlp,
     PatchEmbed,
     SqueezeExcite,
+    create_act_layer,
+    drop_path,
     gelu,
     global_pool_nhwc,
     hswish,
@@ -189,3 +191,46 @@ def test_classifier_mixin():
     assert m_vit.get_classifier() is m_vit.head
     m_vit.reset_classifier(0)
     assert m_vit.global_pool == ""
+
+
+def test_functional_drop_path():
+    x = jnp.ones((4, 8, 8, 16), dtype=jnp.float32)
+    # rate 0 is identity
+    assert jnp.allclose(drop_path(x, rate=0.0), x)
+    # deterministic is identity
+    assert jnp.allclose(drop_path(x, rate=0.5, deterministic=True), x)
+    # rate > 0
+    out = drop_path(x, rate=0.5, deterministic=False)
+    assert out.shape == x.shape
+
+
+def test_drop_path_invalid_rate():
+    with pytest.raises(ValueError, match="rate must be between 0 and 1"):
+        DropPath(-0.1, rngs=nnx.Rngs(0))
+    with pytest.raises(ValueError, match="rate must be between 0 and 1"):
+        DropPath(1.5, rngs=nnx.Rngs(0))
+
+
+def test_create_act_layer():
+    assert create_act_layer("relu") is nnx.relu
+    assert create_act_layer("gelu") is gelu
+    assert create_act_layer("silu") is nnx.silu
+    assert create_act_layer("hswish") is nnx.hard_swish
+    assert create_act_layer("relu6") is nnx.relu6
+    assert create_act_layer("identity") is None
+
+    with pytest.raises(ValueError, match="unsupported activation"):
+        create_act_layer("nonexistent_act")
+
+
+def test_global_pool_pass_through():
+    x = jnp.ones((2, 4, 4, 8), dtype=jnp.float32)
+    assert global_pool_nhwc(x, "") is x
+
+
+def test_conv_bn_act_tuple_stride():
+    stride_tuple = (2, 2)
+    block = ConvBNAct(8, 16, kernel=3, stride=stride_tuple, act="silu", rngs=nnx.Rngs(0))
+    x = jnp.ones((2, 16, 16, 8), dtype=jnp.float32)
+    out = block(x)
+    assert out.shape == (2, 8, 8, 16)

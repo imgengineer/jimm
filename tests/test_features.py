@@ -66,3 +66,26 @@ def test_feature_info_get_timm_semantics():
     assert fi.get("num_chs", 1) == 256
     assert fi.channels() == [64, 512]
     assert fi.reduction() == [2, 8]
+    assert len(fi) == 2
+    assert "FeatureInfo" in repr(fi)
+
+
+def test_feature_extractor_generic_model():
+    from jimm.features import create_feature_extractor
+
+    class SimpleGenericModel(nnx.Module):
+        def __init__(self):
+            self.fc = nnx.Linear(10, 5, rngs=nnx.Rngs(0))
+
+        def forward_features(self, x):
+            return x * 2.0
+
+        def __call__(self, x):
+            return self.fc(self.forward_features(x))
+
+    model = SimpleGenericModel()
+    fe = create_feature_extractor(model)
+    x = jnp.ones((2, 10), dtype=jnp.float32)
+    feats = fe(x)
+    assert len(feats) == 1
+    assert jnp.allclose(feats[0], x * 2.0)

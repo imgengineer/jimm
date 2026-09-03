@@ -1,6 +1,6 @@
 """ResNet / ResNeXt / SE-ResNet in flax nnx, NHWC. Mirrors timm.models.resnet."""
 
-from flax import nnx
+from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from ..layers import ClassifierMixin, DropPath, SqueezeExcite
 from ..registry import _cfg, register_model
@@ -44,7 +44,7 @@ class BasicBlock(nnx.Module):
         if self.se is not None:
             y = self.se(y)
         sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + self.drop_path(sc))
+        return nnx.relu(self.drop_path(y) + sc)
 
 
 class Bottleneck(nnx.Module):
@@ -84,7 +84,7 @@ class Bottleneck(nnx.Module):
         if self.se is not None:
             y = self.se(y)
         sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + self.drop_path(sc))
+        return nnx.relu(self.drop_path(y) + sc)
 
 
 class ResNet(ClassifierMixin, nnx.Module):

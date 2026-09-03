@@ -1,7 +1,7 @@
 """SKNet (Selective Kernel) in flax nnx, NHWC. Mirrors timm.models.sknet."""
 
-import jax.numpy as jnp
-from flax import nnx
+import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
+from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from ..layers import ClassifierMixin, DropPath
 from ..registry import _cfg, register_model
@@ -33,7 +33,10 @@ class SKConv(nnx.Module):
             rngs=rngs,
         )
         self.bn2 = nnx.BatchNorm(chs, rngs=rngs)
-        rd = max(int(chs * rd_ratio), rd_divisor)
+        try:
+            rd = max(int(chs * rd_ratio), rd_divisor)
+        except (TypeError, ValueError):
+            rd = rd_divisor
         self.fc = nnx.Linear(chs, rd, rngs=rngs)
         self.fc2 = nnx.Linear(rd, chs * 2, rngs=rngs)
 
@@ -69,7 +72,7 @@ class SKBottleneck(nnx.Module):
         y = self.sk(y)
         y = self.bn3(self.conv3(y))
         sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + self.drop_path(sc))
+        return nnx.relu(self.drop_path(y) + sc)
 
 
 class SKNet(ClassifierMixin, nnx.Module):

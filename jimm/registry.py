@@ -162,9 +162,9 @@ def create_model(
 
     # Attach or cache default configuration
     if not getattr(model, "default_cfg", None):
-        model.default_cfg = get_default_cfg(name) or _cfg()
+        setattr(model, "default_cfg", get_default_cfg(name) or _cfg())
     else:
-        _model_default_cfgs[name] = model.default_cfg
+        _model_default_cfgs[name] = getattr(model, "default_cfg")
 
     # Load pretrained weights if requested
     if pretrained:

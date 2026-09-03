@@ -1,7 +1,7 @@
 """ResNeSt (Split-Attention) in flax nnx, NHWC. Mirrors timm.models.resnest."""
 
-import jax.numpy as jnp
-from flax import nnx
+import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
+from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from ..layers import ClassifierMixin, ConvBNAct, DropPath
 from ..registry import _cfg, register_model
@@ -67,7 +67,7 @@ class ResNeStBottleneck(nnx.Module):
             sc = self.short_conv(sc)
         else:
             sc = x
-        return nnx.relu(y + self.drop_path(sc))
+        return nnx.relu(self.drop_path(y) + sc)
 
 
 class ResNeSt(ClassifierMixin, nnx.Module):

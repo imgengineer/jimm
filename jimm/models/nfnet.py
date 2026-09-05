@@ -13,6 +13,7 @@ class ScaledStdConv(nnx.Module):
 
     def __init__(self, in_chs, out_chs, kernel=3, stride=1, groups=1, *, rngs):
         self.stride, self.groups = stride, groups
+        self.dtype = None
         self.kernel = nnx.Param(
             nnx.initializers.lecun_normal()(
                 rngs.params(), (kernel, kernel, in_chs // groups, out_chs)
@@ -26,17 +27,15 @@ class ScaledStdConv(nnx.Module):
         var = jnp.var(w, axis=(0, 1, 2), keepdims=True)
         fan_in = w.shape[0] * w.shape[1] * w.shape[2]
         w = (w - mean) * jax.lax.rsqrt(var * fan_in + 1e-4)
-        return (
-            jax.lax.conv_general_dilated(
-                x,
-                w,
-                (self.stride, self.stride),
-                "SAME",
-                dimension_numbers=("NHWC", "HWIO", "NHWC"),
-                feature_group_count=self.groups,
-            )
-            + self.bias[...]
-        )
+        dtype = self.dtype or jnp.result_type(x, w)
+        return jax.lax.conv_general_dilated(
+            x.astype(dtype),
+            w.astype(dtype),
+            (self.stride, self.stride),
+            "SAME",
+            dimension_numbers=("NHWC", "HWIO", "NHWC"),
+            feature_group_count=self.groups,
+        ) + self.bias[...].astype(dtype)
 
 
 class NFBlock(nnx.Module):

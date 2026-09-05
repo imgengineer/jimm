@@ -12,6 +12,7 @@ import pytest
 from flax import nnx
 
 from jimm.augment import MixupCutmix
+from jimm.models.nfnet import ScaledStdConv
 from jimm.registry import create_model
 from jimm.train import (
     StepMetrics,
@@ -30,6 +31,46 @@ from jimm.train import (
     train_step,
     train_step_with_metrics,
 )
+
+
+@pytest.mark.parametrize("amp", [False, True])
+@pytest.mark.parametrize("custom_conv", [False, True])
+def test_amp_compute_preserves_master_weights_and_batch_statistics(amp, custom_conv):
+    class Model(nnx.Module):
+        def __init__(self):
+            rngs = nnx.Rngs(0)
+            self.conv = (
+                ScaledStdConv(3, 4, kernel=1, rngs=rngs)
+                if custom_conv
+                else nnx.Conv(3, 4, (1, 1), rngs=rngs)
+            )
+            self.bn = nnx.BatchNorm(4, rngs=rngs)
+            self.fc = nnx.Linear(4, 2, rngs=rngs)
+
+        def __call__(self, x):
+            expected = jnp.bfloat16 if amp else jnp.float32
+            x = self.conv(x)
+            assert x.dtype == expected
+            x = self.fc(self.bn(x).mean(axis=(1, 2)))
+            assert x.dtype == expected
+            return x
+
+    model = Model()
+    model.train()
+    optimizer = make_optimizer(model, 0.01, 0.0, 1, 2)
+    images = jnp.ones((2, 4, 4, 3))
+    labels = jnp.array([0, 1])
+    cached_train = make_cached_train_step(model, optimizer, amp=amp)
+    for _ in range(2):
+        loss, _ = cached_train(images, labels)
+        assert loss.dtype == jnp.float32
+        assert bool(jnp.isfinite(loss))
+    model.eval()
+    loss, _ = make_cached_eval_step(model, amp=amp)(images, labels)
+    assert bool(jnp.isfinite(loss))
+    assert model.bn.mean[...].dtype == model.bn.var[...].dtype == jnp.float32
+    assert all(p.dtype == jnp.float32 for p in jax.tree.leaves(nnx.state(model, nnx.Param)))
+    assert model.fc.dtype is None
 
 
 @pytest.fixture

@@ -80,7 +80,7 @@ def test_architecture_family_forward_and_backward(module_name):
 
 
 def test_variant_constructor_smoke():
-    for name in ("convnextv2_tiny", "dm_nfnet_f0", "eca_vovnet39b", "regnety_008_tv"):
+    for name in ("convnextv2_tiny", "resnet26", "convnext_femto", "regnety_008_tv"):
         model = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
         assert model.num_features > 0
         assert "input_size" in model.default_cfg

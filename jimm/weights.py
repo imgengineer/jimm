@@ -115,8 +115,18 @@ def load_state_dict(
         else:
             missing.append(k)
 
-    if strict and missing:
-        raise RuntimeError(f"Failed to load {len(missing)} keys strictly: {missing[:10]}...")
+    if strict:
+        supplied = {id(node) for _, node, _ in updates}
+        absent = [
+            ".".join(map(str, path))
+            for path, node in nnx.graph.iter_graph(model)
+            if isinstance(node, (nnx.Param, nnx.BatchStat)) and id(node) not in supplied
+        ]
+        if missing or absent:
+            raise RuntimeError(
+                f"Failed to load weights strictly: unmatched keys: {missing[:10]}; "
+                f"missing model parameters/statistics: {absent[:10]}"
+            )
 
     for key, node, value in updates:
         node.set_value(value)

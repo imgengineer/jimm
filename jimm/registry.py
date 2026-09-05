@@ -1,6 +1,6 @@
 """Model registry and creation factory, mirroring timm.models.registry.
 
-Provides dynamic model registration, fuzzy query/filtering across 1,344 architectures,
+Provides dynamic model registration, fuzzy query/filtering across supported architectures,
 and instantiation with Flax NNX lifecycle & RNG management.
 """
 

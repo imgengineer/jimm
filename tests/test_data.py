@@ -32,6 +32,39 @@ from jimm.data import (
 )
 
 
+@pytest.mark.parametrize("interpolation", ["nearest", "bilinear", "bicubic", "random"])
+def test_eval_transform_uses_requested_interpolation(interpolation):
+    image = np.random.default_rng(0).integers(0, 256, (9, 9, 3), dtype=np.uint8)
+    transform = _DecodeTransform(
+        img_size=4,
+        crop_pct=1.0,
+        is_training=False,
+        interpolation=interpolation,
+        mean=(0, 0, 0),
+        std=(1, 1, 1),
+    )
+    mode = {
+        "nearest": cv2.INTER_NEAREST,
+        "bilinear": cv2.INTER_LINEAR,
+        "bicubic": cv2.INTER_CUBIC,
+        "random": cv2.INTER_LINEAR,
+    }[interpolation]
+    expected = cv2.resize(image, (4, 4), interpolation=mode).astype(np.float32) / 255
+    sample = {"image": image, "label": 0}
+    np.testing.assert_allclose(transform.map(sample)["image"], expected, atol=1e-7)
+    np.testing.assert_array_equal(transform.map(sample)["image"], transform.map(sample)["image"])
+
+
+def test_augmix_accepts_negative_depth_from_cli_help():
+    policy = build_auto_augment("augmix-m3-w3-d-1")
+    assert policy.depth == -1
+    image = np.full((16, 16, 3), 127, dtype=np.uint8)
+    assert policy(image, rng=np.random.default_rng(0)).shape == image.shape
+    for invalid in ("augmix-m3-d", "augmix-m3-d-", "augmix-m3-d-invalid"):
+        with pytest.raises(ValueError):
+            build_auto_augment(invalid)
+
+
 @pytest.fixture
 def temp_dataset():
     root = tempfile.mkdtemp()

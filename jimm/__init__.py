@@ -6,7 +6,7 @@ Architecture & Conventions:
   - Model API: Pure Flax NNX object-oriented modules with functional JAX transformations
     (`nnx.jit`, `nnx.grad`, `nnx.vmap`, `nnx.split`, `nnx.merge`).
   - Weights Layout: Conv kernels stored in (H, W, In, Out), Linear weights in (In, Out).
-  - Registry: 100% compatible coverage of timm entrypoints and architectures.
+  - Registry: Explicitly supported architectures with timm-style entrypoints.
 """
 
 import logging

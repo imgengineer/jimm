@@ -14,6 +14,21 @@ from flax import nnx
 __all__ = ["FeatureInfo", "FeatureExtractor", "create_feature_extractor"]
 
 
+def _select_features(feats, out_indices):
+    if out_indices is None:
+        return feats
+    selected = []
+    for idx in out_indices:
+        real_idx = len(feats) + idx if idx < 0 else idx
+        if not 0 <= real_idx < len(feats):
+            raise ValueError(
+                f"out_indices entry {idx} is out of range for a model "
+                f"with {len(feats)} feature stages"
+            )
+        selected.append(feats[real_idx])
+    return selected
+
+
 class FeatureInfo:
     """Metadata container describing intermediate feature map channel depths and reduction factors."""
 
@@ -106,21 +121,7 @@ class FeatureExtractor(nnx.Module):
         else:
             feats.append(m.forward_features(x))
 
-        if self.out_indices is not None:
-            n = len(feats)
-            selected = []
-            for idx in self.out_indices:
-                real_idx = n + idx if idx < 0 else idx
-                if not 0 <= real_idx < n:
-                    # timm raises on invalid out_indices instead of silently
-                    # returning fewer feature maps than requested.
-                    raise ValueError(
-                        f"out_indices entry {idx} is out of range for a model "
-                        f"with {n} feature stages"
-                    )
-                selected.append(feats[real_idx])
-            return selected
-        return feats
+        return _select_features(feats, self.out_indices)
 
 
 def create_feature_extractor(

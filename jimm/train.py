@@ -45,6 +45,7 @@ from flax import nnx  # pyright: ignore[reportMissingImports]
 from .checkpoint import CheckpointManager
 from .data import MixupCutmix, create_loader
 from .loss import _cross_entropy_losses, cross_entropy
+from .models.nfnet import ScaledStdConv
 from .optim import create_optimizer, make_optimizer
 from .registry import create_model
 
@@ -309,6 +310,25 @@ def _mixup_cutmix_jax(images, labels, rng, config):
     )
 
 
+def _forward_with_precision(model, images, amp):
+    if not amp:
+        return model(images)
+    # Override compute dtypes only. Master parameters and normalization statistics
+    # stay in FP32; restoring static attributes also keeps cached NNX graphs valid.
+    layers = [
+        (node, node.dtype)
+        for _, node in nnx.graph.iter_graph(model)
+        if isinstance(node, (nnx.Conv, nnx.ConvTranspose, nnx.Linear, nnx.Einsum, ScaledStdConv))
+    ]
+    try:
+        for layer, _ in layers:
+            layer.dtype = jnp.bfloat16
+        return model(images.astype(jnp.bfloat16)).astype(jnp.float32)
+    finally:
+        for layer, dtype in layers:
+            layer.dtype = dtype
+
+
 def _train_step_impl(
     model,
     optimizer,
@@ -326,10 +346,7 @@ def _train_step_impl(
         images, labels = _mixup_cutmix_jax(images, labels, rng, mixup)
 
     def loss_fn(model):
-        x = images.astype(jnp.bfloat16) if amp else images
-        logits = model(x)
-        if amp:
-            logits = logits.astype(jnp.float32)
+        logits = _forward_with_precision(model, images, amp)
         return cross_entropy(logits, labels, smoothing), logits
 
     (loss, logits), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
@@ -381,10 +398,7 @@ def eval_step(model, images, labels, amp=False, valid=None):
     _validate_batch(images, labels)
     if valid is not None and (valid.ndim != 1 or valid.shape != (images.shape[0],)):
         raise ValueError("valid mask must be 1-D and match the image batch size")
-    x = images.astype(jnp.bfloat16) if amp else images
-    logits = model(x)
-    if amp:
-        logits = logits.astype(jnp.float32)
+    logits = _forward_with_precision(model, images, amp)
     losses = _cross_entropy_losses(logits, labels)
     if valid is None:
         return losses.mean(), _accuracy(logits, labels)
@@ -789,20 +803,15 @@ def main(argv=None):
                     v_counts.append(v_valid.sum())
                 if not v_losses:
                     raise ValueError("validation loader produced no batches")
+                v_loss_avg, v_acc_avg = _mean_metrics(v_losses, v_accuracies, v_counts)
                 if rank == 0:
-                    v_loss_avg, v_acc_avg = _mean_metrics(v_losses, v_accuracies, v_counts)
                     msg += f" | val loss {v_loss_avg:.4f} val acc {v_acc_avg:.4f}"
 
             if rank == 0:
                 print(msg, flush=True)
-                # Checkpoint only from the primary host (rank 0), async; the
-                # manager prunes old epochs per --max-to-keep when it finishes.
-                metrics = (
-                    {"val_acc": v_acc_avg}
-                    if val_loader is not None and cached_eval_step is not None
-                    else None
-                )
-                ckpt_manager.save(epoch, model, optimizer, metrics=metrics)
+            # Orbax synchronizes all hosts and writes their addressable shards.
+            metrics = {"val_acc": v_acc_avg} if v_acc_avg is not None else None
+            ckpt_manager.save(epoch, model, optimizer, metrics=metrics)
 
     finally:
         try:

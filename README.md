@@ -2,7 +2,7 @@
 
 **jimm** is a comprehensive JAX / Flax NNX implementation of the popular [`timm` (pytorch-image-models)](https://github.com/huggingface/pytorch-image-models) library.
 
-It provides **1,344 registered model architectures across 94 model families** (100% coverage of timm's 1,309 entrypoints), mirroring `timm`'s API surface with a pure JAX native design.
+It provides **383 registered models across 94 model families**, with a timm-style API and a pure JAX native design. Use `jimm.list_models()` to inspect the supported names. Unimplemented variants are rejected instead of being substituted with an unrelated architecture; full timm architecture and checkpoint parity is not claimed.
 
 ---
 
@@ -251,7 +251,8 @@ loss, acc = train_step(model, optimizer, images, labels, smoothing=0.1)
 ### 4. Checkpoint Save and Restore (Orbax)
 
 The training CLI writes asynchronous, epoch-numbered model and optimizer
-checkpoints and saves only from process rank 0. `--resume` restores the newest
+checkpoints with every JAX process participating in Orbax synchronization and
+shard writes. Only process rank 0 prints training metrics. `--resume` restores the newest
 checkpoint and advances the Grain sampler to the first batch of the next epoch.
 The lower-level helpers below support explicit checkpoint paths.
 
@@ -270,7 +271,7 @@ print("Restored epoch:", epoch)
 
 ---
 
-## Supported Architectures (1,344 Models across 94 Families)
+## Supported Architectures (383 Models across 94 Families)
 
 | Family | Key Variants | Description |
 | --- | --- | --- |
@@ -313,7 +314,7 @@ print("Restored epoch:", epoch)
 
 ## Testing & Verification
 
-### Unit Test Suite & Code Coverage (~98.5% Statement Coverage)
+### Unit Test Suite & Code Coverage
 
 Run the full pytest suite with code coverage across all core modules and 94 architecture families:
 
@@ -381,7 +382,7 @@ jimm/
   features.py       features_only multi-scale feature extractor
   weights.py        PyTorch-style state-dict conversion and .npz loading
   models/           94 architecture implementation files + variants.py
-                    (1,344 registered variants across 94 families)
+                    (383 registered models across 94 families)
 tests/              pytest unit test suite
 scripts/            Standalone verification scripts
   test_jimm.py      Registered-model forward smoke checks

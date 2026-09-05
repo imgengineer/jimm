@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..features import _select_features
 from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
 from .vision_transformer import Attention
@@ -102,18 +103,31 @@ class CaiT(ClassifierMixin, nnx.Module):
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
-    def forward_features(self, x):
+    def _forward_features(self, x, intermediates=None):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
         x = x + self.pos_embed[...]
         for blk in self.blocks:
             x = blk(x)
+            if intermediates is not None:
+                intermediates.append(x)
         x = jnp.concatenate(
             [jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1
         )
         for blk in self.blocks_token_only:
             x = blk(x)
+            if intermediates is not None:
+                intermediates.append(x)
         return self.norm(x)
+
+    def forward_features(self, x):
+        return self._forward_features(x)
+
+    def forward_intermediates(self, x, out_indices=None):
+        """Patch/class-attention block outputs, followed by normalized features."""
+        features = []
+        features.append(self._forward_features(x, features))
+        return _select_features(features, out_indices)
 
     def forward_head(self, x):
         x = x[:, 0]

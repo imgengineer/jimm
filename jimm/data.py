@@ -503,7 +503,14 @@ class _DecodeTransform(grain.RandomMapTransform):
             np.multiply(array, self._inv_std, out=array)
             np.add(array, self._shift, out=array)
         else:
-            image = cv2.resize(image, (self.resize, self.resize), interpolation=cv2.INTER_LINEAR)
+            interpolation = self.interpolation
+            if interpolation is None or interpolation == "random":
+                interpolation = "bilinear"
+            image = cv2.resize(
+                image,
+                (self.resize, self.resize),
+                interpolation=resolve_interpolation(interpolation, rng=rng),
+            )
             image = center_crop_or_pad(image, self.img_size)
             array = image.astype(np.float32)
             np.multiply(array, self._scale, out=array)

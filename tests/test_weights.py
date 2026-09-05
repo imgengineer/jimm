@@ -8,6 +8,34 @@ from jimm.registry import create_model
 from jimm.weights import _convert_key, _convert_tensor, load_pretrained, load_state_dict
 
 
+def test_strict_loading_requires_all_parameters_and_batch_statistics():
+    class Model(nnx.Module):
+        def __init__(self):
+            rngs = nnx.Rngs(0)
+            self.fc = nnx.Linear(2, 2, rngs=rngs)
+            self.bn = nnx.BatchNorm(2, rngs=rngs)
+            self.drop = nnx.Dropout(0.1, rngs=rngs)
+
+    model = Model()
+    checkpoint = {
+        "fc.weight": np.full((2, 2), 2.0),
+        "fc.bias": np.full((2,), 3.0),
+        "bn.weight": np.ones(2),
+        "bn.bias": np.zeros(2),
+        "bn.running_mean": np.zeros(2),
+        "bn.running_var": np.ones(2),
+    }
+    before = np.asarray(model.fc.kernel[...]).copy()
+    for partial in ({}, {k: v for k, v in checkpoint.items() if k != "bn.running_var"}):
+        with pytest.raises(RuntimeError, match="strictly"):
+            load_state_dict(model, partial, strict=True)
+        np.testing.assert_array_equal(model.fc.kernel[...], before)
+    loaded, missing = load_state_dict(model, checkpoint, strict=True)
+    assert set(loaded) == set(checkpoint)
+    assert missing == []
+    np.testing.assert_array_equal(model.fc.kernel[...], 2.0)
+
+
 def test_convert_key():
     assert _convert_key("layer1.0.conv1.weight") == ["stages", "0", "0", "conv1", "kernel"]
     assert _convert_key("layer2.0.downsample.0.weight") == [

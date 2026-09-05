@@ -1,10 +1,34 @@
 """Tests for features_only and intermediate feature extraction in jimm."""
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from flax import nnx
 
 import jimm
+from jimm.models.cait import CaiT
+from jimm.models.tnt import TNT
+from jimm.models.vision_transformer_sam import VisionTransformerSAM
+from jimm.models.xcit import XCiT
+
+
+@pytest.mark.parametrize("model_cls", [CaiT, TNT, VisionTransformerSAM, XCiT])
+def test_special_transformer_intermediates_follow_native_forward(model_cls):
+    kwargs = {"window_size": 3} if model_cls is VisionTransformerSAM else {}
+    model = model_cls(
+        img_size=48, embed_dim=16, depth=2, num_heads=4, num_classes=0, rngs=nnx.Rngs(0), **kwargs
+    )
+    model.eval()
+    x = jnp.arange(48 * 48 * 3, dtype=jnp.float32).reshape(1, 48, 48, 3) / 1000
+    extractor = jimm.create_feature_extractor(model)
+    features = nnx.jit(extractor)(x)
+    assert len(features) > 1
+    np.testing.assert_allclose(features[-1], model.forward_features(x), rtol=1e-5, atol=1e-5)
+    selected = jimm.create_feature_extractor(model, out_indices=(-1, 0))(x)
+    np.testing.assert_allclose(selected[0], features[-1], rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(selected[1], features[0], rtol=1e-5, atol=1e-5)
+    with pytest.raises(ValueError, match="out of range"):
+        jimm.create_feature_extractor(model, out_indices=(len(features),))(x)
 
 
 def test_features_only_resnet():

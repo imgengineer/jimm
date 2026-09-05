@@ -16,7 +16,7 @@ from jimm.registry import (
 
 def test_list_models_and_modules():
     models = list_models()
-    assert len(models) >= 1309
+    assert len(models) == len(set(models))
     assert "resnet50" in models
     assert "convnext_tiny" in models
     assert "vit_base_patch16_224" in models
@@ -55,6 +55,40 @@ def test_list_models_and_modules():
     # Pretrained filter
     pretrained = list_models(pretrained=True)
     assert isinstance(pretrained, list)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "mobilevitv2_050",
+        "volo_d5_512",
+        "vit_7b_patch16_dinov3",
+        "vit_so400m_patch14_siglip_gap_896",
+        "eca_vovnet39b",
+        "regnety_1280",
+        "deit_base_distilled_patch16_224",
+        "convnext_atto_rms",
+    ],
+)
+def test_unimplemented_variants_are_not_substituted(name):
+    assert not is_model(name)
+    assert name not in list_models()
+    with pytest.raises(ValueError, match="Unknown model"):
+        create_model(name)
+
+
+def test_variant_architecture_configs():
+    resnext = nnx.eval_shape(lambda: create_model("resnext101_32x4d"))
+    assert [len(stage) for stage in resnext.stages] == [3, 4, 23, 3]
+    assert resnext.stages[0][0].conv2.feature_group_count == 32
+    assert resnext.stages[0][0].conv1.out_features == 128
+    regnet = nnx.eval_shape(lambda: create_model("regnety_008_tv"))
+    reference = nnx.eval_shape(lambda: create_model("regnety_008"))
+    assert [len(stage) for stage in regnet.stages] == [len(stage) for stage in reference.stages]
+    assert regnet.num_features == reference.num_features
+    vit = nnx.eval_shape(lambda: create_model("vit_small_patch16_384"))
+    assert vit.num_features == 384
+    assert vit.patch_embed.img_size == vit.default_cfg["input_size"][1] == 384
 
 
 def test_model_entrypoint_and_is_model():

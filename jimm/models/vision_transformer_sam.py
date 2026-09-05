@@ -6,6 +6,7 @@ Key traits: window attention with global-attention every few blocks, rel-pos bia
 import jax.numpy as jnp
 from flax import nnx
 
+from ..features import _select_features
 from ..layers import DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
 from .swin_transformer import window_partition, window_reverse
@@ -92,15 +93,26 @@ class VisionTransformerSAM(nnx.Module):
         self.neck2 = nnx.Conv(256, 256, (3, 3), use_bias=False, padding="VALID", rngs=rngs)
         self.head = None  # no classifier; this is an encoder
 
-    def forward_features(self, x):
+    def _forward_features(self, x, intermediates=None):
         x = self.patch_embed(x)
         x = x + self.pos_embed[...].reshape(
             1, self.patch_embed.grid_size[0], self.patch_embed.grid_size[1], self.embed_dim
         )
         for blk in self.blocks:
             x = blk(x)
+            if intermediates is not None:
+                intermediates.append(x)
         x = self.neck2(self.neck1(x))
         return x
+
+    def forward_features(self, x):
+        return self._forward_features(x)
+
+    def forward_intermediates(self, x, out_indices=None):
+        """NHWC block outputs, followed by the encoder neck output."""
+        features = []
+        features.append(self._forward_features(x, features))
+        return _select_features(features, out_indices)
 
     def forward_head(self, x):
         return global_pool_enc(x)

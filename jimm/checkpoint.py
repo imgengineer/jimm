@@ -251,6 +251,8 @@ class CheckpointManager:
     ) -> bool:
         """Save model/optimizer state as step ``step`` (asynchronous).
 
+        All JAX processes must call this with the same step and metrics.
+
         Args:
             metrics: Optional metric values (e.g. ``{"val_acc": 0.74}``) used by
                 ``best_fn`` for best-checkpoint retention.

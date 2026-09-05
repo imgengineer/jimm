@@ -876,7 +876,8 @@ class AugMixAugment:
 def augment_and_mix_transform(config_str="augmix-m3-w3", hparams=None, transforms=None):
     magnitude, width, depth, alpha, blended = 3.0, 3, -1, 1.0, False
     config = dict(hparams or {})
-    for part in config_str.split("-")[1:]:
+    parts = iter(config_str.split("-")[1:])
+    for part in parts:
         if part.startswith("mstd"):
             _set_magnitude_std(config, part[4:])
         elif part.startswith("m"):
@@ -884,7 +885,8 @@ def augment_and_mix_transform(config_str="augmix-m3-w3", hparams=None, transform
         elif part.startswith("w"):
             width = _as_int(part[1:])
         elif part.startswith("d"):
-            depth = _as_int(part[1:])
+            # The negative sign in d-1 is also a configuration delimiter.
+            depth = _as_int(part[1:] if part != "d" else "-" + next(parts, ""))
         elif part.startswith("a"):
             alpha = _as_float(part[1:])
         elif part.startswith("b"):

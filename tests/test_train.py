@@ -73,6 +73,70 @@ def test_amp_compute_preserves_master_weights_and_batch_statistics(amp, custom_c
     assert model.fc.dtype is None
 
 
+@pytest.mark.parametrize("amp", [False, True])
+@pytest.mark.parametrize("mixing", [False, True])
+def test_cached_training_matches_public_step_with_shared_rngs(amp, mixing):
+    class Model(nnx.Module):
+        def __init__(self):
+            rngs = nnx.Rngs(0)
+            self.fc1 = nnx.Linear(3, 8, rngs=rngs)
+            self.bn = nnx.BatchNorm(8, rngs=rngs)
+            self.drop1 = nnx.Dropout(0.2, rngs=rngs)
+            self.drop2 = nnx.Dropout(0.2, rngs=rngs)
+            self.fc2 = nnx.Linear(8, 2, rngs=rngs)
+
+        def __call__(self, x):
+            x = self.drop2(self.drop1(self.bn(self.fc1(x))))
+            return self.fc2(x.mean(axis=(1, 2)))
+
+    model = Model()
+    model.train()
+    reference = nnx.clone(model)
+    optimizer = make_optimizer(model, 0.01, 0.01, 1, 10)
+    reference_optimizer = make_optimizer(reference, 0.01, 0.01, 1, 10)
+    mixup = MixupCutmix(mixup_alpha=0.4, cutmix_alpha=1.0, num_classes=2) if mixing else None
+    cached = make_cached_train_step(model, optimizer, amp=amp, mixup=mixup)
+    images = jax.random.normal(jax.random.key(1), (4, 4, 4, 3))
+    labels = jnp.array([0, 1, 1, 0])
+    for step in range(3):
+        rng = jax.random.key(step + 2)
+        actual = (
+            cached(images, labels, 0.1, rng=rng)
+            if step % 2 == 0
+            else cached(images, labels, smoothing=0.1, rng=rng)
+        )
+        expected = train_step(
+            reference,
+            reference_optimizer,
+            images,
+            labels,
+            smoothing=0.1,
+            amp=amp,
+            mixup=mixup,
+            rng=rng,
+        )
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
+        actual_state = jax.tree.leaves(nnx.state((model, optimizer)))
+        expected_state = jax.tree.leaves(nnx.state((reference, reference_optimizer)))
+        assert len(actual_state) == len(expected_state)
+        for actual_leaf, expected_leaf in zip(actual_state, expected_state):
+            if jax.dtypes.issubdtype(actual_leaf.dtype, jax.dtypes.prng_key):
+                actual_leaf = jax.random.key_data(actual_leaf)
+                expected_leaf = jax.random.key_data(expected_leaf)
+            np.testing.assert_allclose(actual_leaf, expected_leaf, rtol=1e-6, atol=1e-6)
+    assert int(optimizer.step[...]) == 3
+    assert model.fc1.dtype is model.fc2.dtype is None
+
+    model.eval()
+    reference.eval()
+    np.testing.assert_allclose(
+        make_cached_eval_step(model, amp=amp)(images, labels),
+        eval_step(reference, images, labels, amp=amp),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
 @pytest.fixture
 def temp_dataset():
     root = tempfile.mkdtemp()

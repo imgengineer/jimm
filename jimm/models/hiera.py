@@ -2,6 +2,7 @@
 
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 
@@ -21,7 +22,7 @@ class HieraBlock(nnx.Module):
         B, N, C = x.shape
         qkv = self.qkv(self.norm1(x)).reshape(B, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
+        out = dot_product_attention(q, k, v).reshape(B, N, C)
         x = x + self.drop_path(self.proj(out))
         return x + self.drop_path(self.mlp(self.norm2(x)))
 

@@ -4,6 +4,7 @@ import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
 from einops import rearrange  # pyright: ignore[reportMissingImports]
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 
@@ -61,7 +62,7 @@ class WindowAttention(nnx.Module):
                 mask[None, :, None, :, :], (B // nW, nW, 1, N, N)
             ).reshape(B, 1, N, N)
             bias = bias[None] + window_bias
-        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
+        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
 
@@ -286,7 +287,7 @@ class SwinV2Attention(WindowAttention):
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-6)
         k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-6)
-        # nnx.dot_product_attention divides by sqrt(head_dim); rescale q to
+        # dot_product_attention divides by sqrt(head_dim); rescale q to
         # preserve SwinV2's fixed cosine logit scale of 1 / 0.5.
         q = q * (2.0 * jnp.sqrt(jnp.asarray(self.head_dim, dtype=q.dtype)))
         bias = self.rel_bias_table[...][self.rel_index[...]].transpose(2, 0, 1)
@@ -296,7 +297,7 @@ class SwinV2Attention(WindowAttention):
                 mask[None, :, None, :, :], (B // nW, nW, 1, N, N)
             ).reshape(B, 1, N, N)
             bias = bias[None] + window_bias
-        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
+        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
 

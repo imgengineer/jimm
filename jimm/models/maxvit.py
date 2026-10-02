@@ -4,6 +4,7 @@ import jax.numpy as jnp
 from einops import rearrange
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp, SqueezeExcite, gelu
 from ..registry import _cfg, register_model
 from .swin_transformer import window_partition, window_reverse
@@ -67,7 +68,7 @@ class MaxViTAttention(nnx.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         bias = self.rel_bias[...][self.rel_index[...]].transpose(2, 0, 1)
-        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
+        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
 
 

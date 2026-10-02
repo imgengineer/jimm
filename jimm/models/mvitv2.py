@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 
@@ -37,7 +38,7 @@ class PooledAttention(nnx.Module):
         # ponytail: rel-pos bias applied only for same-resolution attn (skipped when K/V pooled)
         if self.pool_stride == 1 and k.shape[1] == self.rel_index[...].shape[0]:
             bias = self.rel_bias[...][self.rel_index[...]].transpose(2, 0, 1)
-        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
+        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
 
     def _pool(self, t, H, W):

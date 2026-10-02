@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
 
@@ -28,7 +29,7 @@ class RelPosAttention(nnx.Module):
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         bias = self.rel_bias[...][self.rel_index[...]].transpose(2, 0, 1)  # (heads, n, n)
         bias = jnp.pad(bias, ((0, 0), (1, 0), (1, 0)))  # cls row/col get 0 bias
-        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
+        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
 
 

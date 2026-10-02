@@ -70,11 +70,11 @@ class ConvTranspose(nnx.Module):
     def __call__(self, x):
         x = jax.lax.conv_general_dilated(
             x,
-            jnp.flip(self.kernel[...], axis=(0, 1)),
+            jnp.flip(self.kernel[...].astype(x.dtype), axis=(0, 1)),
             window_strides=(1, 1),
             padding=((self.padding, self.padding),) * 2,
             lhs_dilation=(self.stride, self.stride),
             dimension_numbers=("NHWC", "HWIO", "NHWC"),
             feature_group_count=self.groups,
         )
-        return x + self.bias[...]
+        return x + self.bias[...].astype(x.dtype)

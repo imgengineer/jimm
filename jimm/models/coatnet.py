@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp, SqueezeExcite, gelu
 from ..registry import _cfg, register_model
 
@@ -67,7 +68,7 @@ class RelPosAttention(nnx.Module):
         gh, gw = self.grid
         idx = self.rel_index[...].reshape(gh, gh, gw, gw).transpose(0, 2, 1, 3).reshape(N, N)
         bias = self.rel_bias[...][idx].transpose(2, 0, 1)
-        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
+        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.proj(x)
 
 

@@ -9,10 +9,11 @@ import pytest
 from flax import nnx
 
 import jimm
+from jimm.models._conv import ConvTranspose
 from jimm.models._rope_vit import apply_rope, axial_rope, resample_pos_embed_grid
 from jimm.models.deepseek_vit import DeepseekVitAligner, RmsNormFp32
 from jimm.models.qwen3_vit import Qwen3VitPatchMerger
-from jimm.train import cross_entropy
+from jimm.train import cross_entropy, make_cached_eval_step, make_cached_train_step
 
 # Counts from timm 1.0.30 with num_classes=5, including native projector defaults.
 PARAM_COUNTS = {
@@ -129,6 +130,57 @@ def test_new_architecture_jit_training_features_and_classifier_reset(name, famil
     assert model.get_classifier() is None
     assert model(x).shape == (2, model.num_features)
     np.testing.assert_allclose(model(x), pooled, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("groups", [1, 4])
+def test_grouped_transpose_convolution_preserves_bf16_compute_and_fp32_weights(groups):
+    model = ConvTranspose(4, 4, 4, 2, 1, groups=groups, rngs=nnx.Rngs(0))
+    images = jax.random.normal(jax.random.key(1), (2, 3, 4, 4))
+    expected = model(images)
+
+    @nnx.jit
+    def forward(m, inputs):
+        return m(inputs)
+
+    actual = forward(model, images.astype(jnp.bfloat16))
+    assert actual.shape == (2, 6, 8, 4) and actual.dtype == jnp.bfloat16
+    np.testing.assert_allclose(actual.astype(jnp.float32), expected, rtol=0.03, atol=0.03)
+    loss, grads = nnx.jit(
+        nnx.value_and_grad(
+            lambda m: jnp.square(m(images.astype(jnp.bfloat16)).astype(jnp.float32)).mean()
+        )
+    )(model)
+    assert bool(jnp.isfinite(loss))
+    assert all(bool(jnp.isfinite(leaf).all()) for leaf in jax.tree.leaves(grads))
+    assert model.kernel[...].dtype == model.bias[...].dtype == jnp.float32
+
+
+@pytest.mark.parametrize(
+    "name,family",
+    [
+        ("iformer_t", "iformer"),
+        ("efficientvim_m1", "efficientvim"),
+        ("lowformer_b0", "lowformer"),
+        ("qwen3_vit_88m", "qwen3_vit"),
+        ("deepseek_vit_412m", "deepseek_vit"),
+    ],
+)
+def test_new_models_cached_amp_training_preserves_master_weights(name, family):
+    model = jimm.create_model(name, num_classes=3, rngs=nnx.Rngs(0), **SMALL_CONFIGS[family])
+    optimizer = jimm.make_optimizer(model, 1e-3, 0.01, 1, 1)
+    images = jax.random.normal(jax.random.key(1), (2, 32, 32, 3))
+    labels = jnp.array([0, 1])
+    model.train()
+    loss, _ = make_cached_train_step(model, optimizer, amp=True)(images, labels, 0.1)
+    assert bool(jnp.isfinite(loss)) and int(optimizer.step[...]) == 1
+    parameters = jax.tree.leaves(nnx.state(model, nnx.Param))
+    assert all(leaf.dtype == jnp.float32 and bool(jnp.isfinite(leaf).all()) for leaf in parameters)
+    assert all(
+        leaf.dtype == jnp.float32 for leaf in jax.tree.leaves(nnx.state(model, nnx.BatchStat))
+    )
+    model.eval()
+    eval_loss, _ = make_cached_eval_step(model, amp=True)(images, labels)
+    assert bool(jnp.isfinite(eval_loss))
 
 
 @pytest.mark.parametrize(

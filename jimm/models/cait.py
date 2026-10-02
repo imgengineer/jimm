@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..features import _select_features
 from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
@@ -51,7 +52,7 @@ class ClassAttentionBlock(nnx.Module):
         q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim)
         k = self.k(tokens).reshape(B, N, self.num_heads, self.head_dim)
         v = self.v(tokens).reshape(B, N, self.num_heads, self.head_dim)
-        cls_out = nnx.dot_product_attention(q, k, v).reshape(B, 1, C)
+        cls_out = dot_product_attention(q, k, v).reshape(B, 1, C)
         cls = cls + self.drop_path(self.gamma1[...] * self.proj(cls_out))
         cls = cls + self.drop_path(self.gamma2[...] * self.mlp(self.norm2(cls)))
         return jnp.concatenate([cls, x[:, 1:]], axis=1)

@@ -411,12 +411,28 @@ def eval_step(model, images, labels, amp=False, valid=None):
 
 def make_cached_train_step(model, optimizer, amp=False, mixup=None):
     """Create one cached JIT train step with AMP and batch mixing bound."""
-    return nnx.cached_partial(functools.partial(train_step, amp=amp, mixup=mixup), model, optimizer)
+    return nnx.jit_partial(
+        functools.partial(train_step.__wrapped__, amp=amp, mixup=mixup),
+        model,
+        optimizer,
+        # jit_partial packs bound arguments into one leading argument; positional
+        # smoothing follows images and labels at index 3 of the compiled call.
+        static_argnums=(3,),
+        static_argnames=("smoothing", "amp", "mixup"),
+        graph=True,
+        graph_updates=False,
+    )
 
 
 def make_cached_eval_step(model, amp=False):
     """Create one cached JIT eval step with AMP bound at construction time."""
-    return nnx.cached_partial(functools.partial(eval_step, amp=amp), model)
+    return nnx.jit_partial(
+        functools.partial(eval_step.__wrapped__, amp=amp),
+        model,
+        static_argnames=("amp",),
+        graph=True,
+        graph_updates=False,
+    )
 
 
 def main(argv=None):

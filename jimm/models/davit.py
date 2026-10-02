@@ -2,6 +2,7 @@
 
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 from .swin_transformer import window_partition, window_reverse
@@ -21,7 +22,7 @@ class SpatialWindowAttention(nnx.Module):
         Bw, N, _ = t.shape
         qkv = self.qkv(t).reshape(Bw, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        t = nnx.dot_product_attention(q, k, v).reshape(Bw, N, C)
+        t = dot_product_attention(q, k, v).reshape(Bw, N, C)
         return window_reverse(self.proj(t), self.ws, H, W, B)
 
 
@@ -41,7 +42,7 @@ class ChannelAttention(nnx.Module):
         Bw, N, _ = t.shape
         qkv = self.qkv(t).reshape(Bw, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        t = nnx.dot_product_attention(q, k, v).reshape(Bw, N, C)
+        t = dot_product_attention(q, k, v).reshape(Bw, N, C)
         return window_reverse(self.proj(t), self.ws, H, W, B)
 
 

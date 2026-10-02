@@ -2,6 +2,7 @@
 
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 from .swin_transformer import window_partition, window_reverse
@@ -32,7 +33,7 @@ class GroupedAttention(nnx.Module):
         B, N, C = t.shape
         qkv = self.qkv(t).reshape(B, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
+        out = dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(out)
 
 

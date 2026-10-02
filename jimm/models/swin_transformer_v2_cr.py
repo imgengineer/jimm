@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 from .swin_transformer import WindowAttention, window_partition, window_reverse
@@ -23,7 +24,7 @@ class SwinV2CrAttention(WindowAttention):
                 mask[None, :, None, :, :], (B // nW, nW, 1, N, N)
             ).reshape(B, 1, N, N)
             bias = bias[None] + window_bias
-        x = nnx.dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
+        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
         return self.drop(self.proj(x))
 
 

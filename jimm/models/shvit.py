@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, gelu
 from ..registry import _cfg, register_model
 
@@ -31,7 +32,7 @@ class SHViTBlock(nnx.Module):
         t = xa.reshape(B, H * W, self.attn_chs)
         qkv = self.qkv(t).reshape(B, H * W, 3, self.attn_chs)
         q, k, v = (qkv[:, :, i, None, :] for i in range(3))
-        xa = self.proj(nnx.dot_product_attention(q, k, v).reshape(B, H * W, self.attn_chs))
+        xa = self.proj(dot_product_attention(q, k, v).reshape(B, H * W, self.attn_chs))
         xa = xa.reshape(B, H, W, -1)
         x = jnp.concatenate([xa, xr], axis=-1)
         return x + self.drop_path(self.fc2(gelu(self.fc1(self.norm(x)))))

@@ -2,6 +2,7 @@
 
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, gelu
 from ..registry import _cfg, register_model
 
@@ -44,7 +45,7 @@ class Attention2d(nnx.Module):
         q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
         k = self.k(x).reshape(B, N, self.num_heads, self.head_dim)
         v = self.v(x).reshape(B, N, self.num_heads, self.head_dim)
-        out = nnx.dot_product_attention(q, k, v).reshape(B, N, -1)
+        out = dot_product_attention(q, k, v).reshape(B, N, -1)
         return self.proj(out)
 
 

@@ -7,6 +7,7 @@ Copyright 2026 Ryan Hou & Ross Wightman. JAX adaptation for jimm.
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..features import _select_features
 from ..layers import ClassifierMixin, DropPath, gelu, global_pool_nhwc, hswish
 from ..registry import _cfg, register_model
@@ -119,7 +120,7 @@ class ConvAttention(nnx.Module):
         batch, h, w, _ = x.shape
         qkv = x.reshape(batch, h * w, self.num_heads, 3 * self.head_dim)
         q, k, v = jnp.split(qkv, 3, axis=-1)
-        x = nnx.dot_product_attention(q, k, v).reshape(batch, h, w, -1)
+        x = dot_product_attention(q, k, v).reshape(batch, h, w, -1)
         if self.o_proj is not None:
             x = self.o_proj(x)
         return self.upsampling(x)[:, :height, :width]

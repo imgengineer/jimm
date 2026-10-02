@@ -17,6 +17,7 @@
 - Add **37 model variants** from five families following [timm 1.0.30](https://github.com/huggingface/pytorch-image-models/releases/tag/v1.0.30): LowFormer, iFormer, EfficientViM, Qwen3 ViT, and DeepSeek ViT. The registry now contains **420 models across 99 families**.
 - Support Qwen3 spatial-merger and DeepSeek aligner classifiers, native VLM encoders, and distilled iFormer/EfficientViM heads.
 - Update dependencies to the latest stable releases checked on this date, including **JAX 0.11.2 with CUDA 13** and **Flax 0.12.10**. The resolved environment is recorded in [uv.lock](uv.lock).
+- Add optional **Tokamax 0.0.14** fused attention for GPU bfloat16 execution and use `nnx.jit_partial` for cached training/evaluation steps. Fix LowFormer transposed convolutions for mixed-precision training. See [attention performance](#attention-performance) for measurements.
 - Improve ImageFolder scanning and color jitter, and fix Mixup and throughput reporting.
 
 ## Introduction
@@ -76,6 +77,7 @@ Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/pat
 - **Model APIs:** `create_model`, filtered `list_models`, `list_modules`, and `get_default_cfg`; classification models expose `forward_features`, `forward_head`, and `reset_classifier`.
 - **Feature extraction:** unpooled feature maps or tokens, pooled embeddings with `num_classes=0`, and `features_only=True` for supported intermediate stages.
 - **NNX transformations:** models work with `nnx.jit` and `nnx.grad`; pass the model as an explicit argument to transformed functions. Use `model.train()` and `model.eval()` to control dropout and batch normalization.
+- **Attention:** optional Tokamax fused kernels for GPU bfloat16 self/cross-attention, including relative-position bias. CPU, float32, float16, and installations without the extra use Flax attention; active attention dropout retains its existing implementation.
 - **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix.
 - **Training:** AdamW with cosine scheduling and warmup, label smoothing, gradient clipping, optional bfloat16 computation, and JAX SPMD data parallelism or FSDP.
 - **Checkpointing:** asynchronous Orbax model/optimizer checkpoints, retention settings, and epoch resume with restored data position.
@@ -98,6 +100,14 @@ uv run python -c "import jax; print(jax.__version__, jax.devices())"
 ```
 
 `uv sync` installs the project in editable mode and includes development tools. To force CPU execution with this environment, prefix commands with `JAX_PLATFORMS=cpu`.
+
+To enable fused bfloat16 attention, install the optional extra:
+
+```bash
+uv sync --locked --extra tokamax
+```
+
+Include `--extra tokamax` in subsequent `uv run` commands to retain these dependencies. [Tokamax](https://github.com/openxla/tokamax) selects an available GPU implementation and falls back to XLA for unsupported shapes. No model configuration change is required.
 
 ### Classification and embeddings
 
@@ -237,6 +247,8 @@ Set `--num-classes` to your dataset's class count. The CLI defaults to 224×224 
 
 The default compute mode uses bfloat16; `--no-amp` selects float32. `--clip-grad`, `--drop-path`, `--smoothing`, and `--mixup-mode` control regularization. Append `--resume` to the same command to restore the latest checkpoint, keeping the data, batch, sharding, and steps-per-epoch settings consistent. `--max-to-keep N` limits checkpoint retention.
 
+The CLI creates cached `nnx.jit_partial` train/eval functions after setting their modes, following the fixed-structure approach in the [Flax NNX performance guide](https://flax.readthedocs.io/en/latest/guides/performance.html). In custom loops, set `model.train()` or `model.eval()` before constructing the corresponding cached step, and recreate it after changing static configuration or calling `reset_classifier`. Parameters, optimizer state, batch statistics, and RNG values continue to update on each call.
+
 ### Multiple devices and hosts
 
 The CLI uses all available local devices. Parameters are replicated by default; add `--fsdp` to shard parameters and optimizer state. `--batch-size` is **per process** and must be divisible by the number of local devices. The global batch size is the process batch size multiplied by the number of processes.
@@ -292,7 +304,34 @@ uv run python scripts/test_backprop.py
 
 Use `uv run pytest tests/` for the full suite, including representative forward/backward tests across model families. `scripts/test_jimm.py --all` checks every registered model at its configured input size; large variants require substantial memory and compilation time.
 
-The October 2 update passed **179 core regression tests**, construction checks for **all 420 models**, and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). These are implementation checks; ImageNet accuracy and throughput benchmark results have not been published for jimm.
+The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
+
+The attention/training update passed **194 core regression tests** (four GPU-only cases skipped on CPU) and **8 GPU attention checks**. Coverage includes Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, mixed-precision master weights, and checkpoint resume. Run the optional GPU attention tests with:
+
+```bash
+uv run --extra tokamax pytest tests/test_attention.py -q
+```
+
+### Attention performance
+
+Measurements below use an **RTX 5090**, JAX 0.11.2/CUDA 13, Flax 0.12.10, Tokamax 0.0.14, and bfloat16. Times are median GPU device execution times after compilation, measured with `tokamax.benchmark`; compilation and host-to-device transfers are excluded. The shared attention path follows the [JAX attention conventions](https://docs.jax.dev/en/latest/_autosummary/jax.nn.dot_product_attention.html) and [Tokamax attention implementation](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py).
+
+| Workload | Flax attention | jimm + Tokamax | Speedup |
+| --- | ---: | ---: | ---: |
+| Attention forward, `(1, 2304, 12, 64)` BTHD | 0.472 ms | 0.107 ms | 4.42× |
+| Attention forward + backward, same shape | 1.292 ms | 0.428 ms | 3.02× |
+| Full `qwen3_vit_88m` forward, batch 1, 768×768, 5 classes | 10.211 ms | 5.261 ms | 1.94× |
+
+For the attention forward/backward workload, XLA's compiled temporary-buffer estimate fell from **607.5 MiB to 3.69 MiB**. The full Qwen3 forward estimate fell from **372.96 MiB to 67.46 MiB**. These estimates exclude input/output and parameter buffers and do not measure peak GPU allocation. Performance depends on model shapes and hardware.
+
+Reproduce the attention benchmark and export its timings, numerical difference, and temporary-buffer estimates:
+
+```bash
+uv run --extra tokamax python scripts/benchmark_attention.py \
+    --seq-len 2304 --iterations 10 --output attention-benchmark.json
+```
+
+Native-resolution bfloat16 forward comparisons passed for ViT, Swin, LowFormer, Qwen3, and DeepSeek with identical weights, using mixed-precision tolerances. Native ViT, Swin, and Qwen3 training updates also produced finite losses and parameters. Float32 attention outputs and gradients remain identical to Flax.
 
 ## Repository Layout
 
@@ -301,6 +340,7 @@ jimm/
   registry.py       Model creation, registration, and configuration
   models/           Architecture implementations and shared helpers
   layers.py         Common NNX layers and classifier utilities
+  attention.py      Shared attention and optional Tokamax dispatch
   features.py       Intermediate feature extraction
   data.py           ImageFolder datasets and Grain loaders
   augment.py        Image augmentation and policies
@@ -308,7 +348,7 @@ jimm/
   checkpoint.py     Orbax model and optimizer checkpointing
   weights.py        Array state-dict conversion and NPZ loading
 tests/              Regression and model tests
-scripts/            Forward and backpropagation verification
+scripts/            Forward/backpropagation checks and attention benchmark
 pyproject.toml      Project metadata and dependency requirements
 uv.lock             Resolved dependency versions
 ```

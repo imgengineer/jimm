@@ -2,6 +2,7 @@
 
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, gelu
 from ..registry import _cfg, register_model
 
@@ -36,7 +37,7 @@ class LinearAttention(nnx.Module):
             t = x
         kv = self.kv(t).reshape(B, -1, 2, self.num_heads, self.head_dim)
         k, v = kv[:, :, 0], kv[:, :, 1]
-        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
+        out = dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(out)
 
 

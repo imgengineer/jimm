@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, hswish
 from ..registry import _cfg, register_model
 
@@ -23,7 +24,7 @@ class LevitAttention(nnx.Module):
         q = self.q(x).reshape(B, N, self.num_heads, self.key_dim)
         k = self.k(x).reshape(B, N, self.num_heads, self.key_dim)
         v = self.v(x).reshape(B, N, self.num_heads, self.key_dim)
-        x = nnx.dot_product_attention(q, k, v, bias=self.attn_bias[...]).reshape(B, N, -1)
+        x = dot_product_attention(q, k, v, bias=self.attn_bias[...]).reshape(B, N, -1)
         return self.proj(x)
 
 

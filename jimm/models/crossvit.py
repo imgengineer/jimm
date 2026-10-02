@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
 from .vision_transformer import Attention
@@ -24,7 +25,7 @@ class CrossAttention(nnx.Module):
         q = self.q(cls).reshape(B, 1, self.num_heads, self.head_dim)
         kv = self.kv(tokens).reshape(B, -1, 2, self.num_heads, self.head_dim)
         k, v = kv[:, :, 0], kv[:, :, 1]
-        out = nnx.dot_product_attention(q, k, v).reshape(B, 1, -1)
+        out = dot_product_attention(q, k, v).reshape(B, 1, -1)
         return self.proj(out)
 
 

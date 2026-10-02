@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
 
@@ -19,7 +20,7 @@ class Attention(nnx.Module):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        out = nnx.dot_product_attention(q, k, v)
+        out = dot_product_attention(q, k, v)
         x = out.reshape(B, N, C)
         return self.drop(self.proj(x))
 

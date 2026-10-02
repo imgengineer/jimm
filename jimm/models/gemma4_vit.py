@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, PatchEmbed, global_pool_nhwc
 from ..registry import _cfg, register_model
 
@@ -34,7 +35,7 @@ class Gemma4Attention(nnx.Module):
         q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
         k = self.k(x).reshape(B, N, self.num_heads, self.head_dim)
         v = self.v(x).reshape(B, N, self.num_heads, self.head_dim)
-        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
+        out = dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(out)
 
 

@@ -6,6 +6,7 @@ Key traits: window attention with global-attention every few blocks, rel-pos bia
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..features import _select_features
 from ..layers import DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
@@ -25,7 +26,7 @@ class SamAttention(nnx.Module):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        out = nnx.dot_product_attention(q, k, v).reshape(B, N, C)
+        out = dot_product_attention(q, k, v).reshape(B, N, C)
         return self.proj(out)
 
 

@@ -6,6 +6,8 @@ Adapted for JAX from timm 1.0.30, Copyright 2019 Ross Wightman.
 import jax.numpy as jnp
 from flax import nnx
 
+from ..attention import dot_product_attention
+
 
 class DynamicPatchEmbed(nnx.Module):
     def __init__(self, img_size, patch_size, in_chans, embed_dim, dynamic_img_pad=False, *, rngs):
@@ -84,10 +86,10 @@ class RopeAttention(nnx.Module):
         qkv = self.qkv(x).reshape(batch, tokens, 3, self.num_heads, self.head_dim)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         q, k = apply_rope(q, rope), apply_rope(k, rope)
-        if self.attn_drop_rate:
+        if self.attn_drop_rate and not self.attn_drop.deterministic:
             q, k, v = (t.transpose(0, 2, 1, 3) for t in (q, k, v))
             attn = nnx.softmax((q * self.head_dim**-0.5) @ k.swapaxes(-1, -2), axis=-1)
             x = (self.attn_drop(attn) @ v).transpose(0, 2, 1, 3)
         else:
-            x = nnx.dot_product_attention(q, k, v)
+            x = dot_product_attention(q, k, v)
         return self.proj_drop(self.proj(x.reshape(batch, tokens, dim)))

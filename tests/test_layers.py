@@ -13,12 +13,14 @@ from jimm.layers import (
     Mlp,
     PatchEmbed,
     SqueezeExcite,
+    conv_general_dilated,
     create_act_layer,
     drop_path,
     gelu,
     global_pool_nhwc,
     hswish,
     relu6,
+    use_fast_grouped_conv_grads,
 )
 
 
@@ -234,3 +236,88 @@ def test_conv_bn_act_tuple_stride():
     x = jnp.ones((2, 16, 16, 8), dtype=jnp.float32)
     out = block(x)
     assert out.shape == (2, 8, 8, 16)
+
+
+def _depthwise_loss(conv, padding, groups):
+    def loss(x, w):
+        y = conv(
+            x,
+            w,
+            (1, 1),
+            padding,
+            dimension_numbers=("NHWC", "HWIO", "NHWC"),
+            feature_group_count=groups,
+        )
+        return jnp.sum(jnp.sin(y))
+
+    return loss
+
+
+@pytest.mark.parametrize(
+    "size,padding", [(7, ((3, 3), (3, 3))), (5, "SAME"), (6, ((2, 3), (1, 4))), (3, "VALID")]
+)
+def test_full_map_depthwise_conv_matches_lax(size, padding):
+    x = jax.random.normal(jax.random.key(0), (3, size, size, 4))
+    w = jax.random.normal(jax.random.key(1), (size, size, 1, 4))
+    with jax.default_matmul_precision("float32"):
+        expected = jax.value_and_grad(
+            _depthwise_loss(jax.lax.conv_general_dilated, padding, 4), argnums=(0, 1)
+        )(x, w)
+        actual = jax.value_and_grad(
+            _depthwise_loss(conv_general_dilated, padding, 4), argnums=(0, 1)
+        )(x, w)
+    for a, e in zip(jax.tree.leaves(actual), jax.tree.leaves(expected)):
+        np.testing.assert_allclose(a, e, rtol=1e-5, atol=1e-5)
+
+
+def test_conv_general_dilated_reroutes_only_full_map_depthwise():
+    def rerouted(x_shape, w_shape, groups):
+        loss = _depthwise_loss(conv_general_dilated, "SAME", groups)
+        jaxpr = jax.make_jaxpr(loss)(jnp.zeros(x_shape), jnp.zeros(w_shape))
+        return any("custom_vjp" in eqn.primitive.name for eqn in jaxpr.eqns)
+
+    assert rerouted((2, 7, 7, 8), (7, 7, 1, 8), 8)
+    assert not rerouted((2, 8, 8, 8), (7, 7, 1, 8), 8)  # map larger than the kernel
+    assert not rerouted((2, 7, 7, 8), (7, 7, 8, 8), 1)  # dense convolution
+    assert not rerouted((2, 7, 7, 8), (7, 7, 2, 8), 4)  # grouped, not depthwise
+
+
+@pytest.mark.parametrize(
+    "size,groups,dilation,stride,padding",
+    [(8, 4, 2, 1, ((2, 2), (2, 2))), (7, 4, 2, 2, ((2, 2), (2, 2))), (9, 8, 3, 1, "SAME")],
+)
+def test_dilated_grouped_conv_matches_lax(size, groups, dilation, stride, padding):
+    x = jax.random.normal(jax.random.key(0), (2, size, size, 8))
+    w = jax.random.normal(jax.random.key(1), (3, 3, 8 // groups, 8))
+
+    def loss(conv):
+        def f(x, w):
+            y = conv(
+                x,
+                w,
+                (stride, stride),
+                padding,
+                rhs_dilation=(dilation, dilation),
+                dimension_numbers=("NHWC", "HWIO", "NHWC"),
+                feature_group_count=groups,
+            )
+            return jnp.sum(jnp.sin(y))
+
+        return f
+
+    with jax.default_matmul_precision("float32"):
+        expected = jax.value_and_grad(loss(jax.lax.conv_general_dilated), argnums=(0, 1))(x, w)
+        actual = jax.value_and_grad(loss(conv_general_dilated), argnums=(0, 1))(x, w)
+    for a, e in zip(jax.tree.leaves(actual), jax.tree.leaves(expected)):
+        np.testing.assert_allclose(a, e, rtol=1e-5, atol=1e-5)
+
+
+def test_use_fast_grouped_conv_grads_routes_grouped_convs():
+    class Net(nnx.Module):
+        def __init__(self, rngs):
+            self.dense = nnx.Conv(4, 8, (3, 3), rngs=rngs)
+            self.depthwise = nnx.Conv(8, 8, (3, 3), feature_group_count=8, rngs=rngs)
+
+    net = use_fast_grouped_conv_grads(Net(nnx.Rngs(0)))
+    assert net.dense.conv_general_dilated is jax.lax.conv_general_dilated
+    assert net.depthwise.conv_general_dilated is conv_general_dilated

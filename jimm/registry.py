@@ -11,6 +11,8 @@ from typing import Any
 
 from flax import nnx
 
+from .layers import use_fast_grouped_conv_grads
+
 __all__ = [
     "register_model",
     "create_model",
@@ -165,6 +167,8 @@ def create_model(
         kwargs.setdefault("num_classes", 0)
 
     model = _model_entrypoints[name](rngs=rngs if rngs is not None else nnx.Rngs(0), **kwargs)
+    # Avoid XLA's slow kernel gradients for some grouped convolutions.
+    use_fast_grouped_conv_grads(model)
 
     # Attach a registered configuration when the entrypoint did not set one.
     # Instance configurations may reflect constructor overrides, so they are

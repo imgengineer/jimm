@@ -1,6 +1,6 @@
 """Compare shared attention with Flax using Tokamax's device timing utilities.
 
-Example: uv run --extra tokamax python scripts/benchmark_attention.py --seq-len 2304
+Example: uv run python scripts/benchmark_attention.py --seq-len 2304
 """
 
 import argparse

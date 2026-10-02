@@ -12,10 +12,9 @@ dependencies = [
   "orbax-checkpoint>=0.12.6",
   "numpy>=2.5.3",
   "opencv-python-headless>=5.0.0.93",
+  "tokamax>=0.0.14",
+  "triton>=3.8.0; sys_platform == 'linux'",
 ]
-
-[project.optional-dependencies]
-tokamax = ["tokamax>=0.0.14", "triton>=3.8.0; sys_platform == 'linux'"]
 
 [build-system]
 requires = ["hatchling>=1.32.4"]

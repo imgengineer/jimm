@@ -1,8 +1,8 @@
-"""Shared attention dispatch with optional Tokamax FlashAttention.
+"""Shared attention dispatch with autotuned Tokamax FlashAttention.
 
-CPU, FP32/FP16, and installations without the ``tokamax`` extra retain Flax's
-attention implementation. Tokamax selects a supported fused backend for GPU
-BF16 inputs and falls back to XLA for unsupported shapes.
+CPU and FP32/FP16 retain Flax's attention implementation. GPU BF16 uses Tokamax's
+automatic backend selection and measured kernel configurations, with an XLA
+fallback for unsupported shapes.
 """
 
 from functools import cache
@@ -15,13 +15,13 @@ from flax import nnx
 @cache
 def _get_tokamax_attention():
     # Import only after device/distributed initialization, when a GPU call needs it.
-    try:
-        from tokamax import dot_product_attention
-    except ModuleNotFoundError as error:
-        if error.name != "tokamax":
-            raise
-        return None
-    return dot_product_attention
+    import tokamax
+    from absl import flags
+
+    # Set the native policy globally so backward kernels also autotune after the
+    # forward call returns. Explicit Tokamax flag/context overrides still apply.
+    flags.FLAGS.set_default("tokamax_autotuning_cache_miss_fallback", "autotune")
+    return tokamax.dot_product_attention
 
 
 def dot_product_attention(query, key, value, bias=None):
@@ -31,7 +31,5 @@ def dot_product_attention(query, key, value, bias=None):
         and query.dtype == key.dtype == value.dtype
         and jax.default_backend() == "gpu"
     ):
-        attention = _get_tokamax_attention()
-        if attention is not None:
-            return attention(query, key, value, bias=bias)
+        return _get_tokamax_attention()(query, key, value, bias=bias, implementation=None)
     return nnx.dot_product_attention(query, key, value, bias=bias)

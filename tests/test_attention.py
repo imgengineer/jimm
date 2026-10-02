@@ -1,7 +1,5 @@
 """Attention dispatch, numerical parity, and gradient regressions."""
 
-import importlib.util
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -41,18 +39,41 @@ def test_fp32_attention_preserves_flax_outputs_and_gradients(query_length, key_l
                 np.testing.assert_array_equal(actual_grad, expected_grad)
 
 
-def test_gpu_half_precision_falls_back_without_tokamax(monkeypatch):
+def test_gpu_bf16_uses_tokamax_auto_backend(monkeypatch):
+    calls = []
+
+    def tokamax_attention(query, key, value, *, bias, implementation):
+        calls.append(implementation)
+        return nnx.dot_product_attention(query, key, value, bias=bias)
+
     monkeypatch.setattr(attention.jax, "default_backend", lambda: "gpu")
-    monkeypatch.setattr(attention, "_get_tokamax_attention", lambda: None)
+    monkeypatch.setattr(attention, "_get_tokamax_attention", lambda: tokamax_attention)
     args = _inputs(17, 17, 2, 16, jnp.bfloat16, True)
     actual = jax.jit(attention.dot_product_attention)(*args)
     expected = jax.jit(nnx.dot_product_attention)(*args)
     np.testing.assert_array_equal(actual, expected)
+    assert calls == [None]
+
+
+def test_tokamax_defaults_to_autotuning_forward_and_backward_kernels():
+    import tokamax
+    from absl import flags
+    from absl.testing import flagsaver
+
+    attention._get_tokamax_attention.cache_clear()
+    try:
+        with flagsaver.flagsaver():
+            assert attention._get_tokamax_attention() is tokamax.dot_product_attention
+            option = "tokamax_autotuning_cache_miss_fallback"
+            assert flags.FLAGS[option].default == "autotune"
+            assert tokamax.config.autotuning_cache_miss_fallback.value == "autotune"
+    finally:
+        attention._get_tokamax_attention.cache_clear()
 
 
 @pytest.mark.skipif(
-    jax.default_backend() != "gpu" or importlib.util.find_spec("tokamax") is None,
-    reason="requires a GPU and the tokamax extra",
+    jax.default_backend() != "gpu",
+    reason="requires a GPU",
 )
 @pytest.mark.parametrize(
     "query_length,key_length,head_dim,with_bias",

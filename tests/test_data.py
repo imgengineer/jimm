@@ -567,6 +567,195 @@ def test_augmentation_edge_cases():
     assert augment_module.RandAugment([], 0)(img) is img
 
 
+class _FixedRng:
+    """Deterministic draws: ``rand`` returns ``value`` and ranges return their lower bound."""
+
+    def __init__(self, value=0.75):
+        self.value = value
+
+    def random(self, size=None):
+        return self.value
+
+    def uniform(self, low=0.0, high=1.0, size=None):
+        return low
+
+    def integers(self, low, high=None, size=None):
+        return low if high is not None else 0
+
+    def shuffle(self, values):
+        return None
+
+
+def _ramp_image():
+    return np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=-1)
+
+
+def test_color_jitter_uses_torchvision_blend_factors():
+    img = np.random.default_rng(0).integers(0, 256, (24, 20, 3), dtype=np.uint8)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+    # Brightness scales by a factor from [0.6, 1.4] instead of adding a shift.
+    darker = color_jitter(img, brightness=0.4, contrast=0, saturation=0, rng=_FixedRng())
+    np.testing.assert_array_equal(darker, np.clip(np.rint(img * 0.6), 0, 255))
+
+    mean = int(gray.mean() + 0.5)
+    flatter = color_jitter(img, brightness=0, contrast=0.5, saturation=0, rng=_FixedRng())
+    expected = np.clip(np.rint(mean + (img.astype(np.int64) - mean) * 0.5), 0, 255)
+    np.testing.assert_array_equal(flatter, expected)
+
+    # Saturation factor 0 is the grayscale image in every channel.
+    desaturated = color_jitter(img, brightness=0, contrast=0, saturation=1.0, rng=_FixedRng())
+    np.testing.assert_array_equal(desaturated, np.repeat(gray[..., None], 3, axis=-1))
+
+    # Identity ranges are skipped, including scalar zero brightness.
+    assert np.array_equal(color_jitter(img, 0, 0, 0, 0, rng=_FixedRng()), img)
+    assert np.array_equal(color_jitter(img, (1.0, 1.0), None, None, None), img)
+
+    hue = color_jitter(img, 0, 0, 0, hue=0.5, rng=np.random.default_rng(1))
+    assert hue.shape == img.shape and hue.dtype == np.uint8
+
+
+def test_default_color_jitter_preserves_image_content():
+    rng = np.random.default_rng(0)
+    y, x = np.mgrid[0:64, 0:64]
+    img = np.stack([x * 3 + 30, y * 2 + 40, (x + y) + 50], axis=-1).astype(np.uint8)
+    outputs = [color_jitter(img, 0.4, 0.4, 0.4, rng=rng) for _ in range(200)]
+    # The former additive brightness range of +/-1.4 * 255 blanked many images.
+    assert min(float(output.std()) for output in outputs) > 5.0
+    saturated = np.mean([np.mean((output == 0) | (output == 255)) for output in outputs])
+    assert saturated < 0.05
+
+
+@pytest.mark.parametrize(
+    "name,magnitude,expected",
+    [
+        ("Solarize", 9, lambda v: np.where(v < 230, v, 255 - v)),
+        ("SolarizeIncreasing", 9, lambda v: np.where(v < 26, v, 255 - v)),
+        ("SolarizeAdd", 5, lambda v: np.where(v < 128, np.minimum(v + 55, 255), v)),
+        ("Posterize", 9, lambda v: v & 0xE0),
+        ("PosterizeIncreasing", 9, lambda v: v & 0x80),
+        ("PosterizeOriginal", 9, lambda v: v & 0xFE),
+        # timm: (level / 10) * 1.8 + 0.1, and 1 +/- (level / 10) * 0.9 when increasing.
+        ("Brightness", 9, lambda v: np.clip(np.rint(v * ((9 / 10) * 1.8 + 0.1)), 0, 255)),
+        ("BrightnessIncreasing", 9, lambda v: np.clip(np.rint(v * (1.0 + (9 / 10) * 0.9)), 0, 255)),
+        ("Invert", 0, lambda v: 255 - v),
+        ("AutoContrast", 0, lambda v: v),
+    ],
+)
+def test_auto_augment_ops_follow_timm_level_mapping(name, magnitude, expected):
+    img = _ramp_image()
+    values = img.astype(np.int64)
+    result = augment_module.AugmentOp(name, prob=1.0, magnitude=magnitude)(img, rng=_FixedRng())
+    np.testing.assert_array_equal(result, expected(values))
+
+
+def test_auto_augment_photometric_and_geometric_ops():
+    img = np.random.default_rng(0).integers(50, 151, (12, 10, 3), dtype=np.uint8)
+    hparams = {"translate_const": 4, "img_mean": (1, 2, 3), "interpolation": "bilinear"}
+
+    stretched = augment_module.AugmentOp("AutoContrast", prob=1.0)(img)
+    assert stretched.reshape(-1, 3).min(0).tolist() == [0, 0, 0]
+    assert stretched.reshape(-1, 3).max(0).min() >= 254  # PIL truncates the scaled maximum
+
+    large = np.random.default_rng(1).integers(50, 151, (64, 64, 3), dtype=np.uint8)
+    equalized = augment_module.AugmentOp("Equalize", prob=1.0)(large)
+    for channel in range(3):
+        order = np.argsort(large[..., channel], axis=None, kind="stable")
+        assert np.all(np.diff(equalized[..., channel].ravel()[order].astype(int)) >= 0)
+    assert equalized.max() > large.max() and equalized.min() < large.min()
+
+    gray = augment_module.AugmentOp("Desaturate", prob=1.0, magnitude=10)(img)
+    assert np.array_equal(gray[..., 0], gray[..., 1]) and np.array_equal(gray[..., 1], gray[..., 2])
+
+    # Geometric ops use PIL's inverse affine mapping and fill with the mean color.
+    for magnitude in (0, 10):
+        shifted = augment_module.AugmentOp(
+            "TranslateX", prob=1.0, magnitude=magnitude, hparams=hparams
+        )(img, rng=_FixedRng())
+        pixels = magnitude * 4 // 10
+        np.testing.assert_array_equal(shifted[:, : 10 - pixels], img[:, pixels:])
+        assert (shifted[:, 10 - pixels :] == (1, 2, 3)).all()
+    for name in ("Rotate", "ShearX", "ShearY"):
+        same = augment_module.AugmentOp(name, prob=1.0, magnitude=0, hparams=hparams)(img)
+        np.testing.assert_array_equal(same, img)
+    rotated = augment_module.AugmentOp("Rotate", prob=1.0, magnitude=10, hparams=hparams)(img)
+    assert (rotated[0, 0] == (1, 2, 3)).all()
+
+
+def test_random_erasing_follows_timm_box_sampling():
+    array = np.ones((32, 32, 3), dtype=np.float32)
+    for mode in ("const", "rand", "pixel", "mean"):
+        erased = random_erasing(
+            array, prob=1.0, sl=0.25, sh=0.25, mode=mode, rng=np.random.default_rng(3)
+        )
+        changed = np.any(erased != array, axis=-1)
+        rows, cols = np.flatnonzero(changed.any(1)), np.flatnonzero(changed.any(0))
+        if mode == "mean":
+            assert np.array_equal(erased, array)  # the mean of a constant image
+            continue
+        box = erased[rows[0] : rows[-1] + 1, cols[0] : cols[-1] + 1]
+        assert changed.sum() == box.shape[0] * box.shape[1]
+        assert abs(box.shape[0] * box.shape[1] - 256) <= 40
+        if mode == "const":
+            assert not box.any()
+        elif mode == "rand":
+            assert np.ptp(box.reshape(-1, 3), axis=0).max() == 0
+        else:
+            assert np.ptp(box) > 0
+    # Multiple boxes share the sampled area budget.
+    erased = random_erasing(array, prob=1.0, sl=0.3, sh=0.3, count=3, rng=np.random.default_rng(0))
+    assert 0 < np.mean(erased[..., 0] == 0) <= 0.32
+    assert np.array_equal(random_erasing(array, prob=0.0), array)
+
+
+def test_eval_transform_resizes_shorter_edge_and_center_crops():
+    image = np.random.default_rng(0).integers(0, 256, (40, 80, 3), dtype=np.uint8)
+    transform = _DecodeTransform(
+        img_size=16,
+        crop_pct=0.5,
+        is_training=False,
+        interpolation="bilinear",
+        mean=(0, 0, 0),
+        std=(1, 1, 1),
+    )
+    # floor(16 / 0.5) = 32 for the shorter edge keeps the 2:1 aspect ratio.
+    resized = cv2.resize(image, (64, 32), interpolation=cv2.INTER_LINEAR)
+    expected = resized[8:24, 24:40].astype(np.float32) / 255
+    np.testing.assert_allclose(transform.map({"image": image, "label": 0})["image"], expected)
+    tall = transform.map({"image": image.transpose(1, 0, 2).copy(), "label": 0})["image"]
+    assert tall.shape == (16, 16, 3)
+
+
+def test_decode_transform_uint8_output_skips_normalization_and_erasing():
+    image = np.random.default_rng(0).integers(0, 256, (40, 48, 3), dtype=np.uint8)
+    sample = {"image": image, "label": 1}
+    for training in (False, True):
+        options = dict(img_size=16, is_training=training, re_prob=1.0, color_jitter=None)
+        raw = _DecodeTransform(normalize=False, **options)
+        normalized = _DecodeTransform(**options, mean=(0, 0, 0), std=(1, 1, 1))
+        out = raw.random_map(sample, np.random.default_rng(5))
+        assert out["image"].dtype == np.uint8 and out["image"].shape == (16, 16, 3)
+        reference = normalized.random_map(sample, np.random.default_rng(5))["image"]
+        if not training:
+            np.testing.assert_allclose(out["image"] / np.float32(255), reference, atol=1e-7)
+        else:
+            assert not np.array_equal(out["image"] / np.float32(255), reference)
+
+
+def test_auto_augment_hparams_match_timm_transform_factory():
+    transform = _DecodeTransform(
+        img_size=200, is_training=True, auto_augment="rand-m9-n2", interpolation="bicubic"
+    )
+    op = transform.auto_augment.ops[0]
+    assert op.hparams["translate_const"] == 90
+    assert op.hparams["img_mean"] == (124, 116, 104)
+    assert op.hparams["interpolation"] == "bicubic"
+    augmix = _DecodeTransform(img_size=32, is_training=True, auto_augment="augmix-m3-w3")
+    assert augmix.auto_augment.ops[0].hparams["translate_pct"] == 0.3
+    assert not _DecodeTransform(img_size=32, auto_augment="rand-m9").force_color_jitter
+    assert _DecodeTransform(img_size=32, auto_augment="3a").force_color_jitter
+
+
 def test_mixup_cutmix(monkeypatch):
     images = np.zeros((2, 8, 8, 3), dtype=np.float32)
     images[1] = 1.0

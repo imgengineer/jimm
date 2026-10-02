@@ -1,9 +1,9 @@
 """Timm-style image augmentation using OpenCV and NumPy.
 
-Images are RGB ``uint8`` NumPy arrays at the Grain boundary. OpenCV handles
-codec, geometric, color, flip, blur, rotation, hue, saturation, and
-solarization operations. Batch Mixup/CutMix remains NumPy friendly because it
-runs after Grain batching.
+Images are RGB ``uint8`` NumPy arrays at the Grain boundary. Photometric and
+AutoAugment operations follow the PIL semantics used by timm and torchvision,
+implemented with OpenCV lookup tables, blends, and affine warps. Batch
+Mixup/CutMix remains NumPy friendly because it runs after Grain batching.
 """
 
 import math
@@ -150,10 +150,6 @@ def _uint8_image(array):
     return np.clip(np.asarray(array) * 255.0, 0, 255).astype(np.uint8)
 
 
-def _clip_uint8(array):
-    return np.clip(array, 0, 255).astype(np.uint8)
-
-
 def random_resized_crop(
     image,
     size=224,
@@ -245,6 +241,14 @@ def random_crop_or_pad(image, size=224, rng=None):
 
 
 # Pixel-level transforms.
+#
+# Photometric operations follow PIL ``ImageEnhance``/``ImageOps`` semantics used by
+# torchvision and timm, implemented as uint8 OpenCV lookup tables and blends.
+
+_LEVEL_DENOM = 10.0
+_FILL = (128, 128, 128)
+_IDENTITY_LUT = np.arange(256, dtype=np.float64)
+_SMOOTH_KERNEL = np.array([[1, 1, 1], [1, 5, 1], [1, 1, 1]], dtype=np.float32) / 13.0
 
 
 def _range(value, name):
@@ -269,20 +273,98 @@ def _hue_range(value):
     return -value, value
 
 
-def _adjust_brightness(image, delta):
-    return _clip_uint8(_rgb(image).astype(np.float32) + delta * 255.0)
+def _lut(image, table):
+    """Apply one rounded, saturated 256-entry table, or one table per RGB channel."""
+    table = np.clip(np.rint(table), 0, 255).astype(np.uint8)
+    if table.ndim == 2:
+        table = np.ascontiguousarray(table.T).reshape(1, 256, 3)
+    return cv2.LUT(image, table)
+
+
+def _blend(image, degenerate, factor):
+    """PIL ``Image.blend(degenerate, image, factor)`` with uint8 saturation."""
+    factor = _as_float(factor)
+    return cv2.addWeighted(image, factor, degenerate, 1.0 - factor, 0.0)
+
+
+def _grayscale(image):
+    return cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+
+def _adjust_brightness(image, factor):
+    """PIL ``ImageEnhance.Brightness``: blend with black."""
+    return _lut(_rgb(image), _IDENTITY_LUT * _as_float(factor))
 
 
 def _adjust_contrast(image, factor):
-    array = _rgb(image).astype(np.float32)
-    mean = array.mean(axis=(0, 1), keepdims=True)
-    return _clip_uint8((array - mean) * factor + mean)
+    """PIL ``ImageEnhance.Contrast``: blend with the rounded grayscale mean."""
+    image = _rgb(image)
+    mean = int(cv2.mean(_grayscale(image))[0] + 0.5)
+    return _lut(image, mean + (_IDENTITY_LUT - mean) * _as_float(factor))
 
 
 def _adjust_saturation(image, factor):
-    hsv = cv2.cvtColor(_rgb(image), cv2.COLOR_RGB2HSV).astype(np.float32)
-    hsv[..., 1] = np.clip(hsv[..., 1] * factor, 0, 255)
-    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+    """PIL ``ImageEnhance.Color``: blend with the grayscale image."""
+    image = _rgb(image)
+    return _blend(image, cv2.cvtColor(_grayscale(image), cv2.COLOR_GRAY2RGB), factor)
+
+
+def _adjust_sharpness(image, factor):
+    """PIL ``ImageEnhance.Sharpness``: blend with ``ImageFilter.SMOOTH``, keeping borders."""
+    image = _rgb(image)
+    smooth = cv2.filter2D(image, -1, _SMOOTH_KERNEL, borderType=cv2.BORDER_REPLICATE)
+    smooth[[0, -1]] = image[[0, -1]]
+    smooth[:, [0, -1]] = image[:, [0, -1]]
+    return _blend(image, smooth, factor)
+
+
+def _adjust_hue(image, factor):
+    """torchvision ``adjust_hue``: rotate the uint8 HSV hue channel by ``factor`` turns."""
+    hsv = cv2.cvtColor(_rgb(image), cv2.COLOR_RGB2HSV_FULL)
+    tables = np.stack((_IDENTITY_LUT + int(_as_float(factor) * 255), _IDENTITY_LUT, _IDENTITY_LUT))
+    tables[0] %= 256
+    return cv2.cvtColor(_lut(hsv, tables), cv2.COLOR_HSV2RGB_FULL)
+
+
+def _auto_contrast(image):
+    """PIL ``ImageOps.autocontrast``: stretch each channel's value range to [0, 255]."""
+    low = image.min(axis=(0, 1)).astype(np.float64)
+    high = image.max(axis=(0, 1)).astype(np.float64)
+    tables = np.tile(_IDENTITY_LUT, (3, 1))
+    for channel in np.flatnonzero(high > low):
+        scale = 255.0 / (high[channel] - low[channel])
+        tables[channel] = np.floor(_IDENTITY_LUT * scale - low[channel] * scale)
+    return _lut(image, tables)
+
+
+def _equalize(image):
+    """PIL ``ImageOps.equalize``: equalize each RGB channel histogram."""
+    tables = np.tile(_IDENTITY_LUT, (3, 1))
+    for channel in range(3):
+        histogram = np.bincount(image[..., channel].ravel(), minlength=256)
+        used = histogram[histogram > 0]
+        step = (int(used.sum()) - int(used[-1])) // 255 if len(used) > 1 else 0
+        if step:
+            counts = np.concatenate(([0], np.cumsum(histogram[:-1])))
+            tables[channel] = (step // 2 + counts) // step
+    return _lut(image, tables)
+
+
+def _solarize(image, threshold):
+    """PIL ``ImageOps.solarize``: invert values at or above ``threshold``."""
+    return _lut(image, np.where(_IDENTITY_LUT < threshold, _IDENTITY_LUT, 255 - _IDENTITY_LUT))
+
+
+def _solarize_add(image, add, threshold=128):
+    return _lut(image, np.where(_IDENTITY_LUT < threshold, _IDENTITY_LUT + add, _IDENTITY_LUT))
+
+
+def _posterize(image, bits):
+    """PIL ``ImageOps.posterize`` keeping ``bits`` most significant bits (0-8)."""
+    if bits >= 8:
+        return image
+    mask = (0xFF << (8 - max(0, bits))) & 0xFF
+    return _lut(image, np.bitwise_and(np.arange(256), mask))
 
 
 def color_jitter(
@@ -295,46 +377,32 @@ def color_jitter(
     random_order=True,
     rng=None,
 ):
-    """Apply timm-style color jitter with OpenCV without JAX dispatch."""
+    """Apply timm/torchvision ``ColorJitter`` to a uint8 RGB image.
+
+    Scalar brightness, contrast, and saturation values sample blend factors from
+    ``[max(0, 1 - value), 1 + value]``; pairs give the factor range directly. Hue
+    samples a fraction of a turn from ``[-hue, hue]``. Identity ranges are skipped.
+    """
     rng = _RngAdapter(rng)
+    image = _rgb(image)
     if prob is not None and rng.rand() >= prob:
-        return _rgb(image)
+        return image
     operations = [
-        ("brightness", _range(brightness, "brightness")),
-        ("contrast", _range(contrast, "contrast")),
-        ("saturation", _range(saturation, "saturation")),
-        ("hue", _hue_range(hue)),
+        (_adjust_brightness, _range(brightness, "brightness"), brightness, 1.0),
+        (_adjust_contrast, _range(contrast, "contrast"), contrast, 1.0),
+        (_adjust_saturation, _range(saturation, "saturation"), saturation, 1.0),
+        (_adjust_hue, _hue_range(hue), hue, 0.0),
     ]
-    operations = [item for item in operations if item[1] != (0.0, 0.0)]
+    operations = [
+        (operation, bounds)
+        for operation, bounds, value, identity in operations
+        if value is not None and bounds != (identity, identity)
+    ]
     if random_order:
         rng.shuffle(operations)
-    # Reuse an owned float32 buffer, clipping in place between operations.
-    array = _rgb(image).astype(np.float32)
-    for name, bounds in operations:
-        if name == "brightness":
-            limit = max(abs(bounds[0]), abs(bounds[1]))
-            array += rng.uniform(-limit, limit) * 255.0
-            np.clip(array, 0.0, 255.0, out=array)
-        elif name == "contrast":
-            factor = rng.uniform(*bounds)
-            mean = array.mean(axis=(0, 1), keepdims=True)
-            array -= mean
-            array *= factor
-            array += mean
-            np.clip(array, 0.0, 255.0, out=array)
-        else:
-            array *= 1.0 / 255.0
-            hsv = cv2.cvtColor(array, cv2.COLOR_RGB2HSV)
-            if name == "saturation":
-                hsv[..., 1] *= rng.uniform(*bounds)
-                np.clip(hsv[..., 1], 0.0, 1.0, out=hsv[..., 1])
-            else:
-                hsv[..., 0] += rng.uniform(*bounds) * 360.0
-                hsv[..., 0] %= 360.0
-            array = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-            array *= 255.0
-    np.clip(array, 0, 255, out=array)
-    return array.astype(np.uint8)
+    for operation, bounds in operations:
+        image = operation(image, rng.uniform(*bounds))
+    return image
 
 
 def random_flip_left_right(image, prob=0.5, rng=None):
@@ -358,8 +426,7 @@ def random_grayscale(image, prob=0.0, rng=None):
     image = _rgb(image)
     if prob <= 0 or rng.rand() >= prob:
         return image
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    return cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+    return cv2.cvtColor(_grayscale(image), cv2.COLOR_GRAY2RGB)
 
 
 def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0), rng=None):
@@ -375,18 +442,28 @@ def gaussian_blur(image, prob=0.0, sigma=(0.1, 2.0), rng=None):
 
 
 def random_erasing(
-    array, prob=0.0, sl=0.02, sh=0.33, r1=0.3, mode="const", count=1, value=0.0, rng=None
+    array, prob=0.0, sl=0.02, sh=1 / 3, r1=0.3, mode="const", count=1, value=0.0, rng=None
 ):
+    """timm ``RandomErasing`` for normalized HWC float images.
+
+    Erases one to ``count`` boxes sharing an area drawn from ``[sl, sh]`` of the
+    image, with log-uniform aspect ratios in ``[r1, 1 / r1]``. ``const`` fills
+    with ``value`` (zero is the dataset mean after normalization), ``rand`` with
+    one normal color per box, ``pixel`` with per-pixel normal noise, and ``mean``
+    with the image mean.
+    """
     rng = _RngAdapter(rng)
     if rng.rand() >= prob:
         return array
     height, width, channels = array.shape
     result = array.copy()
-    for _ in range(max(1, _as_int(count))):
+    max_count = max(1, _as_int(count))
+    boxes = 1 if max_count == 1 else _as_int(rng.randint(1, max_count + 1))
+    for _ in range(boxes):
         for _ in range(10):
-            target_area = rng.uniform(sl, sh) * height * width
-            aspect = rng.uniform(r1, 1.0 / r1)
+            target_area = rng.uniform(sl, sh) * height * width / boxes
             try:
+                aspect = math.exp(rng.uniform(math.log(r1), -math.log(r1)))
                 erase_h = _as_int(round(math.sqrt(target_area * aspect)))
                 erase_w = _as_int(round(math.sqrt(target_area / aspect)))
             except (TypeError, ValueError, OverflowError, ZeroDivisionError):
@@ -394,8 +471,10 @@ def random_erasing(
             if 0 < erase_h < height and 0 < erase_w < width:
                 top = rng.randint(0, height - erase_h + 1)
                 left = rng.randint(0, width - erase_w + 1)
-                if mode in ("rand", "pixel"):
-                    fill = rng.uniform(0.0, 1.0, (erase_h, erase_w, channels))
+                if mode == "pixel":
+                    fill = rng.normal(size=(erase_h, erase_w, channels))
+                elif mode == "rand":
+                    fill = rng.normal(size=(1, 1, channels))
                 elif mode == "mean":
                     fill = result.mean(axis=(0, 1), keepdims=True)
                 else:
@@ -406,77 +485,101 @@ def random_erasing(
 
 
 def _augmentation_strength(magnitude, hparams):
-    maximum = _as_float(hparams.get("magnitude_max", 10))
-    return max(0.0, min(_as_float(magnitude), maximum)) / 10.0
+    maximum = _as_float(hparams.get("magnitude_max", _LEVEL_DENOM))
+    return max(0.0, min(_as_float(magnitude), maximum)) / _LEVEL_DENOM
+
+
+_ENHANCE_OPS = {
+    "Brightness": _adjust_brightness,
+    "Color": _adjust_saturation,
+    "Contrast": _adjust_contrast,
+    "Sharpness": _adjust_sharpness,
+}
+
+
+def _warp_affine(image, data, hparams, rng):
+    """PIL ``Image.transform(AFFINE, data)`` with timm's mean-color fill.
+
+    ``data`` maps output to input coordinates with PIL's pixel-corner origin;
+    OpenCV samples at pixel centers, so the offsets shift by half a pixel.
+    """
+    a, b, c, d, e, f = data
+    matrix = np.array(
+        [[a, b, c + 0.5 * (a + b - 1.0)], [d, e, f + 0.5 * (d + e - 1.0)]], dtype=np.float64
+    )
+    height, width = image.shape[:2]
+    interpolation = resolve_interpolation(hparams.get("interpolation", "random"), rng=rng)
+    fill = tuple(_as_int(value) for value in hparams.get("img_mean", _FILL))
+    return cv2.warpAffine(
+        image,
+        matrix,
+        (width, height),
+        flags=interpolation | cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=fill,
+    )
 
 
 def _auto_op(image, name, magnitude, hparams, rng=None):
+    """Apply one timm AutoAugment operation with its magnitude-to-argument mapping."""
     rng = _RngAdapter(rng)
     image = _rgb(image)
-    strength = _augmentation_strength(magnitude, hparams)
+    level = _augmentation_strength(magnitude, hparams)
     if name == "AutoContrast":
-        return _adjust_contrast(image, 1.0 + strength)
+        return _auto_contrast(image)
     if name == "Equalize":
-        ycrcb = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
-        ycrcb[..., 0] = cv2.equalizeHist(ycrcb[..., 0])
-        return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2RGB)
+        return _equalize(image)
     if name == "Invert":
-        return 255 - image
+        return cv2.bitwise_not(image)
     if name in ("Solarize", "SolarizeIncreasing"):
-        try:
-            threshold = int(round((1.0 - strength) * 255.0))
-        except (TypeError, ValueError, OverflowError):
-            threshold = 0
-        return np.where(image > threshold, 255 - image, image)
+        threshold = min(256, int(level * 256))
+        return _solarize(image, 256 - threshold if name == "SolarizeIncreasing" else threshold)
     if name == "SolarizeAdd":
-        try:
-            amount = int(round(110 * strength))
-        except (TypeError, ValueError, OverflowError):
-            amount = 0
-        # int16 add avoids uint8 overflow before clipping; np.where is a single
-        # pass over the image instead of a masked read + write.
-        added = np.clip(image.astype(np.int16) + amount, 0, 255).astype(np.uint8)
-        return np.where(image < 128, added, image)
-    if name in ("Color", "ColorIncreasing"):
-        return _adjust_saturation(image, 1.0 + _random_sign(0.9 * strength, rng))
-    if name in ("Contrast", "ContrastIncreasing"):
-        return _adjust_contrast(image, 1.0 + _random_sign(0.9 * strength, rng))
-    if name in ("Brightness", "BrightnessIncreasing"):
-        return _adjust_brightness(image, _random_sign(0.9 * strength, rng))
-    if name in ("Sharpness", "SharpnessIncreasing"):
-        blur = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
-        return cv2.addWeighted(image, 1.0 + 0.9 * strength, blur, -0.9 * strength, 0)
+        return _solarize_add(image, min(128, int(level * 110)))
+    if name in ("Posterize", "PosterizeIncreasing", "PosterizeOriginal"):
+        bits = int(level * 4)
+        if name == "PosterizeIncreasing":
+            bits = 4 - bits
+        elif name == "PosterizeOriginal":
+            bits += 4
+        return _posterize(image, bits)
+    base = name.removesuffix("Increasing")
+    if base in _ENHANCE_OPS:
+        if name.endswith("Increasing"):
+            factor = max(0.1, 1.0 + _random_sign(0.9 * level, rng))
+        else:
+            factor = 1.8 * level + 0.1
+        return _ENHANCE_OPS[base](image, factor)
     if name == "Desaturate":
-        return random_grayscale(image, 1.0 if strength else 0.0, rng=rng)
-    if name in ("GaussianBlur", "GaussianBlurRand"):
-        return gaussian_blur(image, 1.0, (0.1, max(0.2, 2.0 * strength)), rng=rng)
+        return _adjust_saturation(image, 1.0 - min(1.0, 0.5 + 0.5 * level))
+    if name == "GaussianBlur":
+        return cv2.GaussianBlur(image, (0, 0), sigmaX=min(2.0, 0.1 + 1.9 * level))
+    if name == "GaussianBlurRand":
+        bounds = sorted((0.1, 2.0 * min(1.0, level)))
+        return cv2.GaussianBlur(image, (0, 0), sigmaX=_as_float(rng.uniform(*bounds)))
+    height, width = image.shape[:2]
     if name == "Rotate":
-        height, width = image.shape[:2]
-        matrix = cv2.getRotationMatrix2D(
-            (width / 2.0, height / 2.0), _random_sign(30.0 * strength, rng), 1.0
-        )
-        return cv2.warpAffine(image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
-    if name in ("Posterize", "PosterizeOriginal", "PosterizeIncreasing"):
-        bits = max(1, 8 - _as_int(round(4 * strength)))
-        return image & np.uint8((0xFF << (8 - bits)) & 0xFF)
-    if name in ("ShearX", "ShearY", "TranslateX", "TranslateY", "TranslateXRel", "TranslateYRel"):
-        height, width = image.shape[:2]
-        shear_x = _random_sign(0.3 * strength, rng) if name == "ShearX" else 0.0
-        shear_y = _random_sign(0.3 * strength, rng) if name == "ShearY" else 0.0
-        translate_const = _as_float(hparams.get("translate_const", 250))
-        translate_pct = _as_float(hparams.get("translate_pct", 0.45))
-        tx = 0.0
-        ty = 0.0
-        if name == "TranslateX":
-            tx = _random_sign(translate_const * strength, rng)
-        elif name == "TranslateY":
-            ty = _random_sign(translate_const * strength, rng)
-        elif name == "TranslateXRel":
-            tx = _random_sign(translate_pct * strength, rng) * width
-        elif name == "TranslateYRel":
-            ty = _random_sign(translate_pct * strength, rng) * height
-        matrix = np.array([[1.0, shear_x, tx], [shear_y, 1.0, ty]], dtype=np.float32)
-        return cv2.warpAffine(image, matrix, (width, height), borderMode=cv2.BORDER_REFLECT_101)
+        # PIL ``Image.rotate``: counter-clockwise about (width / 2, height / 2).
+        angle = -math.radians(_random_sign(30.0 * level, rng))
+        cos, sin = math.cos(angle), math.sin(angle)
+        center_x, center_y = width / 2.0, height / 2.0
+        offset_x = center_x - cos * center_x - sin * center_y
+        offset_y = center_y + sin * center_x - cos * center_y
+        return _warp_affine(image, (cos, sin, offset_x, -sin, cos, offset_y), hparams, rng)
+    if name in ("ShearX", "ShearY"):
+        factor = _random_sign(0.3 * level, rng)
+        data = (1.0, factor, 0.0, 0.0, 1.0, 0.0)
+        if name == "ShearY":
+            data = (1.0, 0.0, 0.0, factor, 1.0, 0.0)
+        return _warp_affine(image, data, hparams, rng)
+    if name in ("TranslateX", "TranslateY", "TranslateXRel", "TranslateYRel"):
+        if name.endswith("Rel"):
+            pixels = _random_sign(level * _as_float(hparams.get("translate_pct", 0.45)), rng)
+            pixels *= width if name == "TranslateXRel" else height
+        else:
+            pixels = _random_sign(level * _as_float(hparams.get("translate_const", 250)), rng)
+        x, y = (pixels, 0.0) if name.startswith("TranslateX") else (0.0, pixels)
+        return _warp_affine(image, (1.0, 0.0, x, 0.0, 1.0, y), hparams, rng)
     raise ValueError(f"unknown augmentation operation: {name}")
 
 

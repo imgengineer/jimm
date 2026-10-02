@@ -33,6 +33,7 @@ import argparse
 import ast
 import collections
 import functools
+import math
 import os
 import time
 from typing import NamedTuple
@@ -52,6 +53,7 @@ from .optim import create_optimizer, make_optimizer
 from .registry import create_model
 
 __all__ = [
+    "ImagePreprocess",
     "StepMetrics",
     "init_distributed",
     "fsdp_shard_model",
@@ -194,6 +196,94 @@ def _mean_metrics(losses, accuracies, counts=None):
     except (TypeError, ValueError) as exc:
         raise FloatingPointError("non-finite epoch metrics") from exc
     return val0, val1
+
+
+class ImagePreprocess(NamedTuple):
+    """Device-side normalization and timm random erasing for uint8 NHWC batches.
+
+    Like timm's prefetcher, loaders created with ``normalize=False`` keep images
+    as uint8 through the worker, IPC, and host-to-device stages; train and eval
+    steps normalize inside the compiled step, and training steps also erase.
+    """
+
+    mean: tuple[float, ...] = tuple(IMAGENET_MEAN.tolist())
+    std: tuple[float, ...] = tuple(IMAGENET_STD.tolist())
+    re_prob: float = 0.0
+    re_mode: str = "const"
+    re_count: int = 1
+
+
+def _normalize_images(images, preprocess):
+    if images.dtype != jnp.uint8:
+        raise ValueError("device preprocessing expects uint8 images from normalize=False loaders")
+    # Same float32 constants as the host transform: x * (1 / (255 * std)) - mean / std.
+    inv_std = (1.0 / np.asarray(preprocess.std, np.float32)).astype(np.float32)
+    shift = (-np.asarray(preprocess.mean, np.float32) * inv_std).astype(np.float32)
+    scale = (inv_std * np.float32(1.0 / 255.0)).astype(np.float32)
+    return images.astype(jnp.float32) * scale + shift
+
+
+def _random_erasing_jax(images, rng, preprocess, min_area=0.02, max_area=1 / 3, min_aspect=0.3):
+    """timm ``RandomErasing`` applied independently to each normalized image."""
+    batch, height, width, channels = images.shape
+    count = max(1, int(preprocess.re_count))
+    attempts = 10
+    keys = jax.random.split(rng, 7)
+    apply = jax.random.uniform(keys[0], (batch,)) < preprocess.re_prob
+    boxes = (
+        jax.random.randint(keys[1], (batch,), 1, count + 1)
+        if count > 1
+        else jnp.ones((batch,), jnp.int32)
+    )
+    # Draw every attempt up front and keep the first valid box, as timm's loop does.
+    shape = (batch, count, attempts)
+    area = jax.random.uniform(keys[2], shape, minval=min_area, maxval=max_area)
+    area = area * (height * width) / boxes[:, None, None]
+    log_aspect = math.log(min_aspect)
+    aspect = jnp.exp(jax.random.uniform(keys[3], shape, minval=log_aspect, maxval=-log_aspect))
+    box_h = jnp.round(jnp.sqrt(area * aspect)).astype(jnp.int32)
+    box_w = jnp.round(jnp.sqrt(area / aspect)).astype(jnp.int32)
+    valid = (box_h > 0) & (box_h < height) & (box_w > 0) & (box_w < width)
+    first = jnp.argmax(valid, axis=-1)[..., None]
+    box_h = jnp.take_along_axis(box_h, first, axis=-1)[..., 0]
+    box_w = jnp.take_along_axis(box_w, first, axis=-1)[..., 0]
+    top = jax.random.randint(keys[4], (batch, count), 0, jnp.maximum(height - box_h + 1, 1))
+    left = jax.random.randint(keys[5], (batch, count), 0, jnp.maximum(width - box_w + 1, 1))
+    active = apply[:, None] & valid.any(axis=-1) & (jnp.arange(count) < boxes[:, None])
+    rows = jnp.arange(height)[:, None]
+    cols = jnp.arange(width)[None, :]
+    for index in range(count):
+        top_i, left_i = top[:, index, None, None], left[:, index, None, None]
+        mask = (
+            active[:, index, None, None]
+            & (rows >= top_i)
+            & (rows < top_i + box_h[:, index, None, None])
+            & (cols >= left_i)
+            & (cols < left_i + box_w[:, index, None, None])
+        )
+        fill_key = jax.random.fold_in(keys[6], index)
+        if preprocess.re_mode == "pixel":
+            fill = jax.random.normal(fill_key, images.shape, images.dtype)
+        elif preprocess.re_mode == "rand":
+            fill = jax.random.normal(fill_key, (batch, 1, 1, channels), images.dtype)
+        elif preprocess.re_mode == "mean":
+            fill = images.mean(axis=(1, 2), keepdims=True)
+        else:
+            fill = jnp.zeros((), images.dtype)
+        images = jnp.where(mask[..., None], fill, images)
+    return images
+
+
+def _preprocess_images(images, preprocess, rng, training):
+    if preprocess is None:
+        return images
+    images = _normalize_images(images, preprocess)
+    if training and preprocess.re_prob > 0:
+        if rng is None:
+            raise ValueError("rng is required when random erasing is enabled")
+        # A folded key keeps Mixup/CutMix draws independent of erasing.
+        images = _random_erasing_jax(images, jax.random.fold_in(rng, 1), preprocess)
+    return images
 
 
 def _mixup_cutmix_jax(images, labels, rng, config):
@@ -340,8 +430,10 @@ def _train_step_impl(
     amp=False,
     mixup=None,
     rng=None,
+    preprocess=None,
 ):
     _validate_batch(images, labels)
+    images = _preprocess_images(images, preprocess, rng, training=True)
     if mixup is not None:
         if rng is None:
             raise ValueError("rng is required when mixup or cutmix is enabled")
@@ -357,19 +449,39 @@ def _train_step_impl(
     return loss, logits, grads, acc
 
 
-@nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
-def train_step(model, optimizer, images, labels, smoothing=0.0, amp=False, mixup=None, rng=None):
-    loss, _, _, acc = _train_step_impl(model, optimizer, images, labels, smoothing, amp, mixup, rng)
+@nnx.jit(static_argnames=("smoothing", "amp", "mixup", "preprocess"))
+def train_step(
+    model,
+    optimizer,
+    images,
+    labels,
+    smoothing=0.0,
+    amp=False,
+    mixup=None,
+    rng=None,
+    preprocess=None,
+):
+    loss, _, _, acc = _train_step_impl(
+        model, optimizer, images, labels, smoothing, amp, mixup, rng, preprocess
+    )
     return loss, acc
 
 
-@nnx.jit(static_argnames=("smoothing", "amp", "mixup"))
+@nnx.jit(static_argnames=("smoothing", "amp", "mixup", "preprocess"))
 def train_step_with_metrics(
-    model, optimizer, images, labels, smoothing=0.0, amp=False, mixup=None, rng=None
+    model,
+    optimizer,
+    images,
+    labels,
+    smoothing=0.0,
+    amp=False,
+    mixup=None,
+    rng=None,
+    preprocess=None,
 ):
     """Executes a training step, computing pre-clipping grad_norm for monitoring."""
     loss, _, grads, acc = _train_step_impl(
-        model, optimizer, images, labels, smoothing, amp, mixup, rng
+        model, optimizer, images, labels, smoothing, amp, mixup, rng, preprocess
     )
     grad_norm = (
         optax.tree.norm(grads)
@@ -379,27 +491,13 @@ def train_step_with_metrics(
     return StepMetrics(loss=loss, accuracy=acc, grad_norm=grad_norm)
 
 
-def _train_step(
-    model,
-    optimizer,
-    images,
-    labels,
-    smoothing=0.0,
-    amp=False,
-    mixup=None,
-    rng=None,
-    with_metrics=False,
-):
-    if with_metrics:
-        return train_step_with_metrics(model, optimizer, images, labels, smoothing, amp, mixup, rng)
-    return train_step(model, optimizer, images, labels, smoothing, amp, mixup, rng)
-
-
-@nnx.jit(static_argnames=("amp",))
-def eval_step(model, images, labels, amp=False, valid=None):
+@nnx.jit(static_argnames=("amp", "preprocess"))
+def eval_step(model, images, labels, amp=False, valid=None, preprocess=None):
+    """Return mean loss and accuracy; ``preprocess`` normalizes uint8 images only."""
     _validate_batch(images, labels)
     if valid is not None and (valid.ndim != 1 or valid.shape != (images.shape[0],)):
         raise ValueError("valid mask must be 1-D and match the image batch size")
+    images = _preprocess_images(images, preprocess, None, training=False)
     logits = _forward_with_precision(model, images, amp)
     losses = _cross_entropy_losses(logits, labels)
     if valid is None:
@@ -411,27 +509,27 @@ def eval_step(model, images, labels, amp=False, valid=None):
     return ((losses * weights).sum() / valid_count, (correct * weights).sum() / valid_count)
 
 
-def make_cached_train_step(model, optimizer, amp=False, mixup=None):
-    """Create one cached JIT train step with AMP and batch mixing bound."""
+def make_cached_train_step(model, optimizer, amp=False, mixup=None, preprocess=None):
+    """Create one cached JIT train step with AMP, batch mixing, and preprocessing bound."""
     return nnx.jit_partial(
-        functools.partial(train_step.__wrapped__, amp=amp, mixup=mixup),
+        functools.partial(train_step.__wrapped__, amp=amp, mixup=mixup, preprocess=preprocess),
         model,
         optimizer,
         # jit_partial packs bound arguments into one leading argument; positional
         # smoothing follows images and labels at index 3 of the compiled call.
         static_argnums=(3,),
-        static_argnames=("smoothing", "amp", "mixup"),
+        static_argnames=("smoothing", "amp", "mixup", "preprocess"),
         graph=True,
         graph_updates=False,
     )
 
 
-def make_cached_eval_step(model, amp=False):
-    """Create one cached JIT eval step with AMP bound at construction time."""
+def make_cached_eval_step(model, amp=False, preprocess=None):
+    """Create one cached JIT eval step with AMP and preprocessing bound at construction."""
     return nnx.jit_partial(
-        functools.partial(eval_step.__wrapped__, amp=amp),
+        functools.partial(eval_step.__wrapped__, amp=amp, preprocess=preprocess),
         model,
-        static_argnames=("amp",),
+        static_argnames=("amp", "preprocess"),
         graph=True,
         graph_updates=False,
     )
@@ -842,6 +940,16 @@ def main(argv=None):
             num_classes=args.num_classes,
         )
 
+    # Loaders yield uint8 images; compiled steps normalize them and erase
+    # training samples on device, like timm's prefetcher.
+    preprocess = ImagePreprocess(
+        mean=tuple(args.mean),
+        std=tuple(args.std),
+        re_prob=0.0 if args.no_aug else args.reprob,
+        re_mode=args.remode,
+        re_count=args.recount,
+    )
+
     # 2. Setup 1D Data-Parallel Mesh & SPMD NamedSharding
     mesh = jax.sharding.Mesh(total_devices, ("data",))
     P = jax.sharding.PartitionSpec
@@ -902,11 +1010,9 @@ def main(argv=None):
         color_jitter_prob=args.color_jitter_prob,
         grayscale_prob=args.grayscale_prob,
         gaussian_blur_prob=args.gaussian_blur_prob,
-        re_prob=args.reprob,
-        re_mode=args.remode,
-        re_count=args.recount,
         num_workers=args.workers,
         seed=args.seed + rank,
+        normalize=False,
     )
     steps_per_epoch = (
         args.steps_per_epoch if args.steps_per_epoch is not None else max(1, len(train_loader))
@@ -927,6 +1033,7 @@ def main(argv=None):
             std=args.std,
             num_workers=args.workers,
             pad_remainder=True,
+            normalize=False,
         )
 
     optimizer = make_optimizer(
@@ -1003,13 +1110,19 @@ def main(argv=None):
 
         # Construct cached train & eval steps
         model.train()
-        cached_train_step = make_cached_train_step(model, optimizer, amp=args.amp, mixup=mixup)
+        cached_train_step = make_cached_train_step(
+            model, optimizer, amp=args.amp, mixup=mixup, preprocess=preprocess
+        )
         train_rng = (
-            jax.random.fold_in(jax.random.PRNGKey(args.seed), rank) if mixup is not None else None
+            jax.random.fold_in(jax.random.PRNGKey(args.seed), rank)
+            if mixup is not None or preprocess.re_prob > 0
+            else None
         )
         model.eval()
         cached_eval_step = (
-            make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
+            make_cached_eval_step(model, amp=args.amp, preprocess=preprocess)
+            if val_loader is not None
+            else None
         )
         model.train()
 

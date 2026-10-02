@@ -14,6 +14,8 @@
 
 ### October 2, 2026
 
+- Fix training color jitter: brightness was an additive shift of up to ±1.4 × 255, so the default `--color-jitter 0.4` turned about **36% of training images** completely black or white. Color jitter, AutoAugment, RandAugment, and AugMix operations now follow timm's PIL semantics and magnitude mappings; random erasing follows timm's box sampling in normalized space; evaluation resizes the shorter edge before the center crop instead of squashing the aspect ratio. See [data pipeline performance](#data-pipeline-performance).
+- Speed up the training input pipeline **2.6×**: augmentation runs on uint8 OpenCV lookup tables and blends, and the training CLI keeps images as uint8 from Grain workers to the device, normalizing and erasing them inside the compiled step like timm's prefetcher. With the default four workers on an RTX 5090, ResNet-18 trains **2.5× faster** and ResNet-50 **1.3× faster** end to end.
 - Add **37 model variants** from five families following [timm 1.0.30](https://github.com/huggingface/pytorch-image-models/releases/tag/v1.0.30): LowFormer, iFormer, EfficientViM, Qwen3 ViT, and DeepSeek ViT. The registry now contains **420 models across 99 families**.
 - Support Qwen3 spatial-merger and DeepSeek aligner classifiers, native VLM encoders, and distilled iFormer/EfficientViM heads.
 - Update dependencies to the latest stable releases checked on this date, including **JAX 0.11.2 with CUDA 13** and **Flax 0.12.10**. The resolved environment is recorded in [uv.lock](uv.lock).
@@ -78,7 +80,7 @@ Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/pat
 - **Feature extraction:** unpooled feature maps or tokens, pooled embeddings with `num_classes=0`, and `features_only=True` for supported intermediate stages.
 - **NNX transformations:** models work with `nnx.jit` and `nnx.grad`; pass the model as an explicit argument to transformed functions. Use `model.train()` and `model.eval()` to control dropout and batch normalization.
 - **Attention:** Tokamax fused kernels for GPU bfloat16 self/cross-attention, including relative-position bias. New GPU/kernel shapes automatically tune and reuse the fastest measured configuration in the process. CPU, float32, and float16 use Flax attention; active attention dropout retains its existing implementation.
-- **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix.
+- **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix. Photometric and AutoAugment operations reproduce timm's PIL semantics with OpenCV lookup tables, blends, and affine warps; the training CLI normalizes uint8 batches and applies random erasing, Mixup, and CutMix on device.
 - **Training:** AdamW with cosine scheduling and warmup, label smoothing, gradient clipping, optional bfloat16 computation, and JAX SPMD data parallelism or FSDP.
 - **Checkpointing:** asynchronous Orbax model/optimizer checkpoints, retention settings, and epoch resume with restored data position.
 
@@ -214,6 +216,8 @@ finally:
 
 Training loaders repeat across epochs and drop incomplete batches by default. Evaluation loaders run once and keep the remainder. For distributed evaluation outside the training CLI, pass `pad_remainder=True` and exclude samples where `batch["valid"]` is false.
 
+`normalize=False` yields uint8 images and skips normalization and random erasing, reducing worker, inter-process, and host-to-device traffic fourfold. Pass the matching `jimm.train.ImagePreprocess(mean, std, re_prob, re_mode, re_count)` to `make_cached_train_step` or `make_cached_eval_step` to normalize inside the compiled step; training steps then also apply timm random erasing and need an `rng`. The training CLI uses this path.
+
 `in_memory=True` enables a shared decoded-image cache under `~/.cache/jimm/image-cache`, configurable with `JIMM_CACHE_DIR`. It preserves source resolution so random crops and other augmentation still run on each read.
 
 ## Training, Validation, and Inference
@@ -240,7 +244,7 @@ uv run python -m jimm.train \
 
 Set `--num-classes` to your dataset's class count. The dataset root also works as a positional argument. Inputs default to 224×224 with ImageNet normalization; `--input-size 3 H H`, `--img-size`, `--mean`, `--std`, `--crop-pct`, and the training/validation interpolation options configure preprocessing. Inputs must be square RGB images and match the selected architecture's supported resolution. Use `uv run python -m jimm.train --help` for all options.
 
-Each host defaults to **4 Grain workers** and **bfloat16** compute with autotuned Tokamax attention. `--no-amp` selects float32. `--validation-batch-size` sets the validation batch size independently; it otherwise follows `--batch-size`.
+Each host defaults to **4 Grain workers** and **bfloat16** compute with autotuned Tokamax attention. Workers send uint8 images; normalization and `--reprob` random erasing run on device. Evaluation resizes the shorter edge to `floor(img_size / crop_pct)` and center crops, as in timm. `--no-amp` selects float32. `--validation-batch-size` sets the validation batch size independently; it otherwise follows `--batch-size`.
 
 | timm-style option | Long-form / legacy equivalent |
 | --- | --- |
@@ -348,13 +352,27 @@ Use `uv run pytest tests/` for the full suite, including representative forward/
 
 The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
 
-The core regression suite passed **237 tests** (four GPU-only cases skipped on CPU), including timm-style arguments, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **9 GPU attention checks**, covering automatic backend selection, the native autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
+The core regression suite passed **259 tests** (four GPU-only cases skipped on CPU), including timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **9 GPU attention checks**, covering automatic backend selection, the native autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
 
 ```bash
 uv run pytest tests/test_attention.py -q
 ```
 
 The training CLI also completed CUDA 13 training, validation, and checkpoint saving on an RTX 5090 with `vit_tiny_patch16_224` at 224×224 (`mlp_ratio=2.0`), using the default four Grain workers, bfloat16, and autotuned Tokamax forward/backward kernels. Training and validation used separate batch sizes of four and eight.
+
+### Data pipeline performance
+
+Measurements below use the default training augmentation (random resized crop, horizontal flip, color jitter 0.4, random erasing 0.2), batch size 128 at 224×224, a 12,807-image JPEG ImageFolder at ImageNet-like resolution (500×375), JAX 0.11.2/CUDA 13, and an RTX 5090. CLI throughput is the mean of the steady-state epochs of three-epoch runs with four Grain workers and bfloat16.
+
+| Measurement | Before | After | Speedup |
+| --- | ---: | ---: | ---: |
+| Color jitter, per image (one CPU core) | 0.82 ms | 0.12 ms | 6.8× |
+| Training transform, per image (one CPU core) | 1.77 ms | 0.96 ms | 1.8× |
+| Training loader, four workers | 1,830 img/s | 4,806 img/s | 2.6× |
+| ResNet-18 CLI training | 2,147 img/s | 5,370 img/s | 2.5× |
+| ResNet-50 CLI training | 2,121 img/s | 2,803 img/s | 1.3× |
+
+Before the fix, both ResNets were limited by the input pipeline. On this nine-class dataset, three-epoch ResNet-50 validation accuracy rose from 0.82 to 0.98, because color jitter no longer blanks training images. Compared with timm 1.0.29, torchvision 0.25, and Pillow 12.3 on 11 images at five magnitudes, AutoContrast, Equalize, Invert, Posterize, Solarize, SolarizeAdd, and integer translations match exactly. Brightness, contrast, saturation, and sharpness differ by at most two intensity levels because OpenCV rounds where Pillow truncates; hue differs by up to ten levels from HSV quantization. Rotation, shear, and fractional translation differ by more than one level on under 1% of pixels, mostly at fill boundaries, and Gaussian blur differs where Pillow approximates it with box blurs.
 
 ### Attention performance
 

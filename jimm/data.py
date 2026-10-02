@@ -1,12 +1,14 @@
 """Grain data pipeline with timm-style OpenCV augmentations.
 
 Images are decoded to RGB NumPy arrays with OpenCV and yielded as normalized
-float32 NHWC batches. Grain handles sharding and batching.
+float32 NHWC batches, or as uint8 batches for device-side normalization. Grain
+handles sharding and batching.
 """
 
 import fcntl
 import hashlib
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -140,22 +142,35 @@ def _decode_image(raw: bytes) -> np.ndarray:
     if not raw:
         raise ValueError("unable to decode empty image bytes")
     encoded = np.frombuffer(raw, dtype=np.uint8)
-    image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    image = cv2.imdecode(encoded, cv2.IMREAD_COLOR_RGB)
     if image is None:
         # Fallback: Truncated JPEG recovery (append missing EOI marker \xff\xd9)
         if raw.startswith(b"\xff\xd8"):
-            image = cv2.imdecode(np.frombuffer(raw + b"\xff\xd9", dtype=np.uint8), cv2.IMREAD_COLOR)
+            image = cv2.imdecode(
+                np.frombuffer(raw + b"\xff\xd9", dtype=np.uint8), cv2.IMREAD_COLOR_RGB
+            )
     if image is None:
         raise ValueError("unable to decode image bytes")
-    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    return image
+
+
+def _resize_shorter(image: np.ndarray, size: int, interpolation: int) -> np.ndarray:
+    """torchvision ``Resize(size)``: scale the shorter edge, preserving aspect ratio."""
+    height, width = image.shape[:2]
+    short, long = (width, height) if width <= height else (height, width)
+    if short == size:
+        return image
+    new_long = int(size * long / short)
+    new_size = (size, new_long) if width <= height else (new_long, size)
+    return cv2.resize(image, new_size, interpolation=interpolation)
 
 
 def _read_image(path: Path) -> np.ndarray:
     """Read a file directly; OpenCV's file reader tolerates some JPEG truncation."""
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR_RGB)
     if image is None:
         raise ValueError(f"unable to decode image file {path}")
-    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    return image
 
 
 def _decode_file(path: Path) -> np.ndarray:
@@ -375,8 +390,10 @@ class _DecodeTransform(grain.RandomMapTransform):
         re_count=1,
         mean=IMAGENET_MEAN,
         std=IMAGENET_STD,
+        normalize=True,
     ):
         self.img_size = img_size
+        self.normalize = normalize
         self.is_training = is_training
         self.scale = scale
         self.ratio = ratio
@@ -410,17 +427,6 @@ class _DecodeTransform(grain.RandomMapTransform):
             setattr(self, name, value)
         if is_training and train_crop_mode not in ("rrc", "rkrc", "rkrr"):
             raise ValueError(f"unknown train_crop_mode: {train_crop_mode}")
-        self.auto_augment = build_auto_augment(auto_augment)
-        self.force_color_jitter = force_color_jitter
-        self.re_mode = re_mode
-        self.re_count = re_count
-        try:
-            crop_pct = float(crop_pct)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ValueError("crop_pct must be a positive finite number") from exc
-        if not np.isfinite(crop_pct) or crop_pct <= 0:
-            raise ValueError("crop_pct must be a positive finite number")
-        self.resize = int(round(img_size / crop_pct))
         self.mean = np.asarray(mean, dtype=np.float32)
         self.std = np.asarray(std, dtype=np.float32)
         if self.mean.shape != (3,) or self.std.shape != (3,):
@@ -429,6 +435,29 @@ class _DecodeTransform(grain.RandomMapTransform):
             raise ValueError("mean and std values must be finite")
         if np.any(self.std <= 0):
             raise ValueError("std values must be positive")
+        # timm's train transform: geometric ops fill with the mean color and
+        # translate up to 45% of the image size (30% for AugMix).
+        aa_params = {
+            "translate_const": int(img_size * 0.45),
+            "img_mean": tuple(min(255, round(255 * float(value))) for value in self.mean),
+        }
+        if interpolation and interpolation != "random":
+            aa_params["interpolation"] = interpolation
+        if str(auto_augment).startswith("augmix"):
+            aa_params["translate_pct"] = 0.3
+        self.auto_augment = build_auto_augment(auto_augment, aa_params)
+        # Color jitter is disabled with AutoAugment except for 3-Augment policies.
+        self.force_color_jitter = force_color_jitter or "3a" in str(auto_augment)
+        self.re_mode = re_mode
+        self.re_count = re_count
+        try:
+            crop_pct = float(crop_pct)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("crop_pct must be a positive finite number") from exc
+        if not np.isfinite(crop_pct) or crop_pct <= 0:
+            raise ValueError("crop_pct must be a positive finite number")
+        # timm resizes the shorter evaluation edge to floor(img_size / crop_pct).
+        self.resize = math.floor(img_size / crop_pct)
         # Fused normalization: (x / 255 - mean) / std == x * inv_std * (1/255) + shift,
         # computed with in-place multiply/add instead of full-image temporaries.
         self._inv_std = (1.0 / self.std).astype(np.float32)
@@ -495,26 +524,27 @@ class _DecodeTransform(grain.RandomMapTransform):
                 )
             image = random_grayscale(image, self.grayscale_prob, rng=rng)
             image = gaussian_blur(image, self.gaussian_blur_prob, rng=rng)
-            array = image.astype(np.float32)
-            array *= _INV_255  # in-place; astype above already copied
-            array = random_erasing(
-                array, self.re_prob, mode=self.re_mode, count=self.re_count, rng=rng
-            )
-            np.multiply(array, self._inv_std, out=array)
-            np.add(array, self._shift, out=array)
         else:
             interpolation = self.interpolation
             if interpolation is None or interpolation == "random":
                 interpolation = "bilinear"
-            image = cv2.resize(
-                image,
-                (self.resize, self.resize),
-                interpolation=resolve_interpolation(interpolation, rng=rng),
+            image = _resize_shorter(
+                image, self.resize, resolve_interpolation(interpolation, rng=rng)
             )
             image = center_crop_or_pad(image, self.img_size)
+
+        if not self.normalize:
+            # Device-side preprocessing normalizes and erases the uint8 batch.
+            array = np.ascontiguousarray(image)
+        else:
             array = image.astype(np.float32)
             np.multiply(array, self._scale, out=array)
             np.add(array, self._shift, out=array)
+        if self.is_training and self.normalize:
+            # timm erases normalized tensors, so constant fill is the dataset mean.
+            array = random_erasing(
+                array, self.re_prob, mode=self.re_mode, count=self.re_count, rng=rng
+            )
 
         result = {
             "image": array,
@@ -700,6 +730,7 @@ def create_loader(
     drop_remainder=None,
     pad_remainder=False,
     no_aug=False,
+    normalize=True,
 ):
     """Create a Grain loader with timm-compatible augmentation options.
 
@@ -711,6 +742,9 @@ def create_loader(
         using equal, full batches on every host.
       no_aug: Use evaluation transforms while keeping the training sampler,
         shuffling, and infinite epoch stream.
+      normalize: Yield float32 images normalized with ``mean``/``std``. When
+        False, yield uint8 RGB images and leave normalization and random
+        erasing to the device, like timm's prefetcher (see ``jimm.train``).
     """
     _ensure_absl_flags_parsed()
     for name, value in (("batch_size", batch_size), ("img_size", img_size)):
@@ -727,6 +761,8 @@ def create_loader(
         raise ValueError("pad_remainder must be a boolean")
     if not isinstance(no_aug, bool):
         raise ValueError("no_aug must be a boolean")
+    if not isinstance(normalize, bool):
+        raise ValueError("normalize must be a boolean")
     drop = is_training if drop_remainder is None else drop_remainder
     shuffle = is_training if shuffle is None else shuffle
     if shard_options is None:
@@ -759,6 +795,7 @@ def create_loader(
         re_count=re_count,
         mean=mean,
         std=std,
+        normalize=normalize,
     )
     if pad_remainder:
         source = _PaddedDataSource(source, int(batch_size) * shard_options.shard_count)

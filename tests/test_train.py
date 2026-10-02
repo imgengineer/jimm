@@ -12,12 +12,16 @@ import pytest
 from flax import nnx
 
 from jimm.augment import MixupCutmix
+from jimm.data import create_loader
 from jimm.models.nfnet import ScaledStdConv
 from jimm.registry import create_model
 from jimm.train import (
+    ImagePreprocess,
     StepMetrics,
     _mean_metrics,
     _mixup_cutmix_jax,
+    _normalize_images,
+    _random_erasing_jax,
     _validate_batch,
     cross_entropy,
     eval_step,
@@ -322,6 +326,114 @@ def test_train_and_eval_step():
     plain_v_loss, plain_v_acc = plain_cached_eval(images, labels)
     assert float(plain_v_loss) > 0.0
     assert 0.0 <= float(plain_v_acc) <= 1.0
+
+
+def test_uint8_loader_with_device_normalization_matches_host_normalization(temp_dataset):
+    options = dict(
+        batch_size=3,
+        img_size=24,
+        is_training=False,
+        num_workers=0,
+        mean=(0.5, 0.4, 0.3),
+        std=(0.2, 0.3, 0.4),
+    )
+    host = create_loader(f"{temp_dataset}/val", **options)
+    device = create_loader(f"{temp_dataset}/val", normalize=False, **options)
+    preprocess = ImagePreprocess(mean=options["mean"], std=options["std"], re_prob=1.0)
+    try:
+        host_batches, device_batches = list(host), list(device)
+        assert len(host_batches) == len(device_batches) == 3
+        for expected, actual in zip(host_batches, device_batches):
+            assert actual["image"].dtype == np.uint8
+            normalized = jax.jit(_normalize_images, static_argnums=1)(actual["image"], preprocess)
+            np.testing.assert_allclose(normalized, expected["image"], rtol=1e-6, atol=1e-6)
+    finally:
+        host.close()
+        device.close()
+    with pytest.raises(ValueError, match="uint8"):
+        _normalize_images(jnp.zeros((1, 2, 2, 3)), preprocess)
+    with pytest.raises(ValueError, match="normalize"):
+        create_loader(f"{temp_dataset}/val", batch_size=1, normalize=1)
+
+
+@pytest.mark.parametrize("mode", ["const", "rand", "pixel"])
+def test_device_random_erasing_matches_timm_box_semantics(mode):
+    images = jnp.ones((64, 32, 32, 3))
+    preprocess = ImagePreprocess(re_prob=1.0, re_mode=mode)
+    erased = np.asarray(
+        jax.jit(_random_erasing_jax, static_argnums=2)(images, jax.random.key(0), preprocess)
+    )
+    for sample in erased:
+        changed = np.any(sample != 1.0, axis=-1)
+        rows, cols = np.flatnonzero(changed.any(1)), np.flatnonzero(changed.any(0))
+        box = sample[rows[0] : rows[-1] + 1, cols[0] : cols[-1] + 1]
+        # One rectangle covering 2%-33% of the image, as timm's RandomErasing draws.
+        assert changed.sum() == box.shape[0] * box.shape[1]
+        assert 0.015 <= changed.mean() <= 0.35
+        if mode == "const":
+            assert not box.any()  # zero is the dataset mean after normalization
+        elif mode == "rand":
+            assert np.ptp(box.reshape(-1, 3), axis=0).max() == 0
+        else:
+            assert np.ptp(box) > 0
+
+    half = ImagePreprocess(re_prob=0.5, re_count=3)
+    erased = np.asarray(_random_erasing_jax(jnp.ones((256, 16, 16, 3)), jax.random.key(1), half))
+    fractions = (erased[..., 0] == 0).mean(axis=(1, 2))
+    assert 0.35 <= np.mean(fractions > 0) <= 0.65
+    assert fractions.max() <= 0.36  # boxes share the area budget
+    unchanged = _random_erasing_jax(images, jax.random.key(0), ImagePreprocess(re_prob=0.0))
+    np.testing.assert_array_equal(unchanged, images)
+
+
+def test_cached_step_normalizes_and_erases_uint8_batches():
+    class Model(nnx.Module):
+        def __init__(self):
+            rngs = nnx.Rngs(0)
+            self.conv = nnx.Conv(3, 4, (3, 3), rngs=rngs)
+            self.fc = nnx.Linear(4, 2, rngs=rngs)
+
+        def __call__(self, x):
+            assert x.dtype != jnp.uint8
+            return self.fc(nnx.relu(self.conv(x)).mean(axis=(1, 2)))
+
+    model = Model()
+    reference = nnx.clone(model)
+    optimizer = make_optimizer(model, 0.01, 0.01, 1, 10)
+    reference_optimizer = make_optimizer(reference, 0.01, 0.01, 1, 10)
+    preprocess = ImagePreprocess(mean=(0.5, 0.5, 0.5), std=(0.25, 0.25, 0.25), re_prob=0.5)
+    mixup = MixupCutmix(mixup_alpha=0.4, cutmix_alpha=1.0, num_classes=2)
+    images = jnp.asarray(np.random.default_rng(0).integers(0, 256, (4, 8, 8, 3), dtype=np.uint8))
+    labels = jnp.array([0, 1, 1, 0])
+    cached = make_cached_train_step(model, optimizer, mixup=mixup, preprocess=preprocess)
+    for step in range(2):
+        rng = jax.random.key(step)
+        actual = cached(images, labels, 0.1, rng=rng)
+        expected = train_step(
+            reference,
+            reference_optimizer,
+            images,
+            labels,
+            smoothing=0.1,
+            mixup=mixup,
+            rng=rng,
+            preprocess=preprocess,
+        )
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
+    with pytest.raises(ValueError, match="rng"):
+        train_step(model, optimizer, images, labels, preprocess=preprocess)
+    with pytest.raises(ValueError, match="uint8"):
+        cached(images.astype(jnp.float32), labels, 0.1, rng=rng)
+
+    # Evaluation only normalizes, matching a float batch normalized beforehand.
+    model.eval()
+    normalized = (images.astype(jnp.float32) / 255.0 - 0.5) / 0.25
+    np.testing.assert_allclose(
+        make_cached_eval_step(model, preprocess=preprocess)(images, labels),
+        eval_step(model, normalized, labels),
+        rtol=1e-5,
+        atol=1e-6,
+    )
 
 
 def test_eval_step_ignores_padded_examples():

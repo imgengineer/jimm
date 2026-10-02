@@ -9,6 +9,8 @@ from jimm.registry import create_model
 # timm 1.0.29 counts with num_classes=1000. Other registered names approximate
 # their timm architectures and are not listed until they match.
 TIMM_PARAM_COUNTS = {
+    "cait_s24_224": 46_916_200,
+    "cait_xxs24_224": 11_956_264,
     "coatnet_0_rw_224": 27_435_562,
     "coatnet_1_rw_224": 41_721_502,
     "coatnet_2_rw_224": 73_868_400,
@@ -32,6 +34,9 @@ TIMM_PARAM_COUNTS = {
     "convnextv2_small": 50_318_440,
     "convnextv2_tiny": 28_635_496,
     "darknet53": 41_609_928,
+    "deit3_base_patch16_224": 86_585_320,
+    "deit3_large_patch16_224": 304_374_760,
+    "deit3_small_patch16_224": 22_059_496,
     "deit_base_patch16_224": 86_567_656,
     "deit_base_patch16_384": 86_859_496,
     "deit_small_patch16_224": 22_050_664,
@@ -85,6 +90,11 @@ TIMM_PARAM_COUNTS = {
     "mobilenetv2_140": 6_108_776,
     "mobilenetv3_large_100": 5_483_032,
     "mobilenetv3_small_100": 2_542_856,
+    "poolformer_m36": 56_172_520,
+    "poolformer_m48": 73_473_448,
+    "poolformer_s12": 11_915_176,
+    "poolformer_s24": 21_388_968,
+    "poolformer_s36": 30_862_760,
     "pvt_v2_b0": 3_666_760,
     "pvt_v2_b1": 14_009_000,
     "pvt_v2_b2": 25_362_856,

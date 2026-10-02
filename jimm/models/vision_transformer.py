@@ -27,17 +27,31 @@ class Attention(nnx.Module):
 
 class Block(nnx.Module):
     def __init__(
-        self, dim, num_heads, mlp_ratio=4.0, qkv_bias=True, drop=0.0, drop_path=0.0, *, rngs
+        self,
+        dim,
+        num_heads,
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        drop=0.0,
+        drop_path=0.0,
+        init_values=None,
+        *,
+        rngs,
     ):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
         self.attn = Attention(dim, num_heads, qkv_bias, drop, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
+        # timm LayerScale (DeiT-III); absent for the original ViT.
+        self.gamma1 = nnx.Param(jnp.full((dim,), init_values)) if init_values else None
+        self.gamma2 = nnx.Param(jnp.full((dim,), init_values)) if init_values else None
 
     def __call__(self, x):
-        x = x + self.drop_path(self.attn(self.norm1(x)))
-        return x + self.drop_path(self.mlp(self.norm2(x)))
+        y = self.attn(self.norm1(x))
+        x = x + self.drop_path(y if self.gamma1 is None else self.gamma1[...] * y)
+        y = self.mlp(self.norm2(x))
+        return x + self.drop_path(y if self.gamma2 is None else self.gamma2[...] * y)
 
 
 class VisionTransformer(ClassifierMixin, nnx.Module):
@@ -58,20 +72,33 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
         qkv_bias=True,
         drop_rate=0.0,
         drop_path_rate=0.0,
+        init_values=None,
+        no_embed_class=False,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = embed_dim
+        self.no_embed_class = no_embed_class
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
         n = self.patch_embed.num_patches
         self.cls_token = nnx.Param(jnp.zeros((1, 1, embed_dim)))
-        self.pos_embed = nnx.Param(jnp.zeros((1, n + 1, embed_dim)))
+        # DeiT-III adds position embeddings to patch tokens only, then prepends the class token.
+        self.pos_embed = nnx.Param(jnp.zeros((1, n if no_embed_class else n + 1, embed_dim)))
         self.pos_drop = nnx.Dropout(drop_rate, rngs=rngs)
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
         self.blocks = nnx.List(
             [
-                Block(embed_dim, num_heads, mlp_ratio, qkv_bias, drop_rate, dpr[i], rngs=rngs)
+                Block(
+                    embed_dim,
+                    num_heads,
+                    mlp_ratio,
+                    qkv_bias,
+                    drop_rate,
+                    dpr[i],
+                    init_values,
+                    rngs=rngs,
+                )
                 for i in range(depth)
             ]
         )
@@ -82,10 +109,12 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
     def forward_features(self, x):
         B = x.shape[0]
         x = self.patch_embed(x).reshape(B, -1, self.num_features)
-        x = jnp.concatenate(
-            [jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features)), x], axis=1
-        )
-        x = self.pos_drop(x + self.pos_embed[...])
+        cls_token = jnp.broadcast_to(self.cls_token[...], (B, 1, self.num_features))
+        if self.no_embed_class:
+            x = jnp.concatenate([cls_token, x + self.pos_embed[...]], axis=1)
+        else:
+            x = jnp.concatenate([cls_token, x], axis=1) + self.pos_embed[...]
+        x = self.pos_drop(x)
         for blk in self.blocks:
             x = blk(x)
         return self.norm(x)
@@ -148,7 +177,7 @@ def deit_base_patch16_224(**kwargs):
     return _vit(224, 16, 768, 12, 12, **kwargs)
 
 
-# BEiT v1 / DeiT-III: ViT architecture, different pretraining/recipes
+# BEiT v1: approximated by the ViT architecture
 @register_model
 def beit_base_patch16_224(**kwargs):
     return _vit(224, 16, 768, 12, 12, **kwargs)
@@ -159,16 +188,24 @@ def beit_large_patch16_224(**kwargs):
     return _vit(224, 16, 1024, 24, 16, **kwargs)
 
 
+def _deit3(embed_dim, depth, num_heads, **kwargs):
+    model = _vit(
+        224, 16, embed_dim, depth, num_heads, init_values=1e-6, no_embed_class=True, **kwargs
+    )
+    model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
+    return model
+
+
 @register_model
 def deit3_small_patch16_224(**kwargs):
-    return _vit(224, 16, 384, 12, 6, **kwargs)
+    return _deit3(384, 12, 6, **kwargs)
 
 
 @register_model
 def deit3_base_patch16_224(**kwargs):
-    return _vit(224, 16, 768, 12, 12, **kwargs)
+    return _deit3(768, 12, 12, **kwargs)
 
 
 @register_model
 def deit3_large_patch16_224(**kwargs):
-    return _vit(224, 16, 1024, 24, 16, **kwargs)
+    return _deit3(1024, 24, 16, **kwargs)

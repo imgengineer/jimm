@@ -111,3 +111,26 @@ def test_tokamax_outputs_and_all_input_gradients(query_length, key_length, head_
             rtol=tolerance,
             atol=tolerance,
         )
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+def test_attention_supports_value_heads_of_another_width(dtype):
+    keys = jax.random.split(jax.random.key(3), 4)
+    query = jax.random.normal(keys[0], (2, 5, 3, 8), dtype)
+    key = jax.random.normal(keys[1], (2, 7, 3, 8), dtype)
+    value = jax.random.normal(keys[2], (2, 7, 3, 16), dtype)
+    bias = jax.random.normal(keys[3], (1, 3, 5, 7))
+    # Full float32 matmuls; GPUs otherwise default to TF32 for float32 inputs.
+    with jax.default_matmul_precision("float32"):
+        actual = jax.jit(attention.dot_product_attention)(query, key, value, bias)
+    assert actual.shape == (2, 5, 3, 16) and actual.dtype == dtype
+
+    q, k, v = (np.asarray(t, np.float64) for t in (query, key, value))
+    logits = np.einsum("bqhd,bkhd->bhqk", q, k) / np.sqrt(8) + np.asarray(bias, np.float64)
+    weights = np.exp(logits - logits.max(-1, keepdims=True))
+    weights /= weights.sum(-1, keepdims=True)
+    expected = np.einsum("bhqk,bkhd->bqhd", weights, v)
+    tolerance = 1e-5 if dtype == jnp.float32 else 0.05
+    np.testing.assert_allclose(
+        np.asarray(actual, np.float64), expected, rtol=tolerance, atol=tolerance
+    )

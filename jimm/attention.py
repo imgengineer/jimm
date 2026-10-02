@@ -24,8 +24,24 @@ def _get_tokamax_attention():
     return tokamax.dot_product_attention
 
 
+def _attention_with_value_width(query, key, value, bias=None):
+    """XLA attention whose value heads are wider or narrower than query/key heads."""
+    logits = jnp.einsum("bqhd,bkhd->bhqk", query, key, preferred_element_type=jnp.float32)
+    logits = logits * query.shape[-1] ** -0.5
+    if bias is not None:
+        logits = logits + bias
+    weights = jax.nn.softmax(logits, axis=-1).astype(value.dtype)
+    return jnp.einsum("bhqk,bkhd->bqhd", weights, value)
+
+
 def dot_product_attention(query, key, value, bias=None):
-    """Attend to BTHD tensors, preserving Flax's scale and bias conventions."""
+    """Attend to BTHD tensors, preserving Flax's scale and bias conventions.
+
+    Value heads may differ in width from query/key heads (as in LeViT); those
+    calls use a float32-softmax XLA implementation.
+    """
+    if value.shape[-1] != query.shape[-1]:
+        return _attention_with_value_width(query, key, value, bias)
     if (
         query.dtype == jnp.bfloat16
         and query.dtype == key.dtype == value.dtype

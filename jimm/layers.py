@@ -221,6 +221,7 @@ class SqueezeExcite(nnx.Module):
         rd_ratio: float = 0.25,
         *,
         rd_channels: int | None = None,
+        act=nnx.relu,
         gate=nnx.sigmoid,
         rngs: nnx.Rngs,
     ):
@@ -231,11 +232,12 @@ class SqueezeExcite(nnx.Module):
                 rd_channels = 1
         self.fc1 = nnx.Linear(chs, rd_channels, rngs=rngs)
         self.fc2 = nnx.Linear(rd_channels, chs, rngs=rngs)
+        self.act = act
         self.gate = gate
 
     def __call__(self, x: jax.Array) -> jax.Array:
         s = jnp.mean(x, axis=(1, 2), keepdims=True)
-        s = self.gate(self.fc2(nnx.relu(self.fc1(s))))
+        s = self.gate(self.fc2(self.act(self.fc1(s))))
         return x * s
 
 

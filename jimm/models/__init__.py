@@ -93,6 +93,11 @@ from . import (  # noqa: F401  (imports trigger registration)
     naflexvit,
     swin_transformer_v2_cr,
     vitamin,
+    lowformer,
+    iformer,
+    efficientvim,
+    qwen3_vit,
+    deepseek_vit,
     variants,
 )
 from .resnet import ResNet

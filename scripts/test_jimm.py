@@ -43,7 +43,9 @@ def check_all_models_forward(mode="representative"):
         if (
             m.get_classifier() is None
         ):  # encoder-only models (e.g. vit_sam): feature maps in, features out
-            _require(logits.shape[-1] == m.num_features, (name, logits.shape))
+            projector = getattr(m, "merger", None) or getattr(m, "aligner", None)
+            feature_dim = projector.out_features if projector is not None else m.num_features
+            _require(logits.shape[-1] == feature_dim, (name, logits.shape))
             continue
         _require(logits.shape == (1, 7), (name, logits.shape))
         m.reset_classifier(0)

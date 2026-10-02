@@ -18,7 +18,7 @@ ALL_MODELS = sorted(list_models())
 def test_all_registered_model_entrypoints_instantiation():
     """Verify that every registered model entrypoint instantiates cleanly."""
     for i, name in enumerate(ALL_MODELS):
-        m = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
+        m = nnx.eval_shape(lambda: create_model(name, num_classes=5, rngs=nnx.Rngs(0)))
         assert isinstance(m, nnx.Module)
         assert hasattr(m, "num_features")
         assert getattr(m, "num_features") > 0

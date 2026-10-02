@@ -1,0 +1,37 @@
+The LowFormer, iFormer, EfficientViM, Qwen3 ViT, DeepSeek ViT, and shared
+convolution/RoPE implementations were adapted to JAX/Flax NNX from timm 1.0.30:
+https://github.com/huggingface/pytorch-image-models/tree/v1.0.30/timm
+
+timm and its adaptations are licensed under Apache License 2.0 (see LICENSE).
+Copyright 2019 Ross Wightman.
+LowFormer and iFormer: Copyright 2026 Ryan Hou & Ross Wightman.
+EfficientViM: Copyright 2025 Ross Wightman.
+Qwen3 ViT and DeepSeek ViT: Copyright 2026 Yonghye Kwon.
+
+The original EfficientViM and iFormer implementations carry the following
+MIT notices, retained for the adapted architecture code:
+
+EfficientViM: Copyright (c) 2024 MLVLab.
+https://github.com/mlvlab/EfficientViM
+iFormer: Copyright (c) Chuanyang Zheng.
+https://github.com/ChuanyangZheng/iFormer
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1266,6 +1266,7 @@ dependencies = [
     { name = "opencv-python-headless" },
     { name = "optax" },
     { name = "orbax-checkpoint" },
+    { name = "pyyaml" },
     { name = "tokamax" },
     { name = "triton", marker = "sys_platform == 'linux'" },
 ]
@@ -1288,6 +1289,7 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = ">=5.0.0.93" },
     { name = "optax", specifier = ">=0.2.8" },
     { name = "orbax-checkpoint", specifier = ">=0.12.6" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "tokamax", specifier = ">=0.0.14" },
     { name = "triton", marker = "sys_platform == 'linux'", specifier = ">=3.8.0" },
 ]

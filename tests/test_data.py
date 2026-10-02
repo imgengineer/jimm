@@ -199,6 +199,62 @@ def test_create_loader_drop_remainder(temp_dataset):
         )
 
 
+def test_no_aug_keeps_training_stream_and_uses_eval_transforms(temp_dataset):
+    options = dict(batch_size=4, img_size=32, num_workers=0, shuffle=False)
+    training = create_loader(f"{temp_dataset}/train", is_training=True, no_aug=True, **options)
+    evaluation = create_loader(f"{temp_dataset}/train", is_training=False, **options)
+    try:
+        train_stream = iter(training)
+        expected_batches = list(evaluation)
+        for _ in range(2):
+            for expected in expected_batches:
+                actual = next(train_stream)
+                np.testing.assert_array_equal(actual["label"], expected["label"])
+                np.testing.assert_allclose(actual["image"], expected["image"])
+    finally:
+        training.close()
+        evaluation.close()
+
+
+@pytest.mark.parametrize(
+    "batch_size,pad_remainder,drop_remainder,shard_index,shard_count,shuffle",
+    [
+        (5, False, False, 0, 1, False),
+        (16, True, False, 0, 1, False),
+        (16, True, False, 1, 3, False),
+        (32, False, True, 0, 1, False),
+        (3, False, False, 0, 5, False),
+        (3, False, False, 4, 5, False),
+        (3, False, False, 1, 5, True),
+    ],
+)
+def test_multiworker_eval_batches_match_single_worker(
+    temp_dataset, batch_size, pad_remainder, drop_remainder, shard_index, shard_count, shuffle
+):
+    options = dict(
+        batch_size=batch_size,
+        img_size=16,
+        pad_remainder=pad_remainder,
+        drop_remainder=drop_remainder,
+        shuffle=shuffle,
+        shard_options=grain.ShardOptions(
+            shard_index=shard_index, shard_count=shard_count, drop_remainder=False
+        ),
+    )
+    reference = create_loader(f"{temp_dataset}/val", num_workers=0, **options)
+    parallel = create_loader(f"{temp_dataset}/val", num_workers=4, **options)
+    try:
+        expected = list(reference)
+        actual = list(parallel)
+        assert len(actual) == len(parallel) == len(expected)
+        for actual_batch, expected_batch in zip(actual, expected):
+            for key in expected_batch:
+                np.testing.assert_allclose(actual_batch[key], expected_batch[key])
+    finally:
+        reference.close()
+        parallel.close()
+
+
 def test_create_loader_pads_eval_without_losing_records(temp_dataset):
     loader = create_loader(
         f"{temp_dataset}/val",

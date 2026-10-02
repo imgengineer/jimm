@@ -14,6 +14,7 @@ dependencies = [
   "opencv-python-headless>=5.0.0.93",
   "tokamax>=0.0.14",
   "triton>=3.8.0; sys_platform == 'linux'",
+  "pyyaml>=6.0.3",
 ]
 
 [build-system]

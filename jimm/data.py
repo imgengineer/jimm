@@ -699,6 +699,7 @@ def create_loader(
     in_memory=False,
     drop_remainder=None,
     pad_remainder=False,
+    no_aug=False,
 ):
     """Create a Grain loader with timm-compatible augmentation options.
 
@@ -708,6 +709,8 @@ def create_loader(
       pad_remainder: Pad the source across batches and shards, adding a boolean
         ``valid`` field so distributed evaluation can retain every record while
         using equal, full batches on every host.
+      no_aug: Use evaluation transforms while keeping the training sampler,
+        shuffling, and infinite epoch stream.
     """
     _ensure_absl_flags_parsed()
     for name, value in (("batch_size", batch_size), ("img_size", img_size)):
@@ -722,6 +725,8 @@ def create_loader(
         raise ValueError("drop_remainder must be a boolean or None")
     if not isinstance(pad_remainder, bool):
         raise ValueError("pad_remainder must be a boolean")
+    if not isinstance(no_aug, bool):
+        raise ValueError("no_aug must be a boolean")
     drop = is_training if drop_remainder is None else drop_remainder
     shuffle = is_training if shuffle is None else shuffle
     if shard_options is None:
@@ -734,7 +739,7 @@ def create_loader(
         root,
         in_memory=in_memory,
         img_size=img_size,
-        is_training=is_training,
+        is_training=is_training and not no_aug,
         crop_pct=crop_pct,
         scale=scale,
         ratio=ratio,
@@ -776,13 +781,42 @@ def create_loader(
     offset_sampler = _OffsetSampler(sampler) if is_training else None
     loader_sampler = offset_sampler if offset_sampler is not None else sampler
     batch_drop = drop or pad_remainder
+    operations = [transform, grain.Batch(batch_size, drop_remainder=batch_drop)]
+    loader_shards = shard_options
+    if (
+        not is_training
+        and num_workers > 1
+        and local_records > 0
+        and (not batch_drop or local_records >= batch_size)
+    ):
+        # Batch the random-access source so workers receive complete batches,
+        # rather than batching each worker's strided subset of samples.
+        dataset = grain.MapDataset.source(source)
+        start = (records // shard_count) * shard_options.shard_index
+        if not shard_options.drop_remainder:
+            start += min(shard_options.shard_index, record_remainder)
+        dataset = dataset.slice(slice(start, start + local_records))
+        if shuffle:
+            dataset = dataset.shuffle(seed=seed)
+        source = dataset.random_map(transform, seed=seed).batch(
+            batch_size, drop_remainder=batch_drop
+        )
+        loader_shards = grain.NoSharding()  # Host sharding was applied before batching.
+        loader_sampler = grain.IndexSampler(
+            num_records=len(source),
+            shard_options=loader_shards,
+            num_epochs=1,
+            shuffle=False,
+            seed=seed,
+        )
+        operations = []
     loader = grain.DataLoader(
         data_source=source,
         sampler=loader_sampler,
-        operations=[transform, grain.Batch(batch_size, drop_remainder=batch_drop)],
+        operations=operations,
         worker_count=num_workers,
         worker_buffer_size=worker_buffer_size,
-        shard_options=shard_options,
+        shard_options=loader_shards,
         enable_profiling=enable_profiling,
     )
     return Loader(

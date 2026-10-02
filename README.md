@@ -220,7 +220,7 @@ Training loaders repeat across epochs and drop incomplete batches by default. Ev
 
 ### Training and validation
 
-The training entry point evaluates the `val/` split after each epoch and saves model and optimizer checkpoints under `<output>/<model>`:
+The CLI follows the argument groups and common option names in [timm's `train.py`](https://github.com/huggingface/pytorch-image-models/blob/main/train.py). It uses JAX/Flax NNX training, Grain data loading, AdamW, and a cosine learning-rate schedule. The default `train/` and `val/` ImageFolder splits can be changed with `--train-split` and `--val-split`.
 
 ```bash
 uv run python -m jimm.train \
@@ -229,17 +229,65 @@ uv run python -m jimm.train \
     --num-classes 1000 \
     --img-size 224 \
     --epochs 90 \
-    --batch-size 128 \
+    -b 128 -j 4 \
+    --opt adamw --sched cosine \
     --lr 5e-4 \
-    --auto-augment rand-m9-n2 \
-    --mixup-alpha 0.8 \
-    --cutmix-alpha 1.0 \
+    --aa rand-m9-n2 \
+    --mixup 0.8 --cutmix 1.0 \
+    --experiment convnext_demo \
     --output ./output
 ```
 
-Set `--num-classes` to your dataset's class count. The CLI defaults to 224×224 inputs and ImageNet normalization; model-specific preprocessing settings must be supplied when constructing a custom input pipeline. Use `uv run python -m jimm.train --help` for all options.
+Set `--num-classes` to your dataset's class count. The dataset root also works as a positional argument. Inputs default to 224×224 with ImageNet normalization; `--input-size 3 H H`, `--img-size`, `--mean`, `--std`, `--crop-pct`, and the training/validation interpolation options configure preprocessing. Inputs must be square RGB images and match the selected architecture's supported resolution. Use `uv run python -m jimm.train --help` for all options.
 
-The default compute mode uses bfloat16; `--no-amp` selects float32. `--clip-grad`, `--drop-path`, `--smoothing`, and `--mixup-mode` control regularization. Append `--resume` to the same command to restore the latest checkpoint, keeping the data, batch, sharding, and steps-per-epoch settings consistent. `--max-to-keep N` limits checkpoint retention.
+Each host defaults to **4 Grain workers** and **bfloat16** compute with autotuned Tokamax attention. `--no-amp` selects float32. `--validation-batch-size` sets the validation batch size independently; it otherwise follows `--batch-size`.
+
+| timm-style option | Long-form / legacy equivalent |
+| --- | --- |
+| `-b`, `-vb`, `-j` | `--batch-size`, `--validation-batch-size`, `--workers` |
+| `--aa` | `--auto-augment` |
+| `--mixup`, `--cutmix` | `--mixup-alpha`, `--cutmix-alpha` |
+| `--checkpoint-hist` | `--max-to-keep` |
+| `--gp` | `--global-pool` |
+
+`--opt-eps` and `--opt-betas` configure AdamW; `--warmup-epochs`, `--warmup-lr`, and `--min-lr` configure its schedule. By default, warmup takes 10% of training steps, capped at five epochs and 10,000 steps, and the minimum LR is 1% of `--lr`. A one-step run uses a constant LR. Set `--warmup-epochs 0` to disable warmup. `--clip-grad`, `--drop`, `--drop-path`, `--smoothing`, and the Mixup/CutMix options control regularization. `--no-aug` disables image augmentation while retaining the repeating training sampler. Pass additional constructor arguments as `--model-kwargs KEY=VALUE`, for example `--model-kwargs mlp_ratio=3.0` with ViT.
+
+Use `-c` / `--config` for YAML defaults, with explicit CLI arguments taking precedence. For example, save this as `train.yaml`:
+
+```yaml
+data_dir: /path/to/dataset
+model: convnext_tiny
+num_classes: 1000
+batch_size: 128
+workers: 4
+epochs: 90
+opt: adamw
+sched: cosine
+lr: 5e-4
+warmup_epochs: 5
+amp: true
+aa: rand-m9-n2
+mixup: 0.8
+cutmix: 1.0
+output: ./output
+experiment: convnext_demo
+```
+
+```bash
+uv run python -m jimm.train -c train.yaml -b 64 --lr 1e-3
+```
+
+Configuration keys accept argument names with underscores or hyphens, including the aliases above. Unknown keys and invalid values are rejected before model or data initialization. Each run saves the resolved configuration to `<output>/<experiment>/args.yaml`; an omitted `--experiment` uses the model name. Epoch checkpoints in the same directory contain both model and optimizer state.
+
+Append `--resume` to restore the latest checkpoint from the output directory, or supply an Orbax manager directory to `--resume PATH`. Keep model, data, batch, sharding, and steps-per-epoch settings consistent when resuming:
+
+```bash
+uv run python -m jimm.train -c ./output/convnext_demo/args.yaml --resume
+uv run python -m jimm.train -c ./output/convnext_demo/args.yaml \
+    --experiment continued --resume ./output/convnext_demo
+```
+
+`--checkpoint-hist N` limits checkpoint retention while preserving the best validation checkpoint. `--initial-checkpoint weights.npz` initializes model weights from a jimm NPZ file without restoring the optimizer or epoch.
 
 The CLI creates cached `nnx.jit_partial` train/eval functions after setting their modes, following the fixed-structure approach in the [Flax NNX performance guide](https://flax.readthedocs.io/en/latest/guides/performance.html). In custom loops, set `model.train()` or `model.eval()` before constructing the corresponding cached step, and recreate it after changing static configuration or calling `reset_classifier`. Parameters, optimizer state, batch statistics, and RNG values continue to update on each call.
 
@@ -300,11 +348,13 @@ Use `uv run pytest tests/` for the full suite, including representative forward/
 
 The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
 
-The attention/training update passed **195 core regression tests** (four GPU-only cases skipped on CPU) and **9 GPU attention checks**. Coverage includes automatic backend selection, the native autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, mixed-precision master weights, and checkpoint resume. Run the GPU attention tests with:
+The core regression suite passed **237 tests** (four GPU-only cases skipped on CPU), including timm-style arguments, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **9 GPU attention checks**, covering automatic backend selection, the native autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
 
 ```bash
 uv run pytest tests/test_attention.py -q
 ```
+
+The training CLI also completed CUDA 13 training, validation, and checkpoint saving on an RTX 5090 with `vit_tiny_patch16_224` at 224×224 (`mlp_ratio=2.0`), using the default four Grain workers, bfloat16, and autotuned Tokamax forward/backward kernels. Training and validation used separate batch sizes of four and eight.
 
 ### Attention performance
 

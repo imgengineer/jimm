@@ -30,6 +30,7 @@ Examples:
 """
 
 import argparse
+import ast
 import collections
 import functools
 import os
@@ -40,10 +41,11 @@ import jax  # pyright: ignore[reportMissingImports]
 import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
 import numpy as np
 import optax  # pyright: ignore[reportMissingImports]
+import yaml
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from .checkpoint import CheckpointManager
-from .data import MixupCutmix, create_loader
+from .data import IMAGENET_MEAN, IMAGENET_STD, MixupCutmix, create_loader
 from .loss import _cross_entropy_losses, cross_entropy
 from .models.nfnet import ScaledStdConv
 from .optim import create_optimizer, make_optimizer
@@ -435,124 +437,354 @@ def make_cached_eval_step(model, amp=False):
     )
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(prog="jimm.train")
-    p.add_argument("--model", default="resnet50", help="model architecture name")
-    p.add_argument(
-        "--data-dir", required=True, help="dataset root containing train/ and val/ directories"
+class _ParseModelKwargs(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        kwargs = dict(getattr(namespace, self.dest))
+        for item in values:
+            key, separator, value = item.partition("=")
+            if not separator or not key:
+                raise argparse.ArgumentError(self, "model kwargs must use KEY=VALUE")
+            try:
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                pass
+            kwargs[key] = value
+        setattr(namespace, self.dest, kwargs)
+
+
+def _parse_args(argv=None):
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("-c", "--config", default="", help="YAML configuration file")
+    config, remaining = config_parser.parse_known_args(argv)
+    p = argparse.ArgumentParser(
+        prog="jimm.train",
+        description="JAX image classification training with Flax NNX and Grain",
+        parents=[config_parser],
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--epochs", type=int, default=90)
-    p.add_argument(
-        "--batch-size",
+    p.add_argument("data", nargs="?", metavar="DIR", help="dataset root; --data-dir also works")
+
+    group = p.add_argument_group("Dataset parameters")
+    group.add_argument("--data-dir", help="ImageFolder dataset root")
+    group.add_argument("--train-split", default="train", help="training subdirectory")
+    group.add_argument("--val-split", default="val", help="validation subdirectory")
+
+    group = p.add_argument_group("Model and input parameters")
+    group.add_argument("--model", default="resnet50", help="model architecture name")
+    group.add_argument("--num-classes", type=int, default=1000)
+    group.add_argument("--img-size", type=int, default=224)
+    group.add_argument("--input-size", type=int, nargs=3, help="square RGB input: 3 H H")
+    group.add_argument("--crop-pct", type=float, default=0.875)
+    group.add_argument("--mean", type=float, nargs=3, default=IMAGENET_MEAN.tolist())
+    group.add_argument("--std", type=float, nargs=3, default=IMAGENET_STD.tolist())
+    group.add_argument(
+        "--interpolation",
+        default="bilinear",
+        choices=("nearest", "bilinear", "bicubic", "lanczos", "area"),
+    )
+    group.add_argument("-b", "--batch-size", type=int, default=128, help="batch size per host")
+    group.add_argument(
+        "-vb", "--validation-batch-size", type=int, help="validation batch size per host"
+    )
+    group.add_argument(
+        "--gp", "--global-pool", dest="global_pool", help="model global pooling override"
+    )
+    group.add_argument(
+        "--model-kwargs", nargs="*", default={}, action=_ParseModelKwargs, metavar="KEY=VALUE"
+    )
+    group.add_argument(
+        "--initial-checkpoint", default="", help="initial model weights in jimm NPZ format"
+    )
+    group.add_argument(
+        "--resume",
+        nargs="?",
+        const=True,
+        default=False,
+        help="Orbax manager directory; omit path to use the output directory",
+    )
+
+    group = p.add_argument_group("Optimizer parameters")
+    group.add_argument("--opt", default="adamw", choices=("adamw",))
+    group.add_argument("--opt-eps", type=float, default=1e-8)
+    group.add_argument("--opt-betas", type=float, nargs=2, default=(0.9, 0.999))
+    group.add_argument("--weight-decay", type=float, default=0.05)
+    group.add_argument(
+        "--clip-grad", type=float, default=1.0, help="global norm clipping; 0 disables"
+    )
+
+    group = p.add_argument_group("Learning rate schedule parameters")
+    group.add_argument("--sched", default="cosine", choices=("cosine",))
+    group.add_argument("--lr", type=float, default=5e-4)
+    group.add_argument("--epochs", type=int, default=90)
+    group.add_argument(
+        "--warmup-epochs", type=int, help="override automatic warmup capped at five epochs"
+    )
+    group.add_argument("--warmup-lr", type=float, default=0.0)
+    group.add_argument("--min-lr", type=float, help="minimum LR; default is 1%% of --lr")
+
+    group = p.add_argument_group("Augmentation and regularization parameters")
+    group.add_argument("--no-aug", action="store_true", help="disable training image augmentation")
+    group.add_argument("--train-crop-mode", default="rrc", choices=("rrc", "rkrc", "rkrr"))
+    group.add_argument("--scale", type=float, nargs=2, default=(0.08, 1.0))
+    group.add_argument("--ratio", type=float, nargs=2, default=(3.0 / 4.0, 4.0 / 3.0))
+    group.add_argument("--hflip", type=float, default=0.5)
+    group.add_argument("--vflip", type=float, default=0.0)
+    group.add_argument("--color-jitter", type=float, default=0.4)
+    group.add_argument("--color-jitter-prob", type=float)
+    group.add_argument("--grayscale-prob", type=float, default=0.0)
+    group.add_argument("--gaussian-blur-prob", type=float, default=0.0)
+    group.add_argument(
+        "--aa", "--auto-augment", dest="auto_augment", help="timm AutoAugment policy"
+    )
+    group.add_argument("--reprob", type=float, default=0.2, help="random erasing probability")
+    group.add_argument("--remode", default="const", choices=("const", "rand", "pixel"))
+    group.add_argument("--recount", type=int, default=1)
+    group.add_argument("--mixup", "--mixup-alpha", dest="mixup_alpha", type=float, default=0.0)
+    group.add_argument("--cutmix", "--cutmix-alpha", dest="cutmix_alpha", type=float, default=0.0)
+    group.add_argument("--cutmix-minmax", type=float, nargs=2)
+    group.add_argument("--mixup-prob", type=float, default=1.0)
+    group.add_argument("--mixup-switch-prob", type=float, default=0.5)
+    group.add_argument("--mixup-mode", choices=("batch", "pair", "elem"), default="batch")
+    group.add_argument("--smoothing", type=float, default=0.1)
+    group.add_argument("--drop", type=float, default=0.0)
+    group.add_argument("--drop-path", type=float, default=0.0)
+    group.add_argument(
+        "--train-interpolation",
+        default="random",
+        choices=("random", "nearest", "bilinear", "bicubic", "lanczos", "area"),
+    )
+
+    group = p.add_argument_group("Miscellaneous parameters")
+    group.add_argument("--seed", type=int, default=0)
+    group.add_argument("-j", "--workers", type=int, default=4, help="Grain workers per host")
+    group.add_argument("--output", default="./output", help="output root directory")
+    group.add_argument(
+        "--experiment", default="", help="output subdirectory; defaults to model name"
+    )
+    group.add_argument(
+        "--checkpoint-hist",
+        "--max-to-keep",
+        dest="max_to_keep",
         type=int,
-        default=128,
-        help="process-local batch size (each host processes this batch size)",
+        help="checkpoint retention count",
     )
-    p.add_argument("--img-size", type=int, default=224)
-    p.add_argument("--num-classes", type=int, default=1000)
-    p.add_argument("--lr", type=float, default=5e-4)
-    p.add_argument("--weight-decay", type=float, default=0.05)
-    p.add_argument("--smoothing", type=float, default=0.1)
-    p.add_argument("--drop-path", type=float, default=0.0)
-    p.add_argument("--workers", type=int, default=4, help="data loader worker count per host")
-    p.add_argument(
+    group.add_argument("--log-interval", type=int, default=50)
+    group.add_argument("--steps-per-epoch", type=int, help="cap training steps per epoch")
+
+    group = p.add_argument_group("JAX device and distributed parameters")
+    group.add_argument(
         "--prefetch", type=int, default=2, help="batches to prefetch to device (double buffering)"
     )
-    p.add_argument(
-        "--clip-grad", type=float, default=1.0, help="global-norm gradient clipping (0 = disabled)"
-    )
-    p.add_argument(
-        "--steps-per-epoch",
-        type=int,
-        default=None,
-        help="cap train steps per epoch (default: full epoch)",
-    )
-    p.add_argument(
-        "--log-interval", type=int, default=50, help="steps interval for logging throughput metrics"
-    )
-    p.add_argument("--output", default="./output", help="output directory for checkpoints")
-    p.add_argument(
-        "--max-to-keep",
-        type=int,
-        default=None,
-        help="retain only the N most recent epoch checkpoints (default: keep all)",
-    )
-    p.add_argument(
-        "--resume",
-        action="store_true",
-        default=False,
-        help="resume training from the latest checkpoint under --output (starts fresh if none)",
-    )
-    p.add_argument(
+    group.add_argument(
         "--fsdp",
         action="store_true",
         default=False,
         help="enable FSDP (ZeRO-3 style parameter and optimizer state sharding)",
     )
-    p.add_argument(
+    group.add_argument(
         "--amp",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="enable AMP bfloat16 compute on Tensor Cores (default: true)",
+        help="enable AMP bfloat16 compute on Tensor Cores",
     )
-    p.add_argument(
-        "--auto-augment",
-        default=None,
-        help="timm policy: v0, original, rand-m9-n2, augmix-m3-w3-d-1, or trivialaugment",
-    )
-    p.add_argument("--vflip", type=float, default=0.0)
-    p.add_argument("--grayscale-prob", type=float, default=0.0)
-    p.add_argument("--gaussian-blur-prob", type=float, default=0.0)
-    p.add_argument("--mixup-alpha", type=float, default=0.0)
-    p.add_argument("--cutmix-alpha", type=float, default=0.0)
-    p.add_argument("--mixup-prob", type=float, default=1.0)
-    p.add_argument("--mixup-mode", choices=("batch", "pair", "elem"), default="batch")
-
-    # Profiler & Diagnostics
-    p.add_argument(
+    group.add_argument(
         "--profile-step", type=int, default=None, help="step index to trigger JAX profiler trace"
     )
-    p.add_argument(
+    group.add_argument(
         "--profile-dir", type=str, default=None, help="directory to store JAX profile traces"
     )
 
-    # Multi-node / distributed options
-    p.add_argument(
+    group.add_argument(
         "--dist-coordinator-address",
         type=str,
         default=None,
         help="IP:port of master coordinator for multi-node training (e.g. 192.168.1.1:12345)",
     )
-    p.add_argument(
+    group.add_argument(
         "--dist-num-processes", type=int, default=None, help="total number of nodes/hosts"
     )
-    p.add_argument(
+    group.add_argument(
         "--dist-process-id",
         type=int,
         default=None,
         help="rank/id of current node (0..num_processes-1)",
     )
-    args = p.parse_args(argv)
+    if config.config:
+        try:
+            with open(config.config) as file:
+                defaults = yaml.safe_load(file)
+        except (OSError, yaml.YAMLError) as error:
+            p.error(f"unable to load config: {error}")
+        if defaults is None:
+            defaults = {}
+        if not isinstance(defaults, dict):
+            p.error("config must contain a mapping of argument names to values")
+        actions = {action.dest: action for action in p._actions}
+        actions.update(
+            {
+                option.lstrip("-").replace("-", "_"): action
+                for action in p._actions
+                for option in action.option_strings
+                if not (
+                    isinstance(action, argparse.BooleanOptionalAction)
+                    and option.startswith("--no-")
+                )
+            }
+        )
+        converted = {}
+        for key, value in defaults.items():
+            action = actions.get(key.replace("-", "_")) if isinstance(key, str) else None
+            if action is None or action.dest in ("help", "config"):
+                p.error(f"unknown config argument: {key}")
+            if action.dest in converted:
+                p.error(f"duplicate config argument: {key}")
+            try:
+                if value is None and action.default is not None:
+                    raise ValueError("must not be null")
+                if action.dest == "model_kwargs":
+                    if not isinstance(value, dict) or not all(
+                        isinstance(name, str) for name in value
+                    ):
+                        raise ValueError("must be a mapping")
+                elif isinstance(
+                    action, (argparse.BooleanOptionalAction, argparse._StoreTrueAction)
+                ):
+                    if not isinstance(value, bool):
+                        raise ValueError("must be a boolean")
+                elif action.dest == "resume":
+                    if not isinstance(value, (bool, str)):
+                        raise ValueError("must be a boolean or checkpoint directory")
+                elif value is not None:
+                    multiple = isinstance(action.nargs, int) or action.nargs in ("+", "*")
+                    values = value if multiple else [value]
+                    if not isinstance(values, (list, tuple)) or (
+                        isinstance(action.nargs, int) and len(values) != action.nargs
+                    ):
+                        raise ValueError(f"must contain {action.nargs} values")
+                    if action.type is not None:
+                        if any(
+                            isinstance(item, bool)
+                            or (
+                                action.type is int
+                                and isinstance(item, float)
+                                and not item.is_integer()
+                            )
+                            for item in values
+                        ):
+                            raise ValueError("has an invalid numeric value")
+                        values = [action.type(item) for item in values]
+                    elif any(not isinstance(item, str) for item in values):
+                        raise ValueError("must be a string")
+                    if action.choices is not None and any(
+                        item not in action.choices for item in values
+                    ):
+                        raise ValueError(f"must be one of {action.choices}")
+                    value = values if multiple else values[0]
+            except (TypeError, ValueError, OverflowError) as error:
+                p.error(f"invalid config argument {key}: {error}")
+            converted[action.dest] = value
+        p.set_defaults(**converted)
+    p.set_defaults(config=config.config)
+    args = p.parse_args(remaining)
+    args.data_dir = args.data_dir or args.data
+    if not args.data_dir:
+        p.error("a dataset root is required: --data-dir DIR or positional DIR")
+    if isinstance(args.resume, str) and args.resume and not os.path.isdir(args.resume):
+        p.error(f"resume directory does not exist: {args.resume}")
+    if args.input_size is not None:
+        channels, height, width = args.input_size
+        if channels != 3 or height != width or height <= 0:
+            p.error("--input-size must specify square RGB input: 3 H H")
+        args.img_size = height
+    if args.validation_batch_size is None:
+        args.validation_batch_size = args.batch_size
 
-    for name in ("epochs", "batch_size", "img_size", "num_classes", "prefetch", "log_interval"):
+    for name in (
+        "epochs",
+        "batch_size",
+        "validation_batch_size",
+        "img_size",
+        "num_classes",
+        "prefetch",
+        "log_interval",
+        "recount",
+    ):
         if getattr(args, name) <= 0:
             p.error(f"--{name.replace('_', '-')} must be positive")
     if args.workers < 0:
         p.error("--workers must be non-negative")
+    if args.seed < 0:
+        p.error("--seed must be non-negative")
     if args.steps_per_epoch is not None and args.steps_per_epoch <= 0:
         p.error("--steps-per-epoch must be positive")
     if args.max_to_keep is not None and args.max_to_keep <= 0:
         p.error("--max-to-keep must be positive")
-    for name in ("lr", "weight_decay", "clip_grad", "mixup_alpha", "cutmix_alpha"):
+    for name in (
+        "lr",
+        "weight_decay",
+        "clip_grad",
+        "mixup_alpha",
+        "cutmix_alpha",
+        "color_jitter",
+        "warmup_lr",
+    ):
         value = getattr(args, name)
         if not np.isfinite(value) or value < 0:
             p.error(f"--{name.replace('_', '-')} must be finite and non-negative")
-    for name in ("smoothing", "vflip", "grayscale_prob", "gaussian_blur_prob", "mixup_prob"):
+    for name in (
+        "smoothing",
+        "hflip",
+        "vflip",
+        "grayscale_prob",
+        "gaussian_blur_prob",
+        "mixup_prob",
+        "mixup_switch_prob",
+        "reprob",
+        "drop",
+    ):
         value = getattr(args, name)
         if not np.isfinite(value) or not 0 <= value <= 1:
             p.error(f"--{name.replace('_', '-')} must be between 0 and 1")
     if not np.isfinite(args.drop_path) or not 0 <= args.drop_path < 1:
         p.error("--drop-path must be between 0 (inclusive) and 1 (exclusive)")
+    if args.color_jitter_prob is not None and (
+        not np.isfinite(args.color_jitter_prob) or not 0 <= args.color_jitter_prob <= 1
+    ):
+        p.error("--color-jitter-prob must be between 0 and 1")
+    if not np.isfinite(args.crop_pct) or not 0 < args.crop_pct <= 1:
+        p.error("--crop-pct must be between 0 (exclusive) and 1 (inclusive)")
+    for name in ("scale", "ratio"):
+        low, high = getattr(args, name)
+        if not np.all(np.isfinite((low, high))) or not 0 < low <= high:
+            p.error(f"--{name} must contain two ordered positive values")
+    if args.cutmix_minmax is not None:
+        low, high = args.cutmix_minmax
+        if not np.all(np.isfinite((low, high))) or not 0 <= low <= high <= 1:
+            p.error("--cutmix-minmax must satisfy 0 <= min <= max <= 1")
+    if (
+        not np.all(np.isfinite(args.mean))
+        or not np.all(np.isfinite(args.std))
+        or np.any(np.asarray(args.std) <= 0)
+    ):
+        p.error("--mean and --std must be finite; std must be positive")
+    if (
+        not np.isfinite(args.opt_eps)
+        or args.opt_eps <= 0
+        or not np.all(np.isfinite(args.opt_betas))
+        or not all(0 <= value < 1 for value in args.opt_betas)
+    ):
+        p.error("--opt-eps must be positive and --opt-betas must be between 0 and 1 (exclusive)")
+    if args.warmup_epochs is not None and args.warmup_epochs < 0:
+        p.error("--warmup-epochs must be non-negative")
+    if args.min_lr is not None and (
+        not np.isfinite(args.min_lr) or not 0 <= args.min_lr <= args.lr
+    ):
+        p.error("--min-lr must be finite and satisfy 0 <= min-lr <= lr")
+    reserved = {"rngs", "num_classes", "drop_path_rate", "drop_rate", "global_pool"}.intersection(
+        args.model_kwargs
+    )
+    if reserved:
+        p.error(f"use dedicated CLI options for these model kwargs: {sorted(reserved)}")
     if (args.profile_step is None) != (args.profile_dir is None):
         p.error("--profile-step and --profile-dir must be used together")
     if args.profile_step is not None and args.profile_step < 0:
@@ -566,6 +798,11 @@ def main(argv=None):
         args.dist_num_processes <= 0 or not 0 <= args.dist_process_id < args.dist_num_processes
     ):
         p.error("distributed process count/id must satisfy 0 <= id < count")
+    return args
+
+
+def main(argv=None):
+    args = _parse_args(argv)
 
     # 1. Initialize distributed cluster if needed
     init_distributed(args.dist_coordinator_address, args.dist_num_processes, args.dist_process_id)
@@ -593,12 +830,14 @@ def main(argv=None):
         print("=========================================================================")
 
     mixup = None
-    if args.mixup_alpha > 0 or args.cutmix_alpha > 0:
+    if args.mixup_alpha > 0 or args.cutmix_alpha > 0 or args.cutmix_minmax is not None:
         mixup = MixupCutmix(
             mixup_alpha=args.mixup_alpha,
-            cutmix_alpha=args.cutmix_alpha,
+            cutmix_alpha=1.0 if args.cutmix_minmax is not None else args.cutmix_alpha,
             prob=args.mixup_prob,
+            switch_prob=args.mixup_switch_prob,
             mode=args.mixup_mode,
+            cutmix_minmax=args.cutmix_minmax,
             label_smoothing=args.smoothing,
             num_classes=args.num_classes,
         )
@@ -621,8 +860,18 @@ def main(argv=None):
     )
 
     # 3. Instantiate model and data pipeline
+    model_kwargs = dict(args.model_kwargs)
+    if args.drop:
+        model_kwargs["drop_rate"] = args.drop
+    if args.global_pool is not None:
+        model_kwargs["global_pool"] = args.global_pool
     model = create_model(
-        args.model, num_classes=args.num_classes, drop_path_rate=args.drop_path, rngs=nnx.Rngs(0)
+        args.model,
+        pretrained=args.initial_checkpoint or False,
+        num_classes=args.num_classes,
+        drop_path_rate=args.drop_path,
+        rngs=nnx.Rngs(args.seed),
+        **model_kwargs,
     )
     model.train()
 
@@ -634,90 +883,144 @@ def main(argv=None):
         )
 
     train_loader = create_loader(
-        f"{args.data_dir}/train",
+        os.path.join(args.data_dir, args.train_split),
         args.batch_size,
         img_size=args.img_size,
         is_training=True,
         auto_augment=args.auto_augment,
+        no_aug=args.no_aug,
+        train_crop_mode=args.train_crop_mode,
+        scale=args.scale,
+        ratio=args.ratio,
+        interpolation=args.train_interpolation,
+        crop_pct=args.crop_pct,
+        mean=args.mean,
+        std=args.std,
+        hflip=args.hflip,
         vflip=args.vflip,
+        color_jitter=args.color_jitter,
+        color_jitter_prob=args.color_jitter_prob,
         grayscale_prob=args.grayscale_prob,
         gaussian_blur_prob=args.gaussian_blur_prob,
+        re_prob=args.reprob,
+        re_mode=args.remode,
+        re_count=args.recount,
         num_workers=args.workers,
-        seed=rank,
+        seed=args.seed + rank,
     )
     steps_per_epoch = (
         args.steps_per_epoch if args.steps_per_epoch is not None else max(1, len(train_loader))
     )
 
     val_loader = None
-    if os.path.isdir(f"{args.data_dir}/val"):
+    if os.path.isdir(os.path.join(args.data_dir, args.val_split)):
+        if args.validation_batch_size % len(local_devices) != 0:
+            raise ValueError("validation_batch_size must be divisible by local device count")
         val_loader = create_loader(
-            f"{args.data_dir}/val",
-            args.batch_size,
+            os.path.join(args.data_dir, args.val_split),
+            args.validation_batch_size,
             img_size=args.img_size,
             is_training=False,
+            interpolation=args.interpolation,
+            crop_pct=args.crop_pct,
+            mean=args.mean,
+            std=args.std,
             num_workers=args.workers,
             pad_remainder=True,
         )
 
     optimizer = make_optimizer(
-        model, args.lr, args.weight_decay, args.epochs, steps_per_epoch, clip_grad=args.clip_grad
+        model,
+        args.lr,
+        args.weight_decay,
+        args.epochs,
+        steps_per_epoch,
+        clip_grad=args.clip_grad,
+        eps=args.opt_eps,
+        betas=args.opt_betas,
+        warmup_epochs=args.warmup_epochs,
+        warmup_lr=args.warmup_lr,
+        min_lr=args.min_lr,
     )
 
     # Step-numbered checkpoint manager with retention; when validation runs,
     # additionally retain the epoch with the best val accuracy.
+    output_dir = os.path.join(args.output, args.experiment or args.model)
     ckpt_manager = CheckpointManager(
-        f"{args.output}/{args.model}",
+        output_dir,
         max_to_keep=args.max_to_keep,
         best_fn=(lambda m: m["val_acc"]) if val_loader is not None else None,
         best_mode="max",
-    )
-
-    start_epoch = 0
-    if args.resume:
-        step, epoch = ckpt_manager.restore_latest(model, optimizer)
-        if step is not None and isinstance(epoch, int):
-            start_epoch = epoch + 1
-            if rank == 0:
-                print(
-                    f"  [Resume] Restored checkpoint at epoch {epoch}; "
-                    f"resuming at epoch {start_epoch}"
-                )
-        elif rank == 0:
-            print("  [Resume] No checkpoint found; starting fresh")
-
-    global_step = start_epoch * steps_per_epoch
-    train_loader.set_start_step(global_step)
-    train_loader.start_prefetch()
-
-    # Apply FSDP sharding if enabled (after any resume so restored arrays get
-    # sharded too)
-    if args.fsdp:
-        fsdp_shard_model(model, mesh)
-        fsdp_shard_model(optimizer, mesh)
-
-    # Construct cached train & eval steps
-    model.train()
-    cached_train_step = make_cached_train_step(model, optimizer, amp=args.amp, mixup=mixup)
-    train_rng = jax.random.fold_in(jax.random.PRNGKey(0), rank) if mixup is not None else None
-    model.eval()
-    cached_eval_step = (
-        make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
-    )
-    model.train()
-
-    # Async Host-to-Device prefetch pipeline (MaxText pattern)
-    device_data_stream = prefetch_to_device(
-        iter(train_loader),
-        data_sharding,
-        train_label_sharding,
-        prefetch_size=args.prefetch,
     )
 
     compiled_first_step = False
     profile_active = False
 
     try:
+        start_epoch = 0
+        if args.resume:
+            if (
+                isinstance(args.resume, str)
+                and os.path.abspath(args.resume) != ckpt_manager.directory
+            ):
+                with CheckpointManager(args.resume) as source:
+                    step, epoch = source.restore_latest(model, optimizer)
+                if step is None:
+                    raise ValueError(f"no checkpoints found in resume directory: {args.resume}")
+            else:
+                step, epoch = ckpt_manager.restore_latest(model, optimizer)
+            if step is not None and isinstance(epoch, int):
+                start_epoch = epoch + 1
+                if rank == 0:
+                    print(
+                        f"  [Resume] Restored checkpoint at epoch {epoch}; "
+                        f"resuming at epoch {start_epoch}"
+                    )
+            elif rank == 0:
+                print("  [Resume] No checkpoint found; starting fresh")
+
+        if rank == 0:
+            with open(os.path.join(output_dir, "args.yaml"), "w") as file:
+                yaml.safe_dump(
+                    {
+                        key: value
+                        for key, value in vars(args).items()
+                        if key not in ("config", "data")
+                    },
+                    file,
+                    sort_keys=True,
+                )
+
+        global_step = start_epoch * steps_per_epoch
+        train_loader.set_start_step(global_step)
+        train_loader.start_prefetch()
+
+        # Apply FSDP sharding if enabled (after any resume so restored arrays get
+        # sharded too)
+        if args.fsdp:
+            fsdp_shard_model(model, mesh)
+            fsdp_shard_model(optimizer, mesh)
+
+        # Construct cached train & eval steps
+        model.train()
+        cached_train_step = make_cached_train_step(model, optimizer, amp=args.amp, mixup=mixup)
+        train_rng = (
+            jax.random.fold_in(jax.random.PRNGKey(args.seed), rank) if mixup is not None else None
+        )
+        model.eval()
+        cached_eval_step = (
+            make_cached_eval_step(model, amp=args.amp) if val_loader is not None else None
+        )
+        model.train()
+
+        # Async Host-to-Device prefetch pipeline (MaxText pattern)
+        device_data_stream = prefetch_to_device(
+            iter(train_loader),
+            data_sharding,
+            train_label_sharding,
+            prefetch_size=args.prefetch,
+        )
+
         for epoch in range(start_epoch, args.epochs):
             t_epoch_start = time.perf_counter()
             losses, accuracies = [], []

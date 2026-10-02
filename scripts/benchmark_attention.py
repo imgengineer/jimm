@@ -1,6 +1,6 @@
 """Compare shared attention with Flax using Tokamax's device timing utilities.
 
-Example: uv run python scripts/benchmark_attention.py --seq-len 2304
+Example: uv run python scripts/benchmark_attention.py --seq-len 2304 --autotune
 """
 
 import argparse
@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import tokamax
 from flax import nnx
 
-from jimm.attention import dot_product_attention
+from jimm.attention import dot_product_attention, set_attention_autotuning
 
 
 def main():
@@ -27,7 +27,11 @@ def main():
     parser.add_argument("--bias", action="store_true")
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--autotune", action="store_true", help="autotune Tokamax kernels instead of heuristics"
+    )
     args = parser.parse_args()
+    set_attention_autotuning(args.autotune)
     if min(args.batch_size, args.seq_len, args.heads, args.head_dim, args.iterations) <= 0:
         parser.error("shape dimensions and iterations must be positive")
     dtype = getattr(jnp, args.dtype)
@@ -45,6 +49,7 @@ def main():
         "shape": shape,
         "dtype": args.dtype,
         "bias": args.bias,
+        "autotune": args.autotune,
         "results": [],
     }
     reference = jax.jit(nnx.dot_product_attention)(*inputs)

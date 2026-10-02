@@ -55,18 +55,19 @@ def test_gpu_bf16_uses_tokamax_auto_backend(monkeypatch):
     assert calls == [None]
 
 
-def test_tokamax_defaults_to_autotuning_forward_and_backward_kernels():
+def test_tokamax_uses_heuristics_unless_autotuning_is_requested():
     import tokamax
-    from absl import flags
     from absl.testing import flagsaver
 
     attention._get_tokamax_attention.cache_clear()
     try:
         with flagsaver.flagsaver():
             assert attention._get_tokamax_attention() is tokamax.dot_product_attention
-            option = "tokamax_autotuning_cache_miss_fallback"
-            assert flags.FLAGS[option].default == "autotune"
+            assert tokamax.config.autotuning_cache_miss_fallback.value == "heuristics"
+            attention.set_attention_autotuning(True)
             assert tokamax.config.autotuning_cache_miss_fallback.value == "autotune"
+            attention.set_attention_autotuning(False)
+            assert tokamax.config.autotuning_cache_miss_fallback.value == "heuristics"
     finally:
         attention._get_tokamax_attention.cache_clear()
 

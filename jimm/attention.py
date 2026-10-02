@@ -1,8 +1,10 @@
-"""Shared attention dispatch with autotuned Tokamax FlashAttention.
+"""Shared attention dispatch with Tokamax FlashAttention.
 
 CPU and FP32/FP16 retain Flax's attention implementation. GPU BF16 uses Tokamax's
-automatic backend selection and measured kernel configurations, with an XLA
-fallback for unsupported shapes.
+automatic backend selection with heuristic kernel configurations, and an XLA
+fallback for unsupported shapes. ``set_attention_autotuning(True)`` instead
+benchmarks candidate kernels for every new shape: about 1-2% faster steps, but
+minutes of extra compilation for models with many attention shapes.
 """
 
 from functools import cache
@@ -16,12 +18,21 @@ from flax import nnx
 def _get_tokamax_attention():
     # Import only after device/distributed initialization, when a GPU call needs it.
     import tokamax
+
+    return tokamax.dot_product_attention
+
+
+def set_attention_autotuning(enabled: bool) -> None:
+    """Autotune Tokamax kernels for new attention shapes, or use heuristic configurations.
+
+    The policy applies to forward and backward kernels compiled afterwards in this
+    process; explicit Tokamax flag or context overrides still take precedence.
+    """
+    import tokamax  # noqa: F401  (defines the Tokamax flags)
     from absl import flags
 
-    # Set the native policy globally so backward kernels also autotune after the
-    # forward call returns. Explicit Tokamax flag/context overrides still apply.
-    flags.FLAGS.set_default("tokamax_autotuning_cache_miss_fallback", "autotune")
-    return tokamax.dot_product_attention
+    policy = "autotune" if enabled else "heuristics"
+    flags.FLAGS.set_default("tokamax_autotuning_cache_miss_fallback", policy)
 
 
 def _attention_with_value_width(query, key, value, bias=None):

@@ -45,6 +45,7 @@ import optax  # pyright: ignore[reportMissingImports]
 import yaml
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
+from .attention import set_attention_autotuning
 from .checkpoint import CheckpointManager
 from .data import IMAGENET_MEAN, IMAGENET_STD, MixupCutmix, create_loader
 from .loss import _cross_entropy_losses, cross_entropy
@@ -686,6 +687,11 @@ def _parse_args(argv=None):
         help="enable AMP bfloat16 compute on Tensor Cores",
     )
     group.add_argument(
+        "--attn-autotune",
+        action="store_true",
+        help="autotune bfloat16 Tokamax attention kernels for new shapes (slower first compile)",
+    )
+    group.add_argument(
         "--profile-step", type=int, default=None, help="step index to trigger JAX profiler trace"
     )
     group.add_argument(
@@ -904,6 +910,8 @@ def main(argv=None):
 
     # 1. Initialize distributed cluster if needed
     init_distributed(args.dist_coordinator_address, args.dist_num_processes, args.dist_process_id)
+    if args.attn_autotune:
+        set_attention_autotuning(True)
 
     rank = jax.process_index()
     world_size = jax.process_count()

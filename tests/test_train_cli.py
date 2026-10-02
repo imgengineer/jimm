@@ -20,6 +20,7 @@ def test_cli_aliases_and_defaults():
     assert args.workers == 4 and args.amp is True
     assert args.validation_batch_size == args.batch_size == 128
     assert args.opt == "adamw" and args.sched == "cosine"
+    assert args.attn_autotune is False and _parse_args(["dataset", "--attn-autotune"]).attn_autotune
 
     args = _parse_args(
         [

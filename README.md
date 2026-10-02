@@ -14,6 +14,8 @@
 
 ### October 2, 2026
 
+- Port LeViT, MaxViT, CoAtNet, EfficientViT (MIT), and Visformer from timm. LeViT no longer diverges to NaN in bfloat16, MaxViT-T no longer runs out of memory at batch size 64, EfficientViT starts from a normal loss instead of ~146, and Visformer trains **26× faster** than the previous approximation. Every ported variant reproduces timm outputs with identical weights; **143 registered names now match timm 1.0.29 parameter counts**.
+- Use Tokamax's heuristic kernel configurations for GPU bfloat16 attention by default. Per-shape autotuning compiled MaxViT-T in 450 s instead of 35 s for 1.9% higher throughput; `--attn-autotune` or `jimm.attention.set_attention_autotuning(True)` enables it.
 - Port HRNet from timm and align SE-ResNet/SE-ResNeXt, MobileNetV3, MNASNet, SPNASNet, MLP-Mixer, ResMLP, ConvMixer, GhostNet, PVTv2, and VGG-BN with their timm architectures. **129 registered names now reproduce timm 1.0.29 parameter counts** (up from 92), checked by [tests/test_timm_parity.py](tests/test_timm_parity.py). HRNet previously shared fusion layers across modules and diverged to NaN within a few bfloat16 steps; the port trains stably and matches timm outputs with identical weights.
 - Use PyTorch-equivalent BatchNorm momentum (Flax `momentum=0.9`). Flax's default of 0.99 left evaluation statistics behind the trained weights: in a ResNet-50 run with 100 steps per epoch, first-epoch validation accuracy rose from 0.38 to 0.79, with unchanged training loss.
 - Fix the training CLI for 130 architectures without stochastic depth, which failed on the unconditional `drop_path_rate` argument; like timm, the CLI passes regularization and pooling overrides only when requested. `get_default_cfg` now returns every model's configuration, such as 300×300 for `efficientnet_b3`, without allocating weights.
@@ -22,7 +24,7 @@
 - Add **37 model variants** from five families following [timm 1.0.30](https://github.com/huggingface/pytorch-image-models/releases/tag/v1.0.30): LowFormer, iFormer, EfficientViM, Qwen3 ViT, and DeepSeek ViT. The registry now contains **420 models across 99 families**.
 - Support Qwen3 spatial-merger and DeepSeek aligner classifiers, native VLM encoders, and distilled iFormer/EfficientViM heads.
 - Update dependencies to the latest stable releases checked on this date, including **JAX 0.11.2 with CUDA 13** and **Flax 0.12.10**. The resolved environment is recorded in [uv.lock](uv.lock).
-- Use **Tokamax 0.0.14** fused attention by default for GPU bfloat16 execution, with automatic kernel tuning, and use `nnx.jit_partial` for cached training/evaluation steps. Fix LowFormer transposed convolutions for mixed-precision training. See [attention performance](#attention-performance) for measurements.
+- Use **Tokamax 0.0.14** fused attention by default for GPU bfloat16 execution, with optional kernel autotuning, and use `nnx.jit_partial` for cached training/evaluation steps. Fix LowFormer transposed convolutions for mixed-precision training. See [attention performance](#attention-performance) for measurements.
 - Improve ImageFolder scanning and color jitter, and fix Mixup and throughput reporting.
 
 ## Introduction
@@ -59,7 +61,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
 
-Parameter counts match timm 1.0.29 for **129 of the 340** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, ConvNeXt, EfficientNet, ViT/DeiT, Swin, DenseNet, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, and VGG families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
+Parameter counts match timm 1.0.29 for **143 of the 340** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, ConvNeXt, EfficientNet, ViT/DeiT, Swin, DenseNet, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, VGG, LeViT, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -84,7 +86,7 @@ Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/pat
 - **Model APIs:** `create_model`, filtered `list_models`, `list_modules`, and `get_default_cfg`; classification models expose `forward_features`, `forward_head`, and `reset_classifier`.
 - **Feature extraction:** unpooled feature maps or tokens, pooled embeddings with `num_classes=0`, and `features_only=True` for supported intermediate stages.
 - **NNX transformations:** models work with `nnx.jit` and `nnx.grad`; pass the model as an explicit argument to transformed functions. Use `model.train()` and `model.eval()` to control dropout and batch normalization.
-- **Attention:** Tokamax fused kernels for GPU bfloat16 self/cross-attention, including relative-position bias. New GPU/kernel shapes automatically tune and reuse the fastest measured configuration in the process. CPU, float32, and float16 use Flax attention; active attention dropout retains its existing implementation.
+- **Attention:** Tokamax fused kernels for GPU bfloat16 self/cross-attention, including relative-position bias, with heuristic kernel configurations or optional per-shape autotuning. Value heads may differ in width from query/key heads. CPU, float32, and float16 use Flax attention; active attention dropout retains its existing implementation.
 - **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix. Photometric and AutoAugment operations reproduce timm's PIL semantics with OpenCV lookup tables, blends, and affine warps; the training CLI normalizes uint8 batches and applies random erasing, Mixup, and CutMix on device.
 - **Training:** AdamW with cosine scheduling and warmup, label smoothing, gradient clipping, optional bfloat16 computation, and JAX SPMD data parallelism or FSDP.
 - **Checkpointing:** asynchronous Orbax model/optimizer checkpoints, retention settings, and epoch resume with restored data position.
@@ -108,7 +110,7 @@ uv run python -c "import jax; print(jax.__version__, jax.devices())"
 
 `uv sync` installs the project in editable mode and includes development tools. To force CPU execution with this environment, prefix commands with `JAX_PLATFORMS=cpu`.
 
-Tokamax and Triton are installed by default. GPU bfloat16 attention uses [Tokamax's automatic backend selection](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py) and its native `autotune` cache-miss policy for both forward and backward kernels. First compilation for a new device/shape takes longer while candidate configurations are benchmarked; later calls in the same process reuse the fastest measured configuration. Unsupported shapes fall back to XLA. CPU, float32, and float16 keep Flax attention. No extra installation flags or model configuration changes are required.
+Tokamax and Triton are installed by default. GPU bfloat16 attention uses [Tokamax's automatic backend selection](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py) with heuristic kernel configurations. Pass `--attn-autotune` to the training CLI, or call `jimm.attention.set_attention_autotuning(True)`, to benchmark candidate forward and backward kernels for each new shape instead; later calls in the same process reuse the fastest configuration. Autotuning adds compilation time for every new shape and process (450 s instead of 35 s for MaxViT-T on an RTX 5090) for about 1–2% faster steps. Unsupported shapes fall back to XLA. CPU, float32, and float16 keep Flax attention. No extra installation flags or model configuration changes are required.
 
 ### Classification and embeddings
 
@@ -249,7 +251,7 @@ uv run python -m jimm.train \
 
 Set `--num-classes` to your dataset's class count. The dataset root also works as a positional argument. Inputs default to 224×224 with ImageNet normalization; `--input-size 3 H H`, `--img-size`, `--mean`, `--std`, `--crop-pct`, and the training/validation interpolation options configure preprocessing. Inputs must be square RGB images and match the selected architecture's supported resolution. Use `uv run python -m jimm.train --help` for all options.
 
-Each host defaults to **4 Grain workers** and **bfloat16** compute with autotuned Tokamax attention. Workers send uint8 images; normalization and `--reprob` random erasing run on device. Evaluation resizes the shorter edge to `floor(img_size / crop_pct)` and center crops, as in timm. `--no-amp` selects float32. `--validation-batch-size` sets the validation batch size independently; it otherwise follows `--batch-size`.
+Each host defaults to **4 Grain workers** and **bfloat16** compute with Tokamax attention; `--attn-autotune` tunes attention kernels for each new shape. Workers send uint8 images; normalization and `--reprob` random erasing run on device. Evaluation resizes the shorter edge to `floor(img_size / crop_pct)` and center crops, as in timm. `--no-amp` selects float32. `--validation-batch-size` sets the validation batch size independently; it otherwise follows `--batch-size`.
 
 | timm-style option | Long-form / legacy equivalent |
 | --- | --- |
@@ -357,7 +359,7 @@ Use `uv run pytest tests/` for the full suite, including representative forward/
 
 The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
 
-The core regression suite passed **391 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **9 GPU attention checks**, covering automatic backend selection, the native autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
+The core regression suite passed **410 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
 
 ```bash
 uv run pytest tests/test_attention.py -q
@@ -367,7 +369,7 @@ The training CLI also completed CUDA 13 training, validation, and checkpoint sav
 
 ### Training throughput compared with timm
 
-For architectures whose parameter counts match timm, compiled jimm training steps run at least as fast as timm 1.0.29 with eager PyTorch 2.10. Both sides use an RTX 5090, batch size 64, bfloat16 autocast, AdamW, and label smoothing; PyTorch uses channels-last tensors, fused AdamW, and cuDNN benchmarking without `torch.compile`. Throughput is the median over 20 steps after warmup; jimm uses its default settings, including autotuned Tokamax attention.
+For architectures whose parameter counts match timm, compiled jimm training steps run at 0.97–2.24× the speed of timm 1.0.29 with eager PyTorch 2.10. Both sides use an RTX 5090, batch size 64, bfloat16 autocast, AdamW, and label smoothing; PyTorch uses channels-last tensors, fused AdamW, and cuDNN benchmarking without `torch.compile`. Throughput is the median over 20 steps after warmup; jimm uses its default settings, including heuristic Tokamax attention kernels.
 
 | Model | jimm | timm (eager) | Ratio |
 | --- | ---: | ---: | ---: |
@@ -376,10 +378,15 @@ For architectures whose parameter counts match timm, compiled jimm training step
 | `convnextv2_tiny` | 1,851 img/s | 826 img/s | 2.24× |
 | `efficientnet_b0` | 6,151 img/s | 2,856 img/s | 2.15× |
 | `densenet121` | 2,256 img/s | 1,989 img/s | 1.13× |
-| `vit_small_patch16_224` | 4,127 img/s | 3,280 img/s | 1.26× |
-| `vit_base_patch16_224` | 1,432 img/s | 1,233 img/s | 1.16× |
+| `vit_small_patch16_224` | 4,019 img/s | 3,280 img/s | 1.23× |
+| `vit_base_patch16_224` | 1,420 img/s | 1,233 img/s | 1.15× |
 | `hrnet_w18_small` | 4,713 img/s | 3,824 img/s | 1.23× |
 | `hrnet_w18` | 914 img/s | 944 img/s | 0.97× |
+| `levit_128s` | 9,968 img/s | 7,954 img/s | 1.25× |
+| `efficientvit_b1` | 6,116 img/s | 3,969 img/s | 1.54× |
+| `visformer_small` | 3,185 img/s | 2,401 img/s | 1.33× |
+| `coatnet_0_rw_224` | 2,718 img/s | 1,475 img/s | 1.84× |
+| `maxvit_tiny_rw_224` | 1,693 img/s | 979 img/s | 1.73× |
 
 ### Data pipeline performance
 
@@ -397,7 +404,7 @@ Before the fix, both ResNets were limited by the input pipeline. On this nine-cl
 
 ### Attention performance
 
-Measurements below use an **RTX 5090**, JAX 0.11.2/CUDA 13, Flax 0.12.10, Tokamax 0.0.14, and bfloat16 with native kernel autotuning. Times are median GPU device execution times after compilation and tuning, measured with `tokamax.benchmark`; compilation, tuning, and host-to-device transfers are excluded. The shared attention path follows the [JAX attention conventions](https://docs.jax.dev/en/latest/_autosummary/jax.nn.dot_product_attention.html) and [Tokamax attention implementation](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py).
+Measurements below use an **RTX 5090**, JAX 0.11.2/CUDA 13, Flax 0.12.10, Tokamax 0.0.14, and bfloat16 with kernel autotuning (`--autotune`); the heuristic default measured 0.105 ms and 0.420 ms for the same attention workloads. Times are median GPU device execution times after compilation and tuning, measured with `tokamax.benchmark`; compilation, tuning, and host-to-device transfers are excluded. The shared attention path follows the [JAX attention conventions](https://docs.jax.dev/en/latest/_autosummary/jax.nn.dot_product_attention.html) and [Tokamax attention implementation](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py).
 
 | Workload | Flax attention | jimm + Tokamax | Speedup |
 | --- | ---: | ---: | ---: |
@@ -411,10 +418,10 @@ Reproduce the attention benchmark and export its timings, numerical difference, 
 
 ```bash
 uv run python scripts/benchmark_attention.py \
-    --seq-len 2304 --iterations 10 --output attention-benchmark.json
+    --seq-len 2304 --iterations 10 --autotune --output attention-benchmark.json
 ```
 
-Native-resolution bfloat16 forward comparisons passed for ViT, Swin, LowFormer, Qwen3, and DeepSeek with identical weights, using mixed-precision tolerances. Native Qwen3 training with default autotuning produced a finite loss and preserved FP32 master weights; ViT and Swin also passed native bfloat16 training checks. Float32 attention outputs and gradients remain identical to Flax.
+Native-resolution bfloat16 forward comparisons passed for ViT, Swin, LowFormer, Qwen3, and DeepSeek with identical weights, using mixed-precision tolerances. Native Qwen3 training with autotuning produced a finite loss and preserved FP32 master weights; ViT and Swin also passed native bfloat16 training checks. Float32 attention outputs and gradients remain identical to Flax.
 
 ## Repository Layout
 
@@ -423,7 +430,7 @@ jimm/
   registry.py       Model creation, registration, and configuration
   models/           Architecture implementations and shared helpers
   layers.py         Common NNX layers and classifier utilities
-  attention.py      Shared attention and autotuned Tokamax dispatch
+  attention.py      Shared attention and Tokamax dispatch
   features.py       Intermediate feature extraction
   data.py           ImageFolder datasets and Grain loaders
   augment.py        Image augmentation and policies

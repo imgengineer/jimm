@@ -66,15 +66,21 @@ def is_model(name: str) -> bool:
 
 
 def get_default_cfg(name: str) -> dict[str, Any]:
-    """Return the default configuration dictionary (input size, normalization, etc.) for a model."""
-    if name in _model_default_cfgs:
-        return dict(_model_default_cfgs[name])
-    if name in _model_entrypoints:
+    """Return the default configuration dictionary (input size, normalization, etc.) for a model.
+
+    Entrypoints that set ``default_cfg`` on the instance are built once with
+    ``nnx.eval_shape``, which reads the configuration without allocating weights.
+    """
+    if name not in _model_default_cfgs:
+        if name not in _model_entrypoints:
+            return {}
         fn = _model_entrypoints[name]
-        if hasattr(fn, "default_cfg"):
-            _model_default_cfgs[name] = getattr(fn, "default_cfg")
-            return dict(_model_default_cfgs[name])
-    return {}
+        cfg = getattr(fn, "default_cfg", None)
+        if cfg is None:
+            model = nnx.eval_shape(lambda: fn(rngs=nnx.Rngs(0)))
+            cfg = getattr(model, "default_cfg", None) or _cfg()
+        _model_default_cfgs[name] = cfg
+    return dict(_model_default_cfgs[name])
 
 
 def _cfg(**kwargs: Any) -> dict[str, Any]:
@@ -160,11 +166,11 @@ def create_model(
 
     model = _model_entrypoints[name](rngs=rngs if rngs is not None else nnx.Rngs(0), **kwargs)
 
-    # Attach or cache default configuration
+    # Attach a registered configuration when the entrypoint did not set one.
+    # Instance configurations may reflect constructor overrides, so they are
+    # not cached as the model's default.
     if not getattr(model, "default_cfg", None):
-        setattr(model, "default_cfg", get_default_cfg(name) or _cfg())
-    else:
-        _model_default_cfgs[name] = getattr(model, "default_cfg")
+        setattr(model, "default_cfg", dict(_model_default_cfgs.get(name) or _cfg()))
 
     # Load pretrained weights if requested
     if pretrained:
@@ -175,8 +181,9 @@ def create_model(
         elif isinstance(pretrained, dict):
             weights.load_state_dict(model, pretrained)
         elif isinstance(pretrained, bool) and pretrained:
-            cfg = get_default_cfg(name)
-            checkpoint = cfg.get("url") if isinstance(cfg, dict) else None
+            registered = _model_default_cfgs.get(name) or {}
+            instance = getattr(model, "default_cfg", None) or {}
+            checkpoint = registered.get("url") or instance.get("url")
             if checkpoint:
                 weights.load_pretrained(model, checkpoint)
             else:

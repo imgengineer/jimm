@@ -272,3 +272,46 @@ def test_config_training_and_external_resume(tmp_path, monkeypatch, capsys):
             jax.tree.leaves(first_weights), jax.tree.leaves(nnx.state(models[1], nnx.Param))
         )
     )
+
+
+def test_cli_omits_unrequested_model_options(tmp_path, monkeypatch):
+    # Architectures without stochastic depth or dropout must train with defaults.
+    class Model(nnx.Module):
+        def __init__(self, num_classes, rngs):
+            self.fc = nnx.Linear(3, num_classes, rngs=rngs)
+
+        def __call__(self, x):
+            return self.fc(x.mean(axis=(1, 2)))
+
+    received = []
+
+    def create_model(name, pretrained=False, num_classes=1000, rngs=None):
+        received.append(name)
+        return Model(num_classes, rngs)
+
+    monkeypatch.setattr(train_module, "create_model", create_model)
+    for category in ("cat", "dog"):
+        directory = tmp_path / "data" / "train" / category
+        directory.mkdir(parents=True)
+        for index in range(2):
+            assert cv2.imwrite(str(directory / f"{index}.png"), np.full((16, 16, 3), 9, np.uint8))
+    main(
+        [
+            str(tmp_path / "data"),
+            "--model",
+            "plain",
+            "--num-classes",
+            "2",
+            "--img-size",
+            "16",
+            "-b",
+            "2",
+            "-j",
+            "0",
+            "--epochs",
+            "1",
+            "--output",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert received == ["plain"]

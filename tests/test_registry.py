@@ -122,6 +122,44 @@ def test_create_model():
         create_model("resnet18", pretrained=True)
 
 
+def test_default_cfg_resolves_without_instantiation():
+    # Entrypoints that set default_cfg on the instance are read from an abstract model.
+    assert get_default_cfg("efficientnet_b3")["input_size"] == (3, 300, 300)
+    assert get_default_cfg("vit_base_patch16_384")["input_size"] == (3, 384, 384)
+    assert get_default_cfg("inception_v3")["input_size"] == (3, 299, 299)
+    cfg = get_default_cfg("resnet18")
+    cfg["input_size"] = (3, 8, 8)
+    assert get_default_cfg("resnet18")["input_size"] == (3, 224, 224)
+
+    # Instance configurations from constructor overrides do not replace the default.
+    def entry(img_size=32, *, rngs=None):
+        class Model(nnx.Module):
+            def __init__(self):
+                self.default_cfg = {"input_size": (3, img_size, img_size)}
+
+        return Model()
+
+    entry.__name__ = "dummy_sized_model"
+    register_model(entry)
+    assert create_model("dummy_sized_model", img_size=64).default_cfg["input_size"][1] == 64
+    assert get_default_cfg("dummy_sized_model") == {"input_size": (3, 32, 32)}
+
+
+def test_pretrained_url_uses_registered_cfg(tmp_path):
+    missing = tmp_path / "missing.npz"
+
+    @register_model(default_cfg={"url": str(missing)})
+    def dummy_url_model(*, rngs=None):
+        class Model(nnx.Module):
+            def __init__(self):
+                self.default_cfg = {"input_size": (3, 8, 8)}
+
+        return Model()
+
+    with pytest.raises(FileNotFoundError, match="missing.npz"):
+        create_model("dummy_url_model", pretrained=True)
+
+
 def test_custom_register_model():
     @register_model(default_cfg={"input_size": (3, 64, 64)})
     def dummy_custom_model(num_classes=10, *, rngs=None, **kwargs):

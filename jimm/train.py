@@ -967,17 +967,19 @@ def main(argv=None):
         ),
     )
 
-    # 3. Instantiate model and data pipeline
+    # 3. Instantiate model and data pipeline. Like timm, pass regularization and
+    # pooling overrides only when requested; not every architecture accepts them.
     model_kwargs = dict(args.model_kwargs)
     if args.drop:
         model_kwargs["drop_rate"] = args.drop
+    if args.drop_path:
+        model_kwargs["drop_path_rate"] = args.drop_path
     if args.global_pool is not None:
         model_kwargs["global_pool"] = args.global_pool
     model = create_model(
         args.model,
         pretrained=args.initial_checkpoint or False,
         num_classes=args.num_classes,
-        drop_path_rate=args.drop_path,
         rngs=nnx.Rngs(args.seed),
         **model_kwargs,
     )

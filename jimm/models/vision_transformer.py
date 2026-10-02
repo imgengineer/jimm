@@ -177,17 +177,6 @@ def deit_base_patch16_224(**kwargs):
     return _vit(224, 16, 768, 12, 12, **kwargs)
 
 
-# BEiT v1: approximated by the ViT architecture
-@register_model
-def beit_base_patch16_224(**kwargs):
-    return _vit(224, 16, 768, 12, 12, **kwargs)
-
-
-@register_model
-def beit_large_patch16_224(**kwargs):
-    return _vit(224, 16, 1024, 24, 16, **kwargs)
-
-
 def _deit3(embed_dim, depth, num_heads, **kwargs):
     model = _vit(
         224, 16, embed_dim, depth, num_heads, init_values=1e-6, no_embed_class=True, **kwargs

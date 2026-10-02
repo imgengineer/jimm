@@ -9,6 +9,10 @@ from jimm.registry import create_model
 # timm 1.0.29 counts with num_classes=1000. Other registered names approximate
 # their timm architectures and are not listed until they match.
 TIMM_PARAM_COUNTS = {
+    "beit_base_patch16_224": 86_530_984,
+    "beit_base_patch16_384": 86_744_104,
+    "beit_large_patch16_224": 304_430_568,
+    "beit_large_patch16_384": 304_998_888,
     "cait_s24_224": 46_916_200,
     "cait_xxs24_224": 11_956_264,
     "coatnet_0_rw_224": 27_435_562,
@@ -111,6 +115,9 @@ TIMM_PARAM_COUNTS = {
     "resmlp_12_224": 15_350_872,
     "resmlp_24_224": 30_020_680,
     "resmlp_36_224": 44_690_488,
+    "resnest101e": 48_275_016,
+    "resnest14d": 10_611_688,
+    "resnest50d": 27_483_240,
     "resnet101": 44_549_160,
     "resnet152": 60_192_808,
     "resnet18": 11_689_512,

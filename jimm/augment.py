@@ -1030,8 +1030,8 @@ class MixupCutmix:
                 lambdas[index] = lam
             return mixed, lambdas[:, None] * targets + (1.0 - lambdas[:, None]) * targets[indices]
         lam = _as_float(np.random.beta(alpha, alpha))
-        mixed = images.copy()
         if use_cutmix:
+            mixed = images.copy()
             top, left, bottom, right, lam = _cutmix_box(height, width, lam, self.cutmix_minmax)
             mixed[:, top:bottom, left:right] = images[indices, top:bottom, left:right]
         else:

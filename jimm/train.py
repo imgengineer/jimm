@@ -703,9 +703,9 @@ def main(argv=None):
 
     try:
         for epoch in range(start_epoch, args.epochs):
-            t_epoch_start = time.time()
+            t_epoch_start = time.perf_counter()
             losses, accuracies = [], []
-            t_steady_start = None
+            t_steady_start = t_epoch_start if compiled_first_step else None
             steady_steps = 0
 
             for step in range(steps_per_epoch):
@@ -718,7 +718,7 @@ def main(argv=None):
                     jax.profiler.start_trace(args.profile_dir)
                     profile_active = True
 
-                t_step_start = time.time()
+                t_step_start = time.perf_counter()
                 images, labels = next(device_data_stream)
 
                 if train_rng is not None:
@@ -730,14 +730,14 @@ def main(argv=None):
                 if not compiled_first_step:
                     # Block on first step to accurately measure XLA compilation time
                     loss.block_until_ready()
-                    compile_time = time.time() - t_step_start
+                    compile_time = time.perf_counter() - t_step_start
                     if rank == 0:
                         print(
                             f"  [XLA] Step 0 compiled and executed in {compile_time:.2f}s",
                             flush=True,
                         )
                     compiled_first_step = True
-                    t_steady_start = time.time()
+                    t_steady_start = time.perf_counter()
                 else:
                     steady_steps += 1
 
@@ -752,11 +752,13 @@ def main(argv=None):
                     and t_steady_start is not None
                     and steady_steps > 0
                 ):
-                    elapsed_steady = time.time() - t_steady_start
-                    step_time_ms = (elapsed_steady / steady_steps) * 1000.0
-                    img_per_sec = (global_batch_size * steady_steps) / max(elapsed_steady, 1e-6)
+                    # Materializing metrics waits for asynchronous device work
+                    # before measuring completed training throughput.
                     step_loss = float(loss)
                     step_acc = float(acc)
+                    elapsed_steady = time.perf_counter() - t_steady_start
+                    step_time_ms = (elapsed_steady / steady_steps) * 1000.0
+                    img_per_sec = (global_batch_size * steady_steps) / max(elapsed_steady, 1e-6)
                     print(
                         f"epoch {epoch:>3} [{step + 1:>4}/{steps_per_epoch}]: "
                         f"loss {step_loss:.4f} acc {step_acc:.4f} | "
@@ -776,7 +778,7 @@ def main(argv=None):
 
             loss_avg, acc_avg = _mean_metrics(losses, accuracies)
 
-            epoch_time = time.time() - t_epoch_start
+            epoch_time = time.perf_counter() - t_epoch_start
             epoch_img_per_sec = (global_batch_size * steps_per_epoch) / max(epoch_time, 1e-6)
             msg = (
                 f"epoch {epoch:>3} summary: loss {loss_avg:.4f} acc {acc_avg:.4f} "

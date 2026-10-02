@@ -474,6 +474,7 @@ def test_augmentation_edge_cases():
 def test_mixup_cutmix(monkeypatch):
     images = np.zeros((2, 8, 8, 3), dtype=np.float32)
     images[1] = 1.0
+    images.setflags(write=False)
     labels = np.array([0, 1], dtype=np.int32)
     monkeypatch.setattr(np.random, "beta", lambda *_: 0.5)
     monkeypatch.setattr(np.random, "permutation", lambda _: np.array([1, 0]))
@@ -485,8 +486,9 @@ def test_mixup_cutmix(monkeypatch):
     )
     assert mixed.shape == images.shape
     assert mixed_labels.shape == (2, 2)
-    assert np.allclose(mixed_labels.sum(axis=1), 1.0)
-    assert np.any((mixed > 0.0) & (mixed < 1.0))
+    np.testing.assert_array_equal(mixed, np.full_like(images, 0.5))
+    np.testing.assert_array_equal(mixed_labels, np.full((2, 2), 0.5))
+    assert not np.shares_memory(mixed, images)
 
     random_values = iter([0.0, 1.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))
@@ -495,6 +497,7 @@ def test_mixup_cutmix(monkeypatch):
     )
     assert cutmixed.shape == images.shape
     assert cutmix_labels.shape == (2, 2)
+    assert not np.shares_memory(cutmixed, images)
 
     random_values = iter([1.0])
     monkeypatch.setattr(np.random, "rand", lambda: next(random_values))

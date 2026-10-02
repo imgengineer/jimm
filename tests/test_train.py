@@ -498,11 +498,17 @@ def test_main_training_cli_resume(temp_dataset, capsys):
             "2",
             "--workers",
             "0",
+            "--log-interval",
+            "1",
             "--output",
             out_dir,
         ]
         main(common + ["--epochs", "2", "--max-to-keep", "1"])
         assert os.path.exists(f"{out_dir}/resnet18/1")
+        output = capsys.readouterr().out
+        assert "epoch   0 [   2/2]" in output
+        assert "epoch   1 [   1/2]" in output
+        assert "epoch   1 [   2/2]" in output
 
         # Resume continues from the latest checkpoint instead of restarting.
         main(common + ["--epochs", "3", "--resume"])

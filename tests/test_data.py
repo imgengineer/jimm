@@ -101,6 +101,43 @@ def test_image_folder(temp_dataset):
         shutil.rmtree(empty_dir, ignore_errors=True)
 
 
+def test_image_folder_sorts_files_and_preserves_symlinks(tmp_path):
+    root = tmp_path / "dataset"
+    for name in ("z", "a"):
+        (root / name).mkdir(parents=True)
+    (root / "z" / "last.JPG").write_bytes(b"last")
+    (root / "a" / "..PNG").write_bytes(b"dots")
+    (root / "a" / ".png").write_bytes(b"ignored")
+    (root / "a" / "first.PNG").write_bytes(b"first")
+    (root / "a" / "ignore.txt").write_bytes(b"ignored")
+    (root / "a" / "directory.jpg").mkdir()
+
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "image.webp").write_bytes(b"external")
+    (root / "m").symlink_to(external, target_is_directory=True)
+    (root / "a" / "linked.webp").symlink_to(external / "image.webp")
+    (root / "a" / "missing.png").symlink_to(external / "missing.png")
+    (root / "a" / "loop.jpg").symlink_to(root / "a" / "loop.jpg")
+
+    source = ImageFolder(root)
+    assert source.class_to_idx == {"a": 0, "m": 1, "z": 2}
+    assert source.samples == [
+        (root / "a" / "..PNG", 0),
+        (root / "a" / "first.PNG", 0),
+        (root / "a" / "linked.webp", 0),
+        (root / "m" / "image.webp", 1),
+        (root / "z" / "last.JPG", 2),
+    ]
+    assert [source[index]["image"] for index in range(len(source))] == [
+        b"dots",
+        b"first",
+        b"external",
+        b"external",
+        b"last",
+    ]
+
+
 def test_in_memory_cache_preserves_source_resolution(temp_dataset):
     # Caching must not change the source image before stochastic augmentation.
     source, transform = create_dataset(f"{temp_dataset}/train", in_memory=True, img_size=32)
@@ -269,6 +306,8 @@ def test_loader_start_step_restores_training_stream(temp_dataset):
 
 def test_augmentations(monkeypatch):
     img = np.arange(48 * 48 * 3, dtype=np.uint8).reshape(48, 48, 3)
+    original = img.copy()
+    img.setflags(write=False)
     cropped = random_resized_crop(img, size=16, scale=(1.0, 1.0), ratio=(1.0, 1.0))
     assert cropped.shape[:2] == (16, 16)
 
@@ -279,6 +318,7 @@ def test_augmentations(monkeypatch):
     monkeypatch.setattr(np.random, "rand", lambda: 0.0)
     jittered = color_jitter(img, brightness=0.2, contrast=0.2, saturation=0.2)
     assert jittered.shape == img.shape
+    np.testing.assert_array_equal(img, original)
 
     array = np.ones((16, 16, 3), dtype=np.float32)
     erased = random_erasing(array, prob=1.0, sl=0.25, sh=0.25, r1=1.0)
@@ -591,15 +631,15 @@ def test_data_error_paths(temp_dataset, monkeypatch):
     with pytest.raises(ValueError, match="std values must be positive"):
         _DecodeTransform(img_size=8, std=(1, 0, 1))
 
-    original_iterdir = Path.iterdir
+    original_scandir = data_module.os.scandir
     with monkeypatch.context() as mp:
         mp.setattr(
-            Path,
-            "iterdir",
+            data_module.os,
+            "scandir",
             lambda path: (
                 (_ for _ in ()).throw(OSError("synthetic failure"))
-                if path.name == "cat"
-                else original_iterdir(path)
+                if Path(path).name == "cat"
+                else original_scandir(path)
             ),
         )
         with pytest.raises(OSError, match="unable to scan class directory"):

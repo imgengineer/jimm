@@ -308,27 +308,33 @@ def color_jitter(
     operations = [item for item in operations if item[1] != (0.0, 0.0)]
     if random_order:
         rng.shuffle(operations)
-    # Run the whole chain in one float32 pass (one uint8->float conversion and
-    # one final clip) instead of a round trip per operation. Clipping between
-    # ops preserves per-op [0, 255] clamping.
+    # Reuse an owned float32 buffer, clipping in place between operations.
     array = _rgb(image).astype(np.float32)
     for name, bounds in operations:
         if name == "brightness":
             limit = max(abs(bounds[0]), abs(bounds[1]))
-            array = np.clip(array + rng.uniform(-limit, limit) * 255.0, 0.0, 255.0)
+            array += rng.uniform(-limit, limit) * 255.0
+            np.clip(array, 0.0, 255.0, out=array)
         elif name == "contrast":
             factor = rng.uniform(*bounds)
             mean = array.mean(axis=(0, 1), keepdims=True)
-            array = np.clip((array - mean) * factor + mean, 0.0, 255.0)
-        elif name == "saturation":
-            hsv = cv2.cvtColor(array * (1.0 / 255.0), cv2.COLOR_RGB2HSV)
-            hsv[..., 1] = np.clip(hsv[..., 1] * rng.uniform(*bounds), 0.0, 1.0)
-            array = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB) * 255.0
+            array -= mean
+            array *= factor
+            array += mean
+            np.clip(array, 0.0, 255.0, out=array)
         else:
-            hsv = cv2.cvtColor(array * (1.0 / 255.0), cv2.COLOR_RGB2HSV)
-            hsv[..., 0] = (hsv[..., 0] + rng.uniform(*bounds) * 360.0) % 360.0
-            array = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB) * 255.0
-    return _clip_uint8(array)
+            array *= 1.0 / 255.0
+            hsv = cv2.cvtColor(array, cv2.COLOR_RGB2HSV)
+            if name == "saturation":
+                hsv[..., 1] *= rng.uniform(*bounds)
+                np.clip(hsv[..., 1], 0.0, 1.0, out=hsv[..., 1])
+            else:
+                hsv[..., 0] += rng.uniform(*bounds) * 360.0
+                hsv[..., 0] %= 360.0
+            array = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+            array *= 255.0
+    np.clip(array, 0, 255, out=array)
+    return array.astype(np.uint8)
 
 
 def random_flip_left_right(image, prob=0.5, rng=None):

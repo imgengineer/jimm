@@ -315,16 +315,16 @@ class ImageFolder(grain.RandomAccessDataSource):
         samples = []
         for class_dir in classes:
             try:
-                files = sorted(
-                    (
-                        path
-                        for path in class_dir.iterdir()
-                        if path.is_file()
-                        and path.suffix.lower() in _IMAGE_SUFFIXES
-                        and _is_within(self.root, path)
-                    ),
-                    key=lambda path: path.name,
-                )
+                with os.scandir(class_dir) as entries:
+                    # Reuse directory type metadata, retaining Path's handling
+                    # of broken or looping symlinks.
+                    files = []
+                    for entry in entries:
+                        path = Path(entry.path)
+                        is_file = path.is_file() if entry.is_symlink() else entry.is_file()
+                        if is_file and path.suffix.lower() in _IMAGE_SUFFIXES:
+                            files.append(path)
+                    files.sort(key=lambda path: path.name)
             except OSError as exc:
                 raise OSError(f"unable to scan class directory {class_dir}") from exc
             samples.extend((path, self.class_to_idx[class_dir.name]) for path in files)

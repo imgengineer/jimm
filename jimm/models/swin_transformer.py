@@ -89,10 +89,10 @@ class SwinBlock(nnx.Module):
             shift = 0
             window_size = min(input_resolution)
         self.ws, self.shift = window_size, shift
-        self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
+        self.norm1 = nnx.LayerNorm(dim, epsilon=1e-5, rngs=rngs)
         self.attn = self.attn_cls(dim, window_size, num_heads, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
-        self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
+        self.norm2 = nnx.LayerNorm(dim, epsilon=1e-5, rngs=rngs)
         try:
             mlp_hidden = int(dim * mlp_ratio)
         except (TypeError, ValueError):
@@ -101,16 +101,14 @@ class SwinBlock(nnx.Module):
         attn_mask = None
         if shift > 0:
             # mask for SW-MSA, precomputed for fixed resolution (timm does the same)
+            # Nine regions, as in timm: the strip rolled in from the opposite edge
+            # must not attend to the tokens it shares a window with.
             H, W = input_resolution
             img_mask = jnp.zeros((1, H, W, 1))
-            slices = [
-                (slice(0, -window_size), slice(0, -window_size)),
-                (slice(0, -window_size), slice(-window_size, None)),
-                (slice(-window_size, None), slice(0, -window_size)),
-                (slice(-window_size, None), slice(-window_size, None)),
-            ]
-            for i, (hs, ws_) in enumerate(slices):
-                img_mask = img_mask.at[:, hs, ws_, :].set(i)
+            bands = (slice(0, -window_size), slice(-window_size, -shift), slice(-shift, None))
+            for i, hs in enumerate(bands):
+                for j, ws_ in enumerate(bands):
+                    img_mask = img_mask.at[:, hs, ws_, :].set(3 * i + j)
             mask_windows = window_partition(img_mask, window_size).reshape(
                 -1, window_size * window_size
             )
@@ -137,7 +135,7 @@ class SwinBlock(nnx.Module):
 
 class PatchMerging(nnx.Module):
     def __init__(self, dim, *, rngs):
-        self.norm = nnx.LayerNorm(4 * dim, rngs=rngs)
+        self.norm = nnx.LayerNorm(4 * dim, epsilon=1e-5, rngs=rngs)
         self.reduction = nnx.Linear(4 * dim, 2 * dim, use_bias=False, rngs=rngs)
 
     def __call__(self, x):
@@ -221,7 +219,7 @@ class SwinTransformer(ClassifierMixin, nnx.Module):
             strides=(patch_size, patch_size),
             rngs=rngs,
         )
-        self.patch_norm = nnx.LayerNorm(embed_dim, rngs=rngs)
+        self.patch_norm = nnx.LayerNorm(embed_dim, epsilon=1e-5, rngs=rngs)
         res = img_size // patch_size
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
         self.stages = nnx.List(
@@ -242,7 +240,7 @@ class SwinTransformer(ClassifierMixin, nnx.Module):
                 for i in range(len(depths))
             ]
         )
-        self.norm = nnx.LayerNorm(self.num_features, rngs=rngs)
+        self.norm = nnx.LayerNorm(self.num_features, epsilon=1e-5, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = (
             nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -277,67 +275,3 @@ def swin_small_patch4_window7_224(**kwargs):
 @register_model
 def swin_base_patch4_window7_224(**kwargs):
     return _swin(128, (2, 2, 18, 2), (4, 8, 16, 32), **kwargs)
-
-
-# Swin v2: post-norm + cosine attention + continuous rel-pos MLP (structure-level v2)
-class SwinV2Attention(WindowAttention):
-    def __call__(self, x, mask=None):
-        B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
-        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-6)
-        k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-6)
-        # dot_product_attention divides by sqrt(head_dim); rescale q to
-        # preserve SwinV2's fixed cosine logit scale of 1 / 0.5.
-        q = q * (2.0 * jnp.sqrt(jnp.asarray(self.head_dim, dtype=q.dtype)))
-        bias = self.rel_bias_table[...][self.rel_index[...]].transpose(2, 0, 1)
-        if mask is not None:
-            nW = mask.shape[0]
-            window_bias = jnp.broadcast_to(
-                mask[None, :, None, :, :], (B // nW, nW, 1, N, N)
-            ).reshape(B, 1, N, N)
-            bias = bias[None] + window_bias
-        x = dot_product_attention(q, k, v, bias=bias).reshape(B, N, C)
-        return self.drop(self.proj(x))
-
-
-class SwinV2Block(SwinBlock):
-    attn_cls = SwinV2Attention
-
-    def __call__(self, x):  # post-norm
-        B, H, W, C = x.shape
-        sc = x
-        if self.shift > 0:
-            x = jnp.roll(x, (-self.shift, -self.shift), axis=(1, 2))
-        x = window_partition(x, self.ws)
-        mask = self.attn_mask[...] if self.attn_mask is not None else None
-        x = self.attn(x, mask)
-        x = window_reverse(x, self.ws, H, W, B)
-        if self.shift > 0:
-            x = jnp.roll(x, (self.shift, self.shift), axis=(1, 2))
-        x = sc + self.drop_path(x)
-        x = self.norm1(x)
-        return self.norm2(x + self.drop_path(self.mlp(x)))
-
-
-def _swinv2(embed_dim, depths, num_heads, img_size=256, **kwargs):
-    model = SwinTransformer(
-        embed_dim=embed_dim,
-        depths=depths,
-        num_heads=num_heads,
-        img_size=img_size,
-        block_cls=SwinV2Block,
-        **kwargs,
-    )
-    model.default_cfg = _cfg(input_size=(3, img_size, img_size))
-    return model
-
-
-@register_model
-def swinv2_tiny_window8_256(**kwargs):
-    return _swinv2(96, (2, 2, 6, 2), (3, 6, 12, 24), window_size=8, img_size=256, **kwargs)
-
-
-@register_model
-def swinv2_small_window8_256(**kwargs):
-    return _swinv2(96, (2, 2, 18, 2), (3, 6, 12, 24), window_size=8, img_size=256, **kwargs)

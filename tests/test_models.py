@@ -88,7 +88,7 @@ def test_variant_constructor_smoke():
 
 
 def test_extra_multi_architecture_modules():
-    """Tests co-located distinct architectures within the same file (e.g. ResMLP in mlp_mixer, SwinV2 in swin_transformer)."""
+    """Tests co-located distinct architectures within the same file (e.g. ResMLP in mlp_mixer)."""
     for name in ["resmlp_12_224", "swinv2_tiny_window8_256", "darknet53"]:
         m = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
         m.eval()

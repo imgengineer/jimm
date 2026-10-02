@@ -12,6 +12,7 @@ from . import (  # noqa: F401  (imports trigger registration)
     convnext,
     vision_transformer,
     swin_transformer,
+    swin_transformer_v2,
     res2net,
     sknet,
     resnest,

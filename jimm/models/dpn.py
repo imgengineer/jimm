@@ -8,7 +8,7 @@ output = residual (bw ch) concat dense (2*inc + inc per block, accumulating).
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct, global_pool_nhwc
+from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, global_pool_nhwc
 from ..registry import _cfg, register_model
 
 
@@ -24,7 +24,7 @@ class DualPathBlock(nnx.Module):
         if b:
             self.c1 = nnx.Conv(r, bw, (1, 1), use_bias=False, rngs=rngs)
             self.c2 = nnx.Conv(r, inc, (1, 1), use_bias=False, rngs=rngs)
-            self.c_bn = nnx.BatchNorm(r, rngs=rngs)
+            self.c_bn = BatchNorm(r, rngs=rngs)
             self.c1x1_c = None
         else:
             self.c1x1_c = ConvBNAct(r, bw + inc, 1, act="identity", rngs=rngs)
@@ -85,7 +85,7 @@ class DPN(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
         self.num_features = in_chs
-        self.head_norm = nnx.BatchNorm(self.num_features, rngs=rngs)
+        self.head_norm = BatchNorm(self.num_features, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 

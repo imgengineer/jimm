@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from einops import rearrange
 from flax import nnx
 
-from ..layers import ClassifierMixin, global_pool_nhwc
+from ..layers import BatchNorm, ClassifierMixin, global_pool_nhwc
 from ..registry import _cfg, register_model
 
 
@@ -25,9 +25,9 @@ class LeftBranch(nnx.Module):
             feature_group_count=in_chs,
             rngs=rngs,
         )
-        self.bn_dw = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn_dw = BatchNorm(in_chs, rngs=rngs)
         self.conv = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn = BatchNorm(mid, rngs=rngs)
 
     def __call__(self, x):
         return self.bn(self.conv(self.bn_dw(self.dw(x))))
@@ -41,7 +41,7 @@ class ShuffleUnit(nnx.Module):
         self.conv1 = nnx.Conv(
             in_chs if stride == 2 else mid, mid, (1, 1), use_bias=False, rngs=rngs
         )
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.dw = nnx.Conv(
             mid,
             mid,
@@ -51,9 +51,9 @@ class ShuffleUnit(nnx.Module):
             feature_group_count=mid,
             rngs=rngs,
         )
-        self.bn_dw = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn_dw = BatchNorm(mid, rngs=rngs)
         self.conv2 = nnx.Conv(mid, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn2 = BatchNorm(mid, rngs=rngs)
         self.left = LeftBranch(in_chs, mid, rngs=rngs) if stride == 2 else None
 
     def __call__(self, x):
@@ -72,7 +72,7 @@ class ShuffleNetV2(ClassifierMixin, nnx.Module):
     def __init__(self, out_chs, repeats, num_classes=1000, in_chans=3, global_pool="avg", *, rngs):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.conv1 = nnx.Conv(in_chans, 24, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(24, rngs=rngs)
+        self.bn1 = BatchNorm(24, rngs=rngs)
         stages, chs = [], 24
         for out, n in zip(out_chs, repeats):
             blocks = []
@@ -82,7 +82,7 @@ class ShuffleNetV2(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
         self.conv5 = nnx.Conv(chs, 1024, (1, 1), use_bias=False, rngs=rngs)
-        self.bn5 = nnx.BatchNorm(1024, rngs=rngs)
+        self.bn5 = BatchNorm(1024, rngs=rngs)
         self.num_features = 1024
         self.fc = nnx.Linear(1024, num_classes, rngs=rngs) if num_classes > 0 else None
 

@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct, DropPath, Mlp
+from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, DropPath, Mlp
 from ..registry import _cfg, register_model
 from .vision_transformer import Attention
 
@@ -12,10 +12,10 @@ class VisBlock(nnx.Module):
     """Transformer block with BatchNorm (visformer style) on token dim."""
 
     def __init__(self, dim, num_heads, mlp_ratio=4.0, drop=0.0, drop_path=0.0, *, rngs):
-        self.norm1 = nnx.BatchNorm(dim, rngs=rngs)
+        self.norm1 = BatchNorm(dim, rngs=rngs)
         self.attn = Attention(dim, num_heads, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
-        self.norm2 = nnx.BatchNorm(dim, rngs=rngs)
+        self.norm2 = BatchNorm(dim, rngs=rngs)
         self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
 
     def __call__(self, x):
@@ -60,7 +60,7 @@ class Visformer(ClassifierMixin, nnx.Module):
                 for i in range(depth)
             ]
         )
-        self.norm = nnx.BatchNorm(embed_dim, rngs=rngs)
+        self.norm = BatchNorm(embed_dim, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):

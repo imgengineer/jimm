@@ -3,7 +3,7 @@
 import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
-from ..layers import ClassifierMixin, ConvBNAct, DropPath
+from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, DropPath
 from ..registry import _cfg, register_model
 
 
@@ -21,7 +21,7 @@ class SplitAttnConv(nnx.Module):
             feature_group_count=cardinality * radix,
             rngs=rngs,
         )
-        self.bn = nnx.BatchNorm(chs * radix, rngs=rngs)
+        self.bn = BatchNorm(chs * radix, rngs=rngs)
         self.fc1 = nnx.Linear(chs, max(chs // 2, 32), rngs=rngs)
         self.fc2 = nnx.Linear(max(chs // 2, 32), chs * radix, rngs=rngs)
 
@@ -41,11 +41,11 @@ class ResNeStBottleneck(nnx.Module):
     def __init__(self, in_chs, chs, stride=1, drop_path_rate=0.0, *, rngs):
         out_chs = chs * self.expansion
         self.conv1 = nnx.Conv(in_chs, chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(chs, rngs=rngs)
+        self.bn1 = BatchNorm(chs, rngs=rngs)
         self.avd = stride > 1
         self.splattn = SplitAttnConv(chs, stride if not self.avd else 1, rngs=rngs)
         self.conv3 = nnx.Conv(chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn3 = BatchNorm(out_chs, rngs=rngs)
         self._sc_stride = stride
         self.short_conv = (
             ConvBNAct(in_chs, out_chs, kernel=1, stride=1, act="identity", rngs=rngs)

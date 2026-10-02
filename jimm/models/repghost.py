@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
+from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, SqueezeExcite
 from ..registry import _cfg, register_model
 
 
@@ -14,9 +14,9 @@ class RepGhostModule(nnx.Module):
         half = -(-out_chs // 2)
         self.out_chs = out_chs
         self.conv1 = nnx.Conv(in_chs, half, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(half, rngs=rngs)
+        self.bn1 = BatchNorm(half, rngs=rngs)
         self.dw = nnx.Conv(half, half, (3, 3), use_bias=False, feature_group_count=half, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(half, rngs=rngs)
+        self.bn2 = BatchNorm(half, rngs=rngs)
 
     def __call__(self, x):
         x1 = self.bn1(self.conv1(x))
@@ -88,7 +88,7 @@ class RepGhostNet(ClassifierMixin, nnx.Module):
         self.num_classes, self.global_pool = num_classes, global_pool
         stem = max(int(16 * width_mult), 8)
         self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
+        self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for k, e, c, se, s, n in REP_CFG:
             out = max(int(c * width_mult), 8)

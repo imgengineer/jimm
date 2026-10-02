@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, DropPath, gelu
+from ..layers import BatchNorm, ClassifierMixin, DropPath, gelu
 from ..registry import _cfg, register_model
 from .vision_transformer import Attention
 
@@ -12,11 +12,11 @@ class RepMixerBlock(nnx.Module):
 
     def __init__(self, dim, mlp_ratio=3.0, drop_path=0.0, *, rngs):
         self.dw = nnx.Conv(dim, dim, (7, 7), use_bias=False, feature_group_count=dim, rngs=rngs)
-        self.bn = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn = BatchNorm(dim, rngs=rngs)
         self.mlp1 = nnx.Conv(dim, int(dim * mlp_ratio), (1, 1), rngs=rngs)
-        self.mlp_bn1 = nnx.BatchNorm(int(dim * mlp_ratio), rngs=rngs)
+        self.mlp_bn1 = BatchNorm(int(dim * mlp_ratio), rngs=rngs)
         self.mlp2 = nnx.Conv(int(dim * mlp_ratio), dim, (1, 1), rngs=rngs)
-        self.mlp_bn2 = nnx.BatchNorm(dim, rngs=rngs)
+        self.mlp_bn2 = BatchNorm(dim, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
@@ -75,11 +75,11 @@ class FastViT(ClassifierMixin, nnx.Module):
                 nnx.Conv(
                     in_chans, channels[0] // 2, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(channels[0] // 2, rngs=rngs),
+                BatchNorm(channels[0] // 2, rngs=rngs),
                 nnx.Conv(
                     channels[0] // 2, channels[0], (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(channels[0], rngs=rngs),
+                BatchNorm(channels[0], rngs=rngs),
             ]
         )
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
@@ -103,9 +103,9 @@ class FastViT(ClassifierMixin, nnx.Module):
                         use_bias=False,
                         rngs=rngs,
                     ),
-                    nnx.BatchNorm(channels[i], rngs=rngs),
+                    BatchNorm(channels[i], rngs=rngs),
                     nnx.Conv(channels[i], channels[i + 1], (1, 1), use_bias=False, rngs=rngs),
-                    nnx.BatchNorm(channels[i + 1], rngs=rngs),
+                    BatchNorm(channels[i + 1], rngs=rngs),
                 )
                 for i in range(3)
             ]

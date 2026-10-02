@@ -2,11 +2,19 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, SqueezeExcite, global_pool_nhwc, hswish
+from ..layers import (
+    BatchNorm,
+    ClassifierMixin,
+    SqueezeExcite,
+    global_pool_nhwc,
+    hswish,
+    make_divisible,
+)
 from ..registry import _cfg, register_model
-from .mobilenetv2 import ConvBN, relu6
+from .mobilenetv2 import ConvBN
 
-_ACT = {"relu": relu6, "hswish": hswish}
+# timm "nre" blocks use ReLU; the remaining blocks use hard-swish.
+_ACT = {"relu": nnx.relu, "hswish": hswish}
 
 
 class InvertedResidualV3(nnx.Module):
@@ -24,10 +32,17 @@ class InvertedResidualV3(nnx.Module):
             feature_group_count=mid,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
-        self.se = SqueezeExcite(mid, 0.25, rngs=rngs) if se else None
+        self.bn1 = BatchNorm(mid, rngs=rngs)
+        # timm SE: ReLU, hard-sigmoid gate, and reduced channels rounded to multiples of 8.
+        self.se = (
+            SqueezeExcite(
+                mid, rd_channels=make_divisible(mid * 0.25), gate=nnx.hard_sigmoid, rngs=rngs
+            )
+            if se
+            else None
+        )
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn2 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         y = x if self.expand is None else self.act(self.expand(x))
@@ -86,12 +101,12 @@ class MobileNetV3(ClassifierMixin, nnx.Module):
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.conv1 = nnx.Conv(in_chans, 16, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(16, rngs=rngs)
+        self.bn1 = BatchNorm(16, rngs=rngs)
         self.blocks = nnx.List(
             [InvertedResidualV3(i, o, k, s, e, se, a, rngs=rngs) for k, e, i, o, se, a, s in cfg]
         )
         self.conv_head = nnx.Conv(cfg[-1][3], head_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn_head = nnx.BatchNorm(head_chs, rngs=rngs)
+        self.bn_head = BatchNorm(head_chs, rngs=rngs)
         self.num_features = head_mid
         self.fc1 = nnx.Linear(head_chs, head_mid, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)

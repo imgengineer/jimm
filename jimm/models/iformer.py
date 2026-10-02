@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from ..features import _select_features
-from ..layers import DropPath, gelu, global_pool_nhwc
+from ..layers import BatchNorm, DropPath, gelu, global_pool_nhwc
 from ..registry import _cfg, register_model
 from ._conv import ConvNormAct
 
@@ -138,7 +138,7 @@ class IFormerStage(nnx.Module):
 
 class NormLinear(nnx.Module):
     def __init__(self, dim, num_classes, *, rngs):
-        self.bn = nnx.BatchNorm(dim, epsilon=1e-5, momentum=0.9, rngs=rngs)
+        self.bn = BatchNorm(dim, epsilon=1e-5, momentum=0.9, rngs=rngs)
         self.linear = nnx.Linear(dim, num_classes, rngs=rngs)
 
     def __call__(self, x):

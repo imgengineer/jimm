@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from flax import nnx
 from jax.nn import silu
 
-from ..layers import ClassifierMixin, DropPath
+from ..layers import BatchNorm, ClassifierMixin, DropPath
 from ..registry import _cfg, register_model
 
 
@@ -31,7 +31,7 @@ class MBConv(nnx.Module):
         self.drop_path = DropPath(drop_path, rngs=rngs)
         if self.has_expand:
             self.expand = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-            self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+            self.bn1 = BatchNorm(mid, rngs=rngs)
         self.dw = nnx.Conv(
             mid,
             mid,
@@ -41,10 +41,10 @@ class MBConv(nnx.Module):
             feature_group_count=mid,
             rngs=rngs,
         )
-        self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn2 = BatchNorm(mid, rngs=rngs)
         self.se = SqueezeExciteEff(in_chs, mid, 0.25, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn3 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         y = silu(self.bn1(self.expand(x))) if self.has_expand else x
@@ -120,7 +120,7 @@ class EfficientNet(ClassifierMixin, nnx.Module):
             raise ValueError("width and depth multipliers must be positive")
         stem = _round_width(32, width_mult)
         self.conv_stem = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
+        self.bn1 = BatchNorm(stem, rngs=rngs)
         total = sum(_round_depth(n, depth_mult) for _, _, _, n, _ in BASE_CFG)
         dpr = [drop_path_rate * i / max(total - 1, 1) for i in range(total)]
         blocks, chs = [], stem
@@ -134,7 +134,7 @@ class EfficientNet(ClassifierMixin, nnx.Module):
         self.blocks = nnx.List(blocks)
         head = _round_width(1280, width_mult)
         self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
-        self.bn_head = nnx.BatchNorm(head, rngs=rngs)
+        self.bn_head = BatchNorm(head, rngs=rngs)
         self.num_features = head
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None

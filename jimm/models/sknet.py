@@ -3,7 +3,7 @@
 import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
-from ..layers import ClassifierMixin, DropPath
+from ..layers import BatchNorm, ClassifierMixin, DropPath
 from ..registry import _cfg, register_model
 from .resnet import Downsample
 
@@ -21,7 +21,7 @@ class SKConv(nnx.Module):
             feature_group_count=groups,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(chs, rngs=rngs)
+        self.bn1 = BatchNorm(chs, rngs=rngs)
         self.conv2 = nnx.Conv(
             chs,
             chs,
@@ -32,7 +32,7 @@ class SKConv(nnx.Module):
             kernel_dilation=(2, 2),
             rngs=rngs,
         )
-        self.bn2 = nnx.BatchNorm(chs, rngs=rngs)
+        self.bn2 = BatchNorm(chs, rngs=rngs)
         try:
             rd = max(int(chs * rd_ratio), rd_divisor)
         except (TypeError, ValueError):
@@ -56,10 +56,10 @@ class SKBottleneck(nnx.Module):
         out_chs = chs * self.expansion
         mid = chs * 2  # SKNet bottleneck width = chs * 2
         self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.sk = SKConv(mid, stride, rngs=rngs)
         self.conv3 = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn3 = BatchNorm(out_chs, rngs=rngs)
         self.shortcut = (
             Downsample(in_chs, out_chs, stride, rngs=rngs)
             if (stride != 1 or in_chs != out_chs)
@@ -98,7 +98,7 @@ class SKNet(ClassifierMixin, nnx.Module):
             use_bias=False,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(64, rngs=rngs)
+        self.bn1 = BatchNorm(64, rngs=rngs)
         dpr = [drop_path_rate * i / max(sum(layers) - 1, 1) for i in range(sum(layers))]
         chs, stages, k = 64, [], 0
         for i, (n, stride) in enumerate(zip(layers, [1, 2, 2, 2])):

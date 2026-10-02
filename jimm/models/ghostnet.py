@@ -3,24 +3,33 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite, global_pool_nhwc
+from ..layers import (
+    BatchNorm,
+    ClassifierMixin,
+    ConvBNAct,
+    SqueezeExcite,
+    global_pool_nhwc,
+    make_divisible,
+)
 from ..registry import _cfg, register_model
 
 
 class GhostModule(nnx.Module):
-    """Cheap half conv + 5x5 depthwise on half, concatenated."""
+    """Primary 1x1 conv on half the channels plus a cheap 3x3 depthwise branch."""
 
-    def __init__(self, in_chs, out_chs, *, rngs):
+    def __init__(self, in_chs, out_chs, use_act=True, *, rngs):
         half = -(-out_chs // 2)  # ceil; cheap branch same width, output sliced to out_chs
         self.out_chs = out_chs
+        self.use_act = use_act
         self.conv1 = nnx.Conv(in_chs, half, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(half, rngs=rngs)
-        self.dw = nnx.Conv(half, half, (5, 5), use_bias=False, feature_group_count=half, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(half, rngs=rngs)
+        self.bn1 = BatchNorm(half, rngs=rngs)
+        self.dw = nnx.Conv(half, half, (3, 3), use_bias=False, feature_group_count=half, rngs=rngs)
+        self.bn2 = BatchNorm(half, rngs=rngs)
 
     def __call__(self, x):
-        x1 = nnx.relu(self.bn1(self.conv1(x)))
-        x2 = nnx.relu(self.bn2(self.dw(x1)))
+        act = nnx.relu if self.use_act else (lambda y: y)
+        x1 = act(self.bn1(self.conv1(x)))
+        x2 = act(self.bn2(self.dw(x1)))
         return jnp.concatenate([x1, x2], axis=-1)[..., : self.out_chs]
 
 
@@ -33,8 +42,17 @@ class GhostBottleneck(nnx.Module):
             if stride == 2
             else None
         )
-        self.se = SqueezeExcite(mid_chs, rngs=rngs, rd_ratio=0.25) if se else None
-        self.ghost2 = GhostModule(mid_chs, out_chs, rngs=rngs)
+        self.se = (
+            SqueezeExcite(
+                mid_chs,
+                rd_channels=make_divisible(mid_chs * 0.25, 4),
+                gate=nnx.hard_sigmoid,
+                rngs=rngs,
+            )
+            if se
+            else None
+        )
+        self.ghost2 = GhostModule(mid_chs, out_chs, use_act=False, rngs=rngs)
         if self.use_shortcut_conv:
             self.sc_dw = ConvBNAct(
                 in_chs, in_chs, kernel, stride, groups=in_chs, act="identity", rngs=rngs
@@ -47,7 +65,7 @@ class GhostBottleneck(nnx.Module):
             y = self.dw(y)
         if self.se is not None:
             y = self.se(y)
-        y = self.ghost2(y)  # linear (no act) per paper
+        y = self.ghost2(y)  # linear projection
         if self.use_shortcut_conv:
             return y + self.sc_pw(self.sc_dw(x))
         return y + x
@@ -86,18 +104,19 @@ class GhostNet(ClassifierMixin, nnx.Module):
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        stem = max(int(16 * width_mult), 8)
+        # timm rounds every width to a multiple of 4.
+        stem = make_divisible(16 * width_mult, 4)
         self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
+        self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for k, e, c, se, s, n in GHOSTNET_CFG:
-            out = max(int(c * width_mult), 8)
-            mid = max(int(e * width_mult), 8)
+            out = make_divisible(c * width_mult, 4)
+            mid = make_divisible(e * width_mult, 4)
             for j in range(n):
                 blocks.append(GhostBottleneck(chs, mid, out, k, s if j == 0 else 1, se, rngs=rngs))
                 chs = out
         self.blocks = nnx.List(blocks)
-        head = max(int(960 * width_mult), 8)
+        head = make_divisible(960 * width_mult, 4)
         self.conv_head = ConvBNAct(chs, head, 1, rngs=rngs)
         self.num_features = 1280
         self.head_fc1 = nnx.Linear(head, 1280, rngs=rngs)

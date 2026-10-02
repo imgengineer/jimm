@@ -44,19 +44,19 @@ class MlpMixer(ClassifierMixin, nnx.Module):
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
         n = self.patch_embed.num_patches
-        dpr = [drop_path_rate * i / max(num_blocks - 1, 1) for i in range(num_blocks)]
+        # timm sizes both MLPs from the embedding width and uses one drop-path rate.
         self.blocks = nnx.List(
             [
                 MixerBlock(
                     n,
                     embed_dim,
-                    int(n * mlp_ratio[0]),
+                    int(embed_dim * mlp_ratio[0]),
                     int(embed_dim * mlp_ratio[1]),
                     drop_rate,
-                    dpr[i],
+                    drop_path_rate,
                     rngs=rngs,
                 )
-                for i in range(num_blocks)
+                for _ in range(num_blocks)
             ]
         )
         self.norm = nnx.LayerNorm(embed_dim, rngs=rngs)
@@ -99,17 +99,31 @@ def mixer_l16_224(**kwargs):
     return _mixer(16, 1024, 24, **kwargs)
 
 
-class ResMLPBlock(nnx.Module):
-    def __init__(self, num_tokens, dim, mlp_ratio=4.0, *, rngs):
-        self.norm1 = nnx.LayerNorm(dim, epsilon=1e-6, rngs=rngs)
-        self.token_fc = nnx.Linear(num_tokens, num_tokens, rngs=rngs)
-        self.norm2 = nnx.LayerNorm(dim, epsilon=1e-6, rngs=rngs)
-        self.channel_mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
+class Affine(nnx.Module):
+    """ResMLP's per-channel ``alpha * x + beta`` in place of normalization."""
+
+    def __init__(self, dim, *, rngs):
+        self.alpha = nnx.Param(jnp.ones((1, 1, dim)))
+        self.beta = nnx.Param(jnp.zeros((1, 1, dim)))
 
     def __call__(self, x):
-        y = self.norm1(x).transpose(0, 2, 1)
-        x = x + self.token_fc(y).transpose(0, 2, 1)
-        return x + self.channel_mlp(self.norm2(x))
+        return self.beta[...] + self.alpha[...] * x
+
+
+class ResMLPBlock(nnx.Module):
+    def __init__(self, num_tokens, dim, mlp_ratio=4.0, init_values=1e-4, drop_path=0.0, *, rngs):
+        self.norm1 = Affine(dim, rngs=rngs)
+        self.token_fc = nnx.Linear(num_tokens, num_tokens, rngs=rngs)
+        self.norm2 = Affine(dim, rngs=rngs)
+        self.channel_mlp = Mlp(dim, int(dim * mlp_ratio), rngs=rngs)
+        self.ls1 = nnx.Param(jnp.full((dim,), init_values))
+        self.ls2 = nnx.Param(jnp.full((dim,), init_values))
+        self.drop_path = DropPath(drop_path, rngs=rngs)
+
+    def __call__(self, x):
+        y = self.token_fc(self.norm1(x).transpose(0, 2, 1)).transpose(0, 2, 1)
+        x = x + self.drop_path(self.ls1[...] * y)
+        return x + self.drop_path(self.ls2[...] * self.channel_mlp(self.norm2(x)))
 
 
 class ResMLP(ClassifierMixin, nnx.Module):
@@ -121,10 +135,12 @@ class ResMLP(ClassifierMixin, nnx.Module):
         patch_size=16,
         num_blocks=12,
         embed_dim=384,
+        init_values=1e-4,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
         drop_rate=0.0,
+        drop_path_rate=0.0,
         *,
         rngs,
     ):
@@ -132,8 +148,16 @@ class ResMLP(ClassifierMixin, nnx.Module):
         self.num_features = embed_dim
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim, rngs=rngs)
         n = self.patch_embed.num_patches
-        self.blocks = nnx.List([ResMLPBlock(n, embed_dim, rngs=rngs) for _ in range(num_blocks)])
-        self.norm = nnx.LayerNorm(embed_dim, epsilon=1e-6, rngs=rngs)
+        self.blocks = nnx.List(
+            [
+                ResMLPBlock(
+                    n, embed_dim, init_values=init_values, drop_path=drop_path_rate, rngs=rngs
+                )
+                for _ in range(num_blocks)
+            ]
+        )
+        self.norm = Affine(embed_dim, rngs=rngs)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dim, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
@@ -144,6 +168,7 @@ class ResMLP(ClassifierMixin, nnx.Module):
 
     def forward_head(self, x):
         x = jnp.mean(x, axis=1) if self.global_pool == "avg" else x[:, 0]
+        x = self.head_drop(x)
         return self.head(x) if self.head is not None else x
 
     def __call__(self, x):
@@ -159,13 +184,13 @@ def resmlp_12_224(**kwargs):
 
 @register_model
 def resmlp_24_224(**kwargs):
-    model = ResMLP(num_blocks=24, **kwargs)
+    model = ResMLP(num_blocks=24, init_values=1e-5, **kwargs)
     model.default_cfg = _cfg()
     return model
 
 
 @register_model
 def resmlp_36_224(**kwargs):
-    model = ResMLP(num_blocks=36, **kwargs)
+    model = ResMLP(num_blocks=36, init_values=1e-6, **kwargs)
     model.default_cfg = _cfg()
     return model

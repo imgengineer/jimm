@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, DropPath
+from ..layers import BatchNorm, ClassifierMixin, DropPath
 from ..registry import _cfg, register_model
 
 
@@ -13,7 +13,7 @@ class PartialConv(nnx.Module):
     def __init__(self, dim, p_chs, *, rngs):
         self.p_chs = p_chs
         self.conv = nnx.Conv(p_chs, p_chs, (3, 3), use_bias=False, rngs=rngs)
-        self.bn = nnx.BatchNorm(p_chs, rngs=rngs)
+        self.bn = BatchNorm(p_chs, rngs=rngs)
 
     def __call__(self, x):
         y = nnx.relu(self.bn(self.conv(x[..., : self.p_chs])))
@@ -51,7 +51,7 @@ class FasterNet(ClassifierMixin, nnx.Module):
         self.stem = nnx.Conv(
             in_chans, channels[0], (4, 4), strides=(4, 4), use_bias=False, rngs=rngs
         )
-        self.stem_bn = nnx.BatchNorm(channels[0], rngs=rngs)
+        self.stem_bn = BatchNorm(channels[0], rngs=rngs)
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
         stages, k = [], 0
         for i, (c, d) in enumerate(zip(channels, depths)):
@@ -66,7 +66,7 @@ class FasterNet(ClassifierMixin, nnx.Module):
         self.downsamples = nnx.List(
             [
                 nnx.Sequential(
-                    nnx.BatchNorm(channels[i], rngs=rngs),
+                    BatchNorm(channels[i], rngs=rngs),
                     nnx.Conv(
                         channels[i],
                         channels[i + 1],

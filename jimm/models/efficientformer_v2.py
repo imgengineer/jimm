@@ -3,7 +3,7 @@
 from flax import nnx
 
 from ..attention import dot_product_attention
-from ..layers import ClassifierMixin, DropPath, gelu
+from ..layers import BatchNorm, ClassifierMixin, DropPath, gelu
 from ..registry import _cfg, register_model
 
 
@@ -12,7 +12,7 @@ class ConvMlp(nnx.Module):
 
     def __init__(self, in_chs, hidden_chs, out_chs, *, rngs):
         self.fc1 = nnx.Conv(in_chs, hidden_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(hidden_chs, rngs=rngs)
+        self.bn1 = BatchNorm(hidden_chs, rngs=rngs)
         self.dw = nnx.Conv(
             hidden_chs,
             hidden_chs,
@@ -21,9 +21,9 @@ class ConvMlp(nnx.Module):
             use_bias=False,
             rngs=rngs,
         )
-        self.bn2 = nnx.BatchNorm(hidden_chs, rngs=rngs)
+        self.bn2 = BatchNorm(hidden_chs, rngs=rngs)
         self.fc2 = nnx.Conv(hidden_chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn3 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         x = nnx.relu(self.bn1(self.fc1(x)))
@@ -97,7 +97,7 @@ class EfficientFormerV2(ClassifierMixin, nnx.Module):
                 nnx.Conv(
                     in_chans, embed_dims[0] // 2, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(embed_dims[0] // 2, rngs=rngs),
+                BatchNorm(embed_dims[0] // 2, rngs=rngs),
                 nnx.Conv(
                     embed_dims[0] // 2,
                     embed_dims[0],
@@ -106,7 +106,7 @@ class EfficientFormerV2(ClassifierMixin, nnx.Module):
                     use_bias=False,
                     rngs=rngs,
                 ),
-                nnx.BatchNorm(embed_dims[0], rngs=rngs),
+                BatchNorm(embed_dims[0], rngs=rngs),
             ]
         )
 
@@ -132,13 +132,13 @@ class EfficientFormerV2(ClassifierMixin, nnx.Module):
                         use_bias=False,
                         rngs=rngs,
                     ),
-                    nnx.BatchNorm(embed_dims[i + 1], rngs=rngs),
+                    BatchNorm(embed_dims[i + 1], rngs=rngs),
                 )
                 for i in range(len(embed_dims) - 1)
             ]
         )
 
-        self.norm = nnx.BatchNorm(self.num_features, rngs=rngs)
+        self.norm = BatchNorm(self.num_features, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 

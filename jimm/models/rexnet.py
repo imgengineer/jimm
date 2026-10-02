@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, SqueezeExcite
+from ..layers import BatchNorm, ClassifierMixin, SqueezeExcite
 from ..registry import _cfg, register_model
 from .mobilenetv2 import ConvBN, round_chs
 
@@ -21,10 +21,10 @@ class ReXBlock(nnx.Module):
             feature_group_count=mid,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.se = SqueezeExcite(mid, rngs=rngs, rd_ratio=1 / 12) if use_se else None
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn2 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         y = x if self.expand is None else nnx.silu(self.expand(x))
@@ -63,7 +63,7 @@ class ReXNet(ClassifierMixin, nnx.Module):
         self.conv1 = nnx.Conv(
             in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, padding="VALID", rngs=rngs
         )
-        self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
+        self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for e, c, n, s, se in REXNET_CFG:
             out = round_chs(c, width_mult)
@@ -73,7 +73,7 @@ class ReXNet(ClassifierMixin, nnx.Module):
         self.blocks = nnx.List(blocks)
         head = round_chs(1280, width_mult)
         self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
-        self.bn_head = nnx.BatchNorm(head, rngs=rngs)
+        self.bn_head = BatchNorm(head, rngs=rngs)
         self.num_features = head
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None

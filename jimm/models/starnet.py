@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct, DropPath
+from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, DropPath
 from ..registry import _cfg, register_model
 
 
@@ -11,11 +11,11 @@ class StarBlock(nnx.Module):
 
     def __init__(self, dim, mlp_ratio=4, drop_path=0.0, *, rngs):
         self.dw = nnx.Conv(dim, dim, (7, 7), use_bias=False, feature_group_count=dim, rngs=rngs)
-        self.bn_dw = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn_dw = BatchNorm(dim, rngs=rngs)
         self.f1 = nnx.Conv(dim, dim * mlp_ratio, (1, 1), rngs=rngs)
         self.f2 = nnx.Conv(dim, dim * mlp_ratio, (1, 1), rngs=rngs)
         self.g = nnx.Conv(dim * mlp_ratio, dim, (1, 1), use_bias=False, rngs=rngs)
-        self.bn = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn = BatchNorm(dim, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):

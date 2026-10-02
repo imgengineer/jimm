@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin
+from ..layers import BatchNorm, ClassifierMixin
 from ..registry import _cfg, register_model
 
 
@@ -19,9 +19,9 @@ class SeparableConv(nnx.Module):
             feature_group_count=in_chs,
             rngs=rngs,
         )
-        self.bn_dw = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn_dw = BatchNorm(in_chs, rngs=rngs)
         self.pw = nnx.Conv(in_chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn_pw = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn_pw = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         return self.bn_pw(self.pw(self.bn_dw(self.dw(x))))
@@ -43,7 +43,7 @@ class XceptionBlock(nnx.Module):
                 nnx.Conv(
                     in_chs, out_chs, (1, 1), strides=(stride, stride), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(out_chs, rngs=rngs),
+                BatchNorm(out_chs, rngs=rngs),
             )
             if (stride == 2 or in_chs != out_chs)
             else None
@@ -65,9 +65,9 @@ class Xception(ClassifierMixin, nnx.Module):
         self.conv1 = nnx.Conv(
             in_chans, 32, (3, 3), strides=(2, 2), use_bias=False, padding="VALID", rngs=rngs
         )
-        self.bn1 = nnx.BatchNorm(32, rngs=rngs)
+        self.bn1 = BatchNorm(32, rngs=rngs)
         self.conv2 = nnx.Conv(32, 64, (3, 3), use_bias=False, padding="VALID", rngs=rngs)
-        self.bn2 = nnx.BatchNorm(64, rngs=rngs)
+        self.bn2 = BatchNorm(64, rngs=rngs)
         self.block1 = XceptionBlock(64, 128, 2, stride=2, rngs=rngs)
         self.block2 = XceptionBlock(128, 256, 2, stride=2, rngs=rngs)
         self.block3 = XceptionBlock(256, 728, 2, stride=2, rngs=rngs)

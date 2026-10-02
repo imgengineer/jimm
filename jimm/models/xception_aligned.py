@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin
+from ..layers import BatchNorm, ClassifierMixin
 from ..registry import _cfg, register_model
 from .xception import SeparableConv, XceptionBlock
 
@@ -23,9 +23,9 @@ class XceptionAligned(ClassifierMixin, nnx.Module):
         self.conv1 = nnx.Conv(
             in_chans, widths[0], (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
         )
-        self.bn1 = nnx.BatchNorm(widths[0], rngs=rngs)
+        self.bn1 = BatchNorm(widths[0], rngs=rngs)
         self.conv2 = nnx.Conv(widths[0], widths[1], (3, 3), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(widths[1], rngs=rngs)
+        self.bn2 = BatchNorm(widths[1], rngs=rngs)
         self.block1 = XceptionBlock(widths[1], widths[2], 2, stride=2, rngs=rngs)
         self.block2 = XceptionBlock(widths[2], widths[3], 2, stride=2, rngs=rngs)
         self.block3 = XceptionBlock(widths[3], widths[3], 2, stride=2, rngs=rngs)

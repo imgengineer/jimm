@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, DropPath, Mlp
+from ..layers import BatchNorm, ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 from .resnet import Bottleneck
 from .vision_transformer import Attention
@@ -22,7 +22,7 @@ class HybridStem(nnx.Module):
             use_bias=False,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(64, rngs=rngs)
+        self.bn1 = BatchNorm(64, rngs=rngs)
         blocks, chs = [], 64
         for i, n in enumerate([2, 2, 2]):
             width = 64 * 2**i

@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin
+from ..layers import BatchNorm, ClassifierMixin
 from ..registry import _cfg, register_model
 
 
@@ -11,11 +11,11 @@ class PreActBottleneck(nnx.Module):
 
     def __init__(self, in_chs, chs, stride=1, *, rngs):
         out_chs = chs * self.expansion
-        self.bn1 = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn1 = BatchNorm(in_chs, rngs=rngs)
         self.conv1 = nnx.Conv(in_chs, chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(chs, rngs=rngs)
+        self.bn2 = BatchNorm(chs, rngs=rngs)
         self.conv2 = nnx.Conv(chs, chs, (3, 3), strides=(stride, stride), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(chs, rngs=rngs)
+        self.bn3 = BatchNorm(chs, rngs=rngs)
         self.conv3 = nnx.Conv(chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.short_conv = (
             nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride), use_bias=False, rngs=rngs)
@@ -56,7 +56,7 @@ class ResNetV2(ClassifierMixin, nnx.Module):
                 chs = width * PreActBottleneck.expansion
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.norm = nnx.BatchNorm(self.num_features, rngs=rngs)  # final pre-act norm
+        self.norm = BatchNorm(self.num_features, rngs=rngs)  # final pre-act norm
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 

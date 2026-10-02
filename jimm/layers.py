@@ -12,12 +12,14 @@ import jax.numpy as jnp
 from flax import nnx
 
 __all__ = [
+    "BatchNorm",
     "DropPath",
     "drop_path",
     "create_act_layer",
     "PatchEmbed",
     "Mlp",
     "SqueezeExcite",
+    "make_divisible",
     "ConvBNAct",
     "ClassifierMixin",
     "global_pool_nhwc",
@@ -34,6 +36,18 @@ def gelu(x: jax.Array) -> jax.Array:
     parity when loading timm/PyTorch checkpoints.
     """
     return nnx.gelu(x, approximate=False)
+
+
+class BatchNorm(nnx.BatchNorm):
+    """Batch normalization with timm/PyTorch running-statistics momentum.
+
+    PyTorch's ``momentum=0.1`` update corresponds to Flax ``momentum=0.9``.
+    Flax's default of 0.99 averages over about 100 steps, so evaluation-mode
+    statistics lag the trained weights on short epochs and small datasets.
+    """
+
+    def __init__(self, num_features: int, *, momentum: float = 0.9, **kwargs):
+        super().__init__(num_features, momentum=momentum, **kwargs)
 
 
 def drop_path(
@@ -181,7 +195,7 @@ class ConvBNAct(nnx.Module):
             kernel_dilation=(dilation, dilation),
             rngs=rngs,
         )
-        self.bn = nnx.BatchNorm(out_chs, rngs=rngs) if use_bn else None
+        self.bn = BatchNorm(out_chs, rngs=rngs) if use_bn else None
         self.act = _ACTS[act]
 
     def __call__(self, x: jax.Array) -> jax.Array:
@@ -191,20 +205,37 @@ class ConvBNAct(nnx.Module):
         return x if self.act is None else self.act(x)
 
 
+def make_divisible(value: float, divisor: int = 8, min_value: int | None = None) -> int:
+    """Round channels to a multiple of ``divisor`` as timm does, staying within 10%."""
+    min_value = min_value or divisor
+    rounded = max(min_value, int(value + divisor / 2) // divisor * divisor)
+    return rounded + divisor if rounded < 0.9 * value else rounded
+
+
 class SqueezeExcite(nnx.Module):
     """Squeeze-and-Excitation (SE) channel-attention block on NHWC feature maps."""
 
-    def __init__(self, chs: int, rd_ratio: float = 0.25, *, rngs: nnx.Rngs):
-        try:
-            rd = max(int(chs * rd_ratio), 1)
-        except (TypeError, ValueError):
-            rd = 1
-        self.fc1 = nnx.Linear(chs, rd, rngs=rngs)
-        self.fc2 = nnx.Linear(rd, chs, rngs=rngs)
+    def __init__(
+        self,
+        chs: int,
+        rd_ratio: float = 0.25,
+        *,
+        rd_channels: int | None = None,
+        gate=nnx.sigmoid,
+        rngs: nnx.Rngs,
+    ):
+        if rd_channels is None:
+            try:
+                rd_channels = max(int(chs * rd_ratio), 1)
+            except (TypeError, ValueError):
+                rd_channels = 1
+        self.fc1 = nnx.Linear(chs, rd_channels, rngs=rngs)
+        self.fc2 = nnx.Linear(rd_channels, chs, rngs=rngs)
+        self.gate = gate
 
     def __call__(self, x: jax.Array) -> jax.Array:
         s = jnp.mean(x, axis=(1, 2), keepdims=True)
-        s = nnx.sigmoid(self.fc2(nnx.relu(self.fc1(s))))
+        s = self.gate(self.fc2(nnx.relu(self.fc1(s))))
         return x * s
 
 

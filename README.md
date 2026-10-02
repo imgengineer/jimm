@@ -14,6 +14,9 @@
 
 ### October 2, 2026
 
+- Port HRNet from timm and align SE-ResNet/SE-ResNeXt, MobileNetV3, MNASNet, SPNASNet, MLP-Mixer, ResMLP, ConvMixer, GhostNet, PVTv2, and VGG-BN with their timm architectures. **129 registered names now reproduce timm 1.0.29 parameter counts** (up from 92), checked by [tests/test_timm_parity.py](tests/test_timm_parity.py). HRNet previously shared fusion layers across modules and diverged to NaN within a few bfloat16 steps; the port trains stably and matches timm outputs with identical weights.
+- Use PyTorch-equivalent BatchNorm momentum (Flax `momentum=0.9`). Flax's default of 0.99 left evaluation statistics behind the trained weights: in a ResNet-50 run with 100 steps per epoch, first-epoch validation accuracy rose from 0.38 to 0.79, with unchanged training loss.
+- Fix the training CLI for 130 architectures without stochastic depth, which failed on the unconditional `drop_path_rate` argument; like timm, the CLI passes regularization and pooling overrides only when requested. `get_default_cfg` now returns every model's configuration, such as 300×300 for `efficientnet_b3`, without allocating weights.
 - Fix training color jitter: brightness was an additive shift of up to ±1.4 × 255, so the default `--color-jitter 0.4` turned about **36% of training images** completely black or white. Color jitter, AutoAugment, RandAugment, and AugMix operations now follow timm's PIL semantics and magnitude mappings; random erasing follows timm's box sampling in normalized space; evaluation resizes the shorter edge before the center crop instead of squashing the aspect ratio. See [data pipeline performance](#data-pipeline-performance).
 - Speed up the training input pipeline **2.6×**: augmentation runs on uint8 OpenCV lookup tables and blends, and the training CLI keeps images as uint8 from Grain workers to the device, normalizing and erasing them inside the compiled step like timm's prefetcher. With the default four workers on an RTX 5090, ResNet-18 trains **2.5× faster** and ResNet-50 **1.3× faster** end to end.
 - Add **37 model variants** from five families following [timm 1.0.30](https://github.com/huggingface/pytorch-image-models/releases/tag/v1.0.30): LowFormer, iFormer, EfficientViM, Qwen3 ViT, and DeepSeek ViT. The registry now contains **420 models across 99 families**.
@@ -55,6 +58,8 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Hybrid and mobile transformers | `maxvit_tiny_rw_224`, `coatnet_0_rw_224`, `mobilevit_xxs`, `efficientvit_b0`, `fastvit_t8`, `repvit_m0_9`, `tiny_vit_5m_224` |
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
+
+Parameter counts match timm 1.0.29 for **129 of the 340** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, ConvNeXt, EfficientNet, ViT/DeiT, Swin, DenseNet, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, and VGG families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -352,13 +357,29 @@ Use `uv run pytest tests/` for the full suite, including representative forward/
 
 The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
 
-The core regression suite passed **259 tests** (four GPU-only cases skipped on CPU), including timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **9 GPU attention checks**, covering automatic backend selection, the native autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
+The core regression suite passed **391 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **9 GPU attention checks**, covering automatic backend selection, the native autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
 
 ```bash
 uv run pytest tests/test_attention.py -q
 ```
 
 The training CLI also completed CUDA 13 training, validation, and checkpoint saving on an RTX 5090 with `vit_tiny_patch16_224` at 224×224 (`mlp_ratio=2.0`), using the default four Grain workers, bfloat16, and autotuned Tokamax forward/backward kernels. Training and validation used separate batch sizes of four and eight.
+
+### Training throughput compared with timm
+
+For architectures whose parameter counts match timm, compiled jimm training steps run at least as fast as timm 1.0.29 with eager PyTorch 2.10. Both sides use an RTX 5090, batch size 64, bfloat16 autocast, AdamW, and label smoothing; PyTorch uses channels-last tensors, fused AdamW, and cuDNN benchmarking without `torch.compile`. Throughput is the median over 20 steps after warmup; jimm uses its default settings, including autotuned Tokamax attention.
+
+| Model | jimm | timm (eager) | Ratio |
+| --- | ---: | ---: | ---: |
+| `resnet50` | 2,804 img/s | 2,595 img/s | 1.08× |
+| `convnext_tiny` | 2,059 img/s | 1,989 img/s | 1.04× |
+| `convnextv2_tiny` | 1,851 img/s | 826 img/s | 2.24× |
+| `efficientnet_b0` | 6,151 img/s | 2,856 img/s | 2.15× |
+| `densenet121` | 2,256 img/s | 1,989 img/s | 1.13× |
+| `vit_small_patch16_224` | 4,127 img/s | 3,280 img/s | 1.26× |
+| `vit_base_patch16_224` | 1,432 img/s | 1,233 img/s | 1.16× |
+| `hrnet_w18_small` | 4,713 img/s | 3,824 img/s | 1.23× |
+| `hrnet_w18` | 914 img/s | 944 img/s | 0.97× |
 
 ### Data pipeline performance
 

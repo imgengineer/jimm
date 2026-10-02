@@ -1,10 +1,13 @@
-"""MNASNet / Single-Path NASNet in flax nnx, NHWC. Mirrors timm.models.mnasnet."""
+"""MNASNet-B1 / Single-Path NASNet in flax nnx, NHWC. Mirrors timm's EfficientNet builder.
+
+Blocks use ReLU; channels round to multiples of 8 and the 1280-channel head is not
+scaled by the width multiplier.
+"""
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, relu6
+from ..layers import BatchNorm, ClassifierMixin, make_divisible
 from ..registry import _cfg, register_model
-from .mobilenetv2 import round_chs
 
 
 class SepConv(nnx.Module):
@@ -20,20 +23,20 @@ class SepConv(nnx.Module):
             feature_group_count=in_chs,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn1 = BatchNorm(in_chs, rngs=rngs)
         self.pw = nnx.Conv(in_chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn2 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
-        return self.bn2(self.pw(relu6(self.bn1(self.dw(x)))))
+        return self.bn2(self.pw(nnx.relu(self.bn1(self.dw(x)))))
 
 
 class MBBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, kernel, stride, expand, *, rngs):
-        mid = in_chs * expand
+        mid = make_divisible(in_chs * expand)
         self.use_residual = stride == 1 and in_chs == out_chs
         self.expand = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn0 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn0 = BatchNorm(mid, rngs=rngs)
         self.dw = nnx.Conv(
             mid,
             mid,
@@ -43,30 +46,39 @@ class MBBlock(nnx.Module):
             feature_group_count=mid,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn2 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
-        y = relu6(self.bn0(self.expand(x)))
-        y = relu6(self.bn1(self.dw(y)))
+        y = nnx.relu(self.bn0(self.expand(x)))
+        y = nnx.relu(self.bn1(self.dw(y)))
         y = self.bn2(self.pw(y))
         return x + y if self.use_residual else y
 
 
-# (type, kernel, expand, out, repeats, stride)
-# mnasnet-a1: sep stage stride 1; the 96-channel MB stage keeps resolution (stride 1)
-MNASNET_CFG = [
-    ("sep", 3, 16, 1, 1, 1),
-    ("mb", 3, 24, 3, 2, 3),
-    ("mb", 5, 40, 3, 2, 6),
-    ("mb", 5, 80, 3, 2, 6),
-    ("mb", 3, 96, 2, 1, 6),
-    ("mb", 5, 192, 4, 2, 6),
-    ("mb", 5, 320, 1, 1, 6),
+# (type, kernel, stride, expand, out, repeats) rows from timm's arch definitions.
+MNASNET_CFG = [  # mnasnet_b1
+    ("sep", 3, 1, 1, 16, 1),
+    ("mb", 3, 2, 3, 24, 3),
+    ("mb", 5, 2, 3, 40, 3),
+    ("mb", 5, 2, 6, 80, 3),
+    ("mb", 3, 1, 6, 96, 2),
+    ("mb", 5, 2, 6, 192, 4),
+    ("mb", 3, 1, 6, 320, 1),
 ]
-# spnasnet: same MB config, no sep stage-0 nuance (identical structure family)
-SPNAS_CFG = MNASNET_CFG
+SPNAS_CFG = [
+    ("sep", 3, 1, 1, 16, 1),
+    ("mb", 3, 2, 3, 24, 3),
+    ("mb", 5, 2, 6, 40, 1),
+    ("mb", 3, 1, 3, 40, 3),
+    ("mb", 5, 2, 6, 80, 1),
+    ("mb", 3, 1, 3, 80, 3),
+    ("mb", 5, 1, 6, 96, 1),
+    ("mb", 5, 1, 3, 96, 3),
+    ("mb", 5, 2, 6, 192, 4),
+    ("mb", 3, 1, 6, 320, 1),
+]
 
 
 class MNASNet(ClassifierMixin, nnx.Module):
@@ -82,13 +94,12 @@ class MNASNet(ClassifierMixin, nnx.Module):
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        stem = round_chs(32, width_mult)
+        stem = make_divisible(32 * width_mult)
         self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
+        self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
-        for item in cfg:
-            kind, k, out, n, s, e = item
-            out = round_chs(out, width_mult)
+        for kind, k, s, e, out, n in cfg:
+            out = make_divisible(out * width_mult)
             for j in range(n):
                 if kind == "sep":
                     blocks.append(SepConv(chs, out, k, s if j == 0 else 1, rngs=rngs))
@@ -96,18 +107,18 @@ class MNASNet(ClassifierMixin, nnx.Module):
                     blocks.append(MBBlock(chs, out, k, s if j == 0 else 1, e, rngs=rngs))
                 chs = out
         self.blocks = nnx.List(blocks)
-        head = round_chs(1280, width_mult)
+        head = 1280
         self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
-        self.bn_head = nnx.BatchNorm(head, rngs=rngs)
+        self.bn_head = BatchNorm(head, rngs=rngs)
         self.num_features = head
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = relu6(self.bn1(self.conv1(x)))
+        x = nnx.relu(self.bn1(self.conv1(x)))
         for blk in self.blocks:
             x = blk(x)
-        return relu6(self.bn_head(self.conv_head(x)))
+        return nnx.relu(self.bn_head(self.conv_head(x)))
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))

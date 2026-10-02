@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, relu6
+from ..layers import BatchNorm, ClassifierMixin, relu6
 from ..registry import _cfg, register_model
 
 
@@ -11,7 +11,7 @@ class ConvBN(nnx.Module):
 
     def __init__(self, in_chs, out_chs, *, rngs):
         self.conv = nnx.Conv(in_chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         return self.bn(self.conv(x))
@@ -31,9 +31,9 @@ class InvertedResidual(nnx.Module):
             feature_group_count=mid,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn2 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         y = x if self.expand is None else relu6(self.expand(x))
@@ -74,7 +74,7 @@ class MobileNetV2(ClassifierMixin, nnx.Module):
         self.num_classes, self.global_pool = num_classes, global_pool
         stem = round_chs(32, width_mult)
         self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(stem, rngs=rngs)
+        self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for t, c, n, s in self.CFG:
             out = round_chs(c, width_mult)
@@ -84,7 +84,7 @@ class MobileNetV2(ClassifierMixin, nnx.Module):
         self.blocks = nnx.List(blocks)
         head = round_chs(1280, width_mult) if width_mult > 1.0 else 1280
         self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
-        self.bn_head = nnx.BatchNorm(head, rngs=rngs)
+        self.bn_head = BatchNorm(head, rngs=rngs)
         self.num_features = head
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None

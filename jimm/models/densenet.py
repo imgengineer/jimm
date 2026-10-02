@@ -3,16 +3,16 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin
+from ..layers import BatchNorm, ClassifierMixin
 from ..registry import _cfg, register_model
 
 
 class DenseLayer(nnx.Module):
     def __init__(self, in_chs, growth_rate, bn_size=4, *, rngs):
         mid = bn_size * growth_rate
-        self.bn1 = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn1 = BatchNorm(in_chs, rngs=rngs)
         self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn2 = BatchNorm(mid, rngs=rngs)
         self.conv2 = nnx.Conv(mid, growth_rate, (3, 3), use_bias=False, rngs=rngs)
 
     def __call__(self, x):
@@ -23,7 +23,7 @@ class DenseLayer(nnx.Module):
 
 class Transition(nnx.Module):
     def __init__(self, in_chs, out_chs, *, rngs):
-        self.bn = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn = BatchNorm(in_chs, rngs=rngs)
         self.conv = nnx.Conv(in_chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
 
     def __call__(self, x):
@@ -55,7 +55,7 @@ class DenseNet(ClassifierMixin, nnx.Module):
             use_bias=False,
             rngs=rngs,
         )
-        self.norm0 = nnx.BatchNorm(stem_chs, rngs=rngs)
+        self.norm0 = BatchNorm(stem_chs, rngs=rngs)
         stages, chs = [], stem_chs
         for i, n in enumerate(block_config):
             layers = []
@@ -67,7 +67,7 @@ class DenseNet(ClassifierMixin, nnx.Module):
                 stages.append(Transition(chs, chs // 2, rngs=rngs))
                 chs //= 2
         self.stages = nnx.List(stages)
-        self.norm5 = nnx.BatchNorm(chs, rngs=rngs)
+        self.norm5 = BatchNorm(chs, rngs=rngs)
         self.num_features = chs
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(chs, num_classes, rngs=rngs) if num_classes > 0 else None

@@ -4,6 +4,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
+from ..layers import BatchNorm
+
 
 class ConvNormAct(nnx.Module):
     """Use symmetric PyTorch padding, including for stride-two convolutions."""
@@ -34,7 +36,7 @@ class ConvNormAct(nnx.Module):
             rngs=rngs,
         )
         self.norm = (
-            nnx.BatchNorm(
+            BatchNorm(
                 out_chs,
                 epsilon=1e-5,
                 momentum=0.9,

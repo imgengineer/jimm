@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from ..attention import dot_product_attention
-from ..layers import ClassifierMixin, DropPath, Mlp, SqueezeExcite, gelu
+from ..layers import BatchNorm, ClassifierMixin, DropPath, Mlp, SqueezeExcite, gelu
 from ..registry import _cfg, register_model
 
 
@@ -12,7 +12,7 @@ class MBConvBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, expand=4, *, rngs):
         mid = in_chs * expand
         self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.dw = nnx.Conv(
             mid,
             mid,
@@ -22,10 +22,10 @@ class MBConvBlock(nnx.Module):
             feature_group_count=mid,
             rngs=rngs,
         )
-        self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn2 = BatchNorm(mid, rngs=rngs)
         self.se = SqueezeExcite(mid, 0.25, rngs=rngs)
         self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn3 = BatchNorm(out_chs, rngs=rngs)
         self.shortcut = (
             nnx.Conv(in_chs, out_chs, (1, 1), strides=(stride, stride), rngs=rngs)
             if (stride != 1 or in_chs != out_chs)

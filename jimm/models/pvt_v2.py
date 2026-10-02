@@ -129,18 +129,18 @@ class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
             stages.append(nnx.List(blocks))
         self.patches = nnx.List(patches)
         self.stages = nnx.List(stages)
-        self.norm = nnx.LayerNorm(embed_dims[-1], rngs=rngs)
+        # timm closes every stage with a LayerNorm; the last one is the final norm.
+        self.norms = nnx.List([nnx.LayerNorm(dim, rngs=rngs) for dim in embed_dims])
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = nnx.Linear(embed_dims[-1], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        for patch, stage in zip(self.patches, self.stages):
+        for patch, stage, norm in zip(self.patches, self.stages, self.norms):
             x, H, W = patch(x)
             for blk in stage:
                 x = blk(x, H, W)
-            x = x.reshape(x.shape[0], H, W, -1)
-        B, H, W, C = x.shape
-        return self.norm(x.reshape(B, H * W, C)).reshape(B, H, W, C)
+            x = norm(x).reshape(x.shape[0], H, W, -1)
+        return x
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))

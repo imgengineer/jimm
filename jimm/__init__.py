@@ -44,6 +44,7 @@ from .checkpoint import (
 from .data import ImageFolder, Loader, MixupCutmix, create_dataset, create_loader
 from .features import FeatureExtractor, FeatureInfo, create_feature_extractor
 from .layers import (
+    BatchNorm,
     ClassifierMixin,
     ConvBNAct,
     DropPath,
@@ -88,6 +89,7 @@ __all__ = [
     "get_default_cfg",
     "is_model",
     # Layers & Mixins
+    "BatchNorm",
     "DropPath",
     "drop_path",
     "create_act_layer",

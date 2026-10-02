@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct
+from ..layers import BatchNorm, ClassifierMixin, ConvBNAct
 from ..registry import _cfg, register_model
 
 
@@ -24,9 +24,9 @@ class SepConv(nnx.Module):
             feature_group_count=in_chs,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn1 = BatchNorm(in_chs, rngs=rngs)
         self.pw = nnx.Conv(in_chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn2 = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         x = self.bn2(self.pw(self.bn1(self.dw(x))))
@@ -117,7 +117,7 @@ class NASNetA(ClassifierMixin, nnx.Module):
                 cells.append(NormalCell(chs, out_chs, rngs=rngs))
                 chs = out_chs * 5
         self.cells = nnx.List(cells)
-        self.norm = nnx.BatchNorm(chs, rngs=rngs)
+        self.norm = BatchNorm(chs, rngs=rngs)
         self.num_features = chs
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(chs, num_classes, rngs=rngs) if num_classes > 0 else None

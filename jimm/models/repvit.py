@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, DropPath, SqueezeExcite
+from ..layers import BatchNorm, ClassifierMixin, DropPath, SqueezeExcite
 from ..registry import _cfg, register_model
 
 
@@ -11,15 +11,15 @@ class RepViTBlock(nnx.Module):
 
     def __init__(self, dim, mlp_ratio=2.0, use_se=False, drop_path=0.0, *, rngs):
         self.dw = nnx.Conv(dim, dim, (3, 3), use_bias=False, feature_group_count=dim, rngs=rngs)
-        self.bn_dw = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn_dw = BatchNorm(dim, rngs=rngs)
         hidden = int(dim * mlp_ratio)
         self.se = (
             SqueezeExcite(hidden, rd_ratio=0.25, rngs=rngs) if use_se else None
         )  # SE on expanded features
         self.pw1 = nnx.Conv(dim, hidden, (1, 1), rngs=rngs)
-        self.bn1 = nnx.BatchNorm(hidden, rngs=rngs)
+        self.bn1 = BatchNorm(hidden, rngs=rngs)
         self.pw2 = nnx.Conv(hidden, dim, (1, 1), rngs=rngs)
-        self.bn2 = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn2 = BatchNorm(dim, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
@@ -52,11 +52,11 @@ class RepViT(ClassifierMixin, nnx.Module):
                 nnx.Conv(
                     in_chans, channels[0] // 2, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(channels[0] // 2, rngs=rngs),
+                BatchNorm(channels[0] // 2, rngs=rngs),
                 nnx.Conv(
                     channels[0] // 2, channels[0], (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(channels[0], rngs=rngs),
+                BatchNorm(channels[0], rngs=rngs),
             ]
         )
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
@@ -102,11 +102,11 @@ class RepViTDown(nnx.Module):
             feature_group_count=in_chs,
             rngs=rngs,
         )
-        self.bn_dw = nnx.BatchNorm(in_chs, rngs=rngs)
+        self.bn_dw = BatchNorm(in_chs, rngs=rngs)
         self.pw = nnx.Conv(in_chs, out_chs, (1, 1), rngs=rngs)
-        self.bn1 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn1 = BatchNorm(out_chs, rngs=rngs)
         self.res_pw = nnx.Conv(in_chs, out_chs, (1, 1), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.res_bn = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.res_bn = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         y = self.bn1(self.pw(self.bn_dw(self.dw(x))))

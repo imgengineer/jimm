@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, DropPath, gelu
+from ..layers import BatchNorm, ClassifierMixin, DropPath, gelu
 from ..registry import _cfg, register_model
 from .vision_transformer import Attention
 
@@ -12,11 +12,11 @@ class ConvBlock(nnx.Module):
 
     def __init__(self, dim, mlp_ratio=4, drop_path=0.0, *, rngs):
         self.dw = nnx.Conv(dim, dim, (3, 3), use_bias=False, feature_group_count=dim, rngs=rngs)
-        self.bn0 = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn0 = BatchNorm(dim, rngs=rngs)
         self.fc1 = nnx.Conv(dim, dim * mlp_ratio, (1, 1), rngs=rngs)
-        self.bn1 = nnx.BatchNorm(dim * mlp_ratio, rngs=rngs)
+        self.bn1 = BatchNorm(dim * mlp_ratio, rngs=rngs)
         self.fc2 = nnx.Conv(dim * mlp_ratio, dim, (1, 1), rngs=rngs)
-        self.bn2 = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn2 = BatchNorm(dim, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
@@ -61,11 +61,11 @@ class EfficientFormer(ClassifierMixin, nnx.Module):
                 nnx.Conv(
                     in_chans, channels[0] // 2, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(channels[0] // 2, rngs=rngs),
+                BatchNorm(channels[0] // 2, rngs=rngs),
                 nnx.Conv(
                     channels[0] // 2, channels[0], (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(channels[0], rngs=rngs),
+                BatchNorm(channels[0], rngs=rngs),
             ]
         )
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
@@ -91,7 +91,7 @@ class EfficientFormer(ClassifierMixin, nnx.Module):
                         use_bias=False,
                         rngs=rngs,
                     ),
-                    nnx.BatchNorm(channels[i + 1], rngs=rngs),
+                    BatchNorm(channels[i + 1], rngs=rngs),
                 )
                 for i in range(3)
             ]

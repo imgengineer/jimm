@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from ..attention import dot_product_attention
-from ..layers import ClassifierMixin, DropPath, Mlp
+from ..layers import BatchNorm, ClassifierMixin, DropPath, Mlp
 from ..registry import _cfg, register_model
 
 
@@ -134,15 +134,15 @@ class PatchEmbedStem(nnx.Module):
         self.conv1 = nnx.Conv(
             in_chans, stem_dim, (7, 7), strides=(2, 2), padding="SAME", use_bias=False, rngs=rngs
         )
-        self.bn1 = nnx.BatchNorm(stem_dim, rngs=rngs)
+        self.bn1 = BatchNorm(stem_dim, rngs=rngs)
         self.conv2 = nnx.Conv(
             stem_dim, stem_dim, (3, 3), strides=(1, 1), padding="SAME", use_bias=False, rngs=rngs
         )
-        self.bn2 = nnx.BatchNorm(stem_dim, rngs=rngs)
+        self.bn2 = BatchNorm(stem_dim, rngs=rngs)
         self.conv3 = nnx.Conv(
             stem_dim, embed_dim, (3, 3), strides=(2, 2), padding="SAME", use_bias=False, rngs=rngs
         )
-        self.bn3 = nnx.BatchNorm(embed_dim, rngs=rngs)
+        self.bn3 = BatchNorm(embed_dim, rngs=rngs)
 
     def __call__(self, x):
         x = nnx.relu(self.bn1(self.conv1(x)))

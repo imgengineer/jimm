@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from ..attention import dot_product_attention
-from ..layers import ClassifierMixin, hswish
+from ..layers import BatchNorm, ClassifierMixin, hswish
 from ..registry import _cfg, register_model
 
 
@@ -82,7 +82,7 @@ class LeViT(ClassifierMixin, nnx.Module):
             [embed_dims[0] // 8, embed_dims[0] // 4, embed_dims[0] // 2, embed_dims[0]]
         ):
             stem.append(nnx.Conv(chs, out, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs))
-            stem.append(nnx.BatchNorm(out, rngs=rngs))
+            stem.append(BatchNorm(out, rngs=rngs))
             chs = out
         self.stem = nnx.List(stem)
         self.stages = nnx.List(

@@ -2,14 +2,15 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin
+from ..layers import BatchNorm, ClassifierMixin
 from ..registry import _cfg, register_model
 
 
 class ConvBlock(nnx.Module):
     def __init__(self, in_chs, chs, use_bn, *, rngs):
-        self.conv = nnx.Conv(in_chs, chs, (3, 3), use_bias=not use_bn, rngs=rngs)
-        self.bn = nnx.BatchNorm(chs, rngs=rngs) if use_bn else None
+        # timm keeps convolution biases even when batch normalization follows.
+        self.conv = nnx.Conv(in_chs, chs, (3, 3), rngs=rngs)
+        self.bn = BatchNorm(chs, rngs=rngs) if use_bn else None
 
     def __call__(self, x):
         x = self.conv(x)

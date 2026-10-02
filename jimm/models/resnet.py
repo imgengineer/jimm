@@ -2,7 +2,7 @@
 
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
-from ..layers import ClassifierMixin, DropPath, SqueezeExcite
+from ..layers import BatchNorm, ClassifierMixin, DropPath, SqueezeExcite
 from ..registry import _cfg, register_model
 
 
@@ -11,7 +11,7 @@ class Downsample(nnx.Module):
         self.conv = nnx.Conv(
             in_chs, out_chs, kernel_size=(1, 1), strides=(stride, stride), use_bias=False, rngs=rngs
         )
-        self.bn = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn = BatchNorm(out_chs, rngs=rngs)
 
     def __call__(self, x):
         return self.bn(self.conv(x))
@@ -27,10 +27,11 @@ class BasicBlock(nnx.Module):
         self.conv1 = nnx.Conv(
             in_chs, chs, (3, 3), strides=(stride, stride), use_bias=False, rngs=rngs
         )
-        self.bn1 = nnx.BatchNorm(chs, rngs=rngs)
+        self.bn1 = BatchNorm(chs, rngs=rngs)
         self.conv2 = nnx.Conv(chs, out_chs, (3, 3), use_bias=False, rngs=rngs)
-        self.bn2 = nnx.BatchNorm(out_chs, rngs=rngs)
-        self.se = SqueezeExcite(out_chs, rngs=rngs) if se else None
+        self.bn2 = BatchNorm(out_chs, rngs=rngs)
+        # timm SEModule: reduce channels by 16 (rd_divisor 8 is exact for ResNet widths).
+        self.se = SqueezeExcite(out_chs, rd_ratio=1 / 16, rngs=rngs) if se else None
         self.shortcut = (
             Downsample(in_chs, out_chs, stride, rngs=rngs)
             if (stride != 1 or in_chs != out_chs)
@@ -56,7 +57,7 @@ class Bottleneck(nnx.Module):
         out_chs = chs * self.expansion
         mid = chs * base_width * groups // 64
         self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.conv2 = nnx.Conv(
             mid,
             mid,
@@ -66,10 +67,11 @@ class Bottleneck(nnx.Module):
             feature_group_count=groups,
             rngs=rngs,
         )
-        self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn2 = BatchNorm(mid, rngs=rngs)
         self.conv3 = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
-        self.se = SqueezeExcite(out_chs, rngs=rngs) if se else None
+        self.bn3 = BatchNorm(out_chs, rngs=rngs)
+        # timm SEModule: reduce channels by 16 (rd_divisor 8 is exact for ResNet widths).
+        self.se = SqueezeExcite(out_chs, rd_ratio=1 / 16, rngs=rngs) if se else None
         self.shortcut = (
             Downsample(in_chs, out_chs, stride, rngs=rngs)
             if (stride != 1 or in_chs != out_chs)
@@ -114,7 +116,7 @@ class ResNet(ClassifierMixin, nnx.Module):
             use_bias=False,
             rngs=rngs,
         )
-        self.bn1 = nnx.BatchNorm(64, rngs=rngs)
+        self.bn1 = BatchNorm(64, rngs=rngs)
         dpr = [drop_path_rate * i / max(sum(layers) - 1, 1) for i in range(sum(layers))]
         chs, stages, k = 64, [], 0
         for i, (n, stride) in enumerate(zip(layers, [1, 2, 2, 2])):

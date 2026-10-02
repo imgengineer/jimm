@@ -1,126 +1,151 @@
-"""HRNet in flax nnx, NHWC. Mirrors timm.models.hrnet / official HRNet-Image-Classification.
+"""HRNet in flax nnx, NHWC. Mirrors timm.models.hrnet with the classification head.
 
-Classifier head: per-branch 4x channel increase + progressive downsample-merge (official scheme).
+Each high-resolution module owns its branches and fusion layers; the head
+increases every branch with a bottleneck, merges them by strided convolutions,
+and projects to 2048 features before pooling.
 """
 
-import jax
+import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct
+from ..layers import ClassifierMixin
 from ..registry import _cfg, register_model
+from ._conv import ConvNormAct
 
 
-class HRBottleneck(nnx.Module):
+class BasicBlock(nnx.Module):
+    expansion = 1
+
+    def __init__(self, in_chs, chs, stride=1, *, rngs):
+        self.conv1 = ConvNormAct(in_chs, chs, 3, stride, act=nnx.relu, rngs=rngs)
+        self.conv2 = ConvNormAct(chs, chs, 3, rngs=rngs)
+        self.downsample = (
+            ConvNormAct(in_chs, chs, 1, stride, rngs=rngs) if stride != 1 or in_chs != chs else None
+        )
+
+    def __call__(self, x):
+        shortcut = x if self.downsample is None else self.downsample(x)
+        return nnx.relu(self.conv2(self.conv1(x)) + shortcut)
+
+
+class Bottleneck(nnx.Module):
     expansion = 4
 
     def __init__(self, in_chs, chs, stride=1, *, rngs):
-        out = chs * self.expansion
-        self.conv1 = ConvBNAct(in_chs, chs, 1, rngs=rngs)
-        self.conv2 = ConvBNAct(chs, chs, 3, stride, rngs=rngs)
-        self.conv3 = ConvBNAct(chs, out, 1, act="identity", rngs=rngs)
-        self.shortcut = (
-            ConvBNAct(in_chs, out, 1, stride, act="identity", rngs=rngs)
-            if (stride != 1 or in_chs != out)
+        out_chs = chs * self.expansion
+        self.conv1 = ConvNormAct(in_chs, chs, 1, act=nnx.relu, rngs=rngs)
+        self.conv2 = ConvNormAct(chs, chs, 3, stride, act=nnx.relu, rngs=rngs)
+        self.conv3 = ConvNormAct(chs, out_chs, 1, rngs=rngs)
+        self.downsample = (
+            ConvNormAct(in_chs, out_chs, 1, stride, rngs=rngs)
+            if stride != 1 or in_chs != out_chs
             else None
         )
 
     def __call__(self, x):
-        y = self.conv3(self.conv2(self.conv1(x)))
-        sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + sc)
+        shortcut = x if self.downsample is None else self.downsample(x)
+        return nnx.relu(self.conv3(self.conv2(self.conv1(x))) + shortcut)
 
 
-class HRBasicBlock(nnx.Module):
-    def __init__(self, chs, *, rngs):
-        self.conv1 = ConvBNAct(chs, chs, 3, rngs=rngs)
-        self.conv2 = ConvBNAct(chs, chs, 3, act="identity", rngs=rngs)
-
-    def __call__(self, x):
-        return nnx.relu(self.conv2(self.conv1(x)) + x)
+def _make_layer(block, in_chs, chs, num_blocks, stride=1, *, rngs):
+    layers = [block(in_chs, chs, stride, rngs=rngs)]
+    layers += [block(chs * block.expansion, chs, rngs=rngs) for _ in range(1, num_blocks)]
+    return nnx.List(layers)
 
 
-class FuseLayer(nnx.Module):
-    """Multi-resolution fusion: from each input branch to each output branch.
+def _run(layers, x):
+    for layer in layers:
+        x = layer(x)
+    return x
 
-    width grows as resolution halves: wi < wj -> downsample (3x3 s2 convs),
-    wi > wj -> 1x1 conv + nearest upsample, wi == wj -> identity.
-    """
 
-    def __init__(self, in_widths, out_widths, *, rngs):
-        projs, factors = [], []
-        for ow in out_widths:
-            row, frow = [], []
-            for iw in in_widths:
-                if iw == ow:
+def _upsample_nearest(x, factor):
+    batch, height, width, chs = x.shape
+    x = jnp.broadcast_to(x[:, :, None, :, None], (batch, height, factor, width, factor, chs))
+    return x.reshape(batch, height * factor, width * factor, chs)
+
+
+class HighResolutionModule(nnx.Module):
+    """Parallel resolution branches followed by all-to-all fusion."""
+
+    def __init__(self, block, num_blocks, in_chs, chs, *, rngs):
+        self.branches = nnx.List(
+            [
+                _make_layer(block, branch_in, branch_chs, blocks, rngs=rngs)
+                for branch_in, branch_chs, blocks in zip(in_chs, chs, num_blocks)
+            ]
+        )
+        widths = [c * block.expansion for c in chs]
+        self.out_chs = widths
+        fuse_layers = []
+        for i in range(len(widths) if len(widths) > 1 else 0):
+            row = []
+            for j, width in enumerate(widths):
+                if j > i:  # 1x1 projection, then nearest upsampling by 2 ** (j - i)
+                    row.append(ConvNormAct(width, widths[i], 1, rngs=rngs))
+                elif j == i:
                     row.append(None)
-                    frow.append(1)
-                elif iw < ow:  # downsample by ow/iw (power of 2) via 3x3 s2 convs
-                    steps, convs, ch = 0, [], iw
-                    f = ow // iw
-                    while f > 1:
-                        steps += 1
-                        f //= 2
-                    for t in range(steps):
-                        out_c = ow if t == steps - 1 else iw
-                        convs.append(
-                            ConvBNAct(
-                                ch,
-                                out_c,
+                else:  # (i - j) stride-two 3x3 convolutions
+                    steps = []
+                    for k in range(i - j):
+                        last = k == i - j - 1
+                        steps.append(
+                            ConvNormAct(
+                                width,
+                                widths[i] if last else width,
                                 3,
                                 2,
-                                act="relu" if t < steps - 1 else "identity",
+                                act=None if last else nnx.relu,
                                 rngs=rngs,
                             )
                         )
-                        ch = out_c
-                    row.append(nnx.List(convs))
-                    frow.append(1)
-                else:  # 1x1 conv + nearest upsample by iw // ow
-                    row.append(ConvBNAct(iw, ow, 1, act="identity", rngs=rngs))
-                    frow.append(iw // ow)
-            projs.append(nnx.List(row))
-            factors.append(frow)
-        self.projs = nnx.List(projs)
-        self.factors = factors
+                    row.append(nnx.List(steps))
+            fuse_layers.append(nnx.List(row))
+        self.fuse_layers = nnx.List(fuse_layers)
 
     def __call__(self, xs):
+        xs = [_run(branch, x) for branch, x in zip(self.branches, xs)]
+        if len(self.fuse_layers) == 0:
+            return xs
         outs = []
-        for row, frow in zip(self.projs, self.factors):
-            zs = [self._apply(proj, x, f) for proj, x, f in zip(row, xs, frow)]
-            y = zs[0]
-            for z in zs[1:]:
-                y = y + z
+        for i, row in enumerate(self.fuse_layers):
+            y = None
+            for j, (layer, x) in enumerate(zip(row, xs)):
+                if layer is None:
+                    z = x
+                elif j > i:
+                    z = _upsample_nearest(layer(x), 2 ** (j - i))
+                else:
+                    z = _run(layer, x)
+                y = z if y is None else y + z
             outs.append(nnx.relu(y))
         return outs
 
-    @staticmethod
-    def _apply(proj, x, factor):
-        if proj is None:
-            return x
-        if isinstance(proj, nnx.List):
-            for c in proj:
-                x = c(x)
-            return x
-        x = proj(x)
-        b, h, w, c = x.shape
-        return jax.image.resize(x, (b, h * factor, w * factor, c), "nearest")
 
-
-def _run_branch(branch, x):
-    for blk in branch:
-        x = blk(x)
-    return x
+def _make_transition(pre_chs, cur_chs, *, rngs):
+    layers = []
+    for i, width in enumerate(cur_chs):
+        if i < len(pre_chs):
+            layers.append(
+                ConvNormAct(pre_chs[i], width, 3, act=nnx.relu, rngs=rngs)
+                if width != pre_chs[i]
+                else None
+            )
+        else:
+            steps = []
+            for j in range(i + 1 - len(pre_chs)):
+                out_chs = width if j == i - len(pre_chs) else pre_chs[-1]
+                steps.append(ConvNormAct(pre_chs[-1], out_chs, 3, 2, act=nnx.relu, rngs=rngs))
+            layers.append(nnx.List(steps))
+    return nnx.List(layers)
 
 
 class HRNet(ClassifierMixin, nnx.Module):
     def __init__(
         self,
-        widths,
-        s1_blocks=4,
-        s2_blocks=4,
-        s3_modules=4,
-        s4_modules=3,
-        bpm=4,
+        stage1,
+        stages,
+        stem_width=64,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
@@ -130,93 +155,103 @@ class HRNet(ClassifierMixin, nnx.Module):
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.stem = nnx.List(
-            [ConvBNAct(in_chans, 64, 3, 2, rngs=rngs), ConvBNAct(64, 64, 3, 2, rngs=rngs)]
-        )
-        self.stage1 = nnx.List(
-            [HRBottleneck(64 if j == 0 else 256, 64, rngs=rngs) for j in range(s1_blocks)]
-        )
-        # transitions: 256 -> b0/b1 after stage1; then from top of previous fuse
-        self.trans0 = nnx.List(
-            [ConvBNAct(256, widths[0], 3, 1, rngs=rngs), ConvBNAct(256, widths[1], 3, 2, rngs=rngs)]
-        )
-        self.trans1 = ConvBNAct(widths[1], widths[2], 3, 2, rngs=rngs)
-        self.trans2 = ConvBNAct(widths[2], widths[3], 3, 2, rngs=rngs)
-        self.s2 = nnx.List(
             [
-                nnx.List([HRBasicBlock(widths[0], rngs=rngs) for _ in range(s2_blocks)]),
-                nnx.List([HRBasicBlock(widths[1], rngs=rngs) for _ in range(s2_blocks)]),
+                ConvNormAct(in_chans, stem_width, 3, 2, act=nnx.relu, rngs=rngs),
+                ConvNormAct(stem_width, 64, 3, 2, act=nnx.relu, rngs=rngs),
             ]
         )
-        self.fuse2 = FuseLayer([widths[0], widths[1]], [widths[0], widths[1]], rngs=rngs)
-        self.s3 = nnx.List(
+        stage1_blocks, stage1_chs = stage1
+        self.layer1 = _make_layer(Bottleneck, 64, stage1_chs, stage1_blocks, rngs=rngs)
+        pre_chs = [stage1_chs * Bottleneck.expansion]
+        transitions, stage_modules = [], []
+        for num_modules, num_blocks, chs in stages:
+            transitions.append(_make_transition(pre_chs, list(chs), rngs=rngs))
+            modules, in_chs = [], list(chs)
+            for _ in range(num_modules):
+                modules.append(HighResolutionModule(BasicBlock, num_blocks, in_chs, chs, rngs=rngs))
+                in_chs = modules[-1].out_chs
+            stage_modules.append(nnx.List(modules))
+            pre_chs = in_chs
+        self.transitions = nnx.List(transitions)
+        self.stages = nnx.List(stage_modules)
+
+        head_chs = (32, 64, 128, 256)
+        self.incre_modules = nnx.List(
             [
-                nnx.List(
-                    [nnx.List([HRBasicBlock(w, rngs=rngs) for _ in range(bpm)]) for w in widths[:3]]
+                _make_layer(Bottleneck, chs, head, 1, rngs=rngs)
+                for chs, head in zip(pre_chs, head_chs)
+            ]
+        )
+        self.downsamp_modules = nnx.List(
+            [
+                ConvNormAct(
+                    head_chs[i] * 4,
+                    head_chs[i + 1] * 4,
+                    3,
+                    2,
+                    act=nnx.relu,
+                    use_bias=True,
+                    rngs=rngs,
                 )
-                for _ in range(s3_modules)
+                for i in range(len(head_chs) - 1)
             ]
         )
-        self.fuse3 = FuseLayer(widths[:3], widths[:3], rngs=rngs)
-        self.s4 = nnx.List(
-            [
-                nnx.List(
-                    [nnx.List([HRBasicBlock(w, rngs=rngs) for _ in range(bpm)]) for w in widths]
-                )
-                for _ in range(s4_modules)
-            ]
+        self.num_features = 2048
+        self.final_layer = ConvNormAct(
+            head_chs[-1] * 4, self.num_features, 1, act=nnx.relu, use_bias=True, rngs=rngs
         )
-        self.fuse4 = FuseLayer(widths, widths, rngs=rngs)
-        # official increased head: 4x channels per branch, merge down to 1/32 res
-        self.incre = nnx.List([ConvBNAct(w, 4 * w, 1, rngs=rngs) for w in widths])
-        self.downs = nnx.List(
-            [
-                ConvBNAct(4 * widths[i], 4 * widths[i + 1], 3, 2, act="identity", rngs=rngs)
-                for i in range(3)
-            ]
-        )
-        self.num_features = 4 * widths[-1]
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        for layer in self.stem:
-            x = layer(x)
-        for blk in self.stage1:
-            x = blk(x)
-        xs = [self.trans0[0](x), self.trans0[1](x)]
-        xs = [_run_branch(b, x) for b, x in zip(self.s2, xs)]
-        xs = self.fuse2(xs)
-        xs.append(self.trans1(xs[1]))
-        for module in self.s3:
-            xs = [_run_branch(b, x) for b, x in zip(module, xs)]
-            xs = self.fuse3(xs)
-        xs.append(self.trans2(xs[2]))
-        for module in self.s4:
-            xs = [_run_branch(b, x) for b, x in zip(module, xs)]
-            xs = self.fuse4(xs)
-        # increased head merge
-        y = self.downs[0](self.incre[0](xs[0])) + self.incre[1](xs[1])
-        y = self.downs[1](y) + self.incre[2](xs[2])
-        y = self.downs[2](y) + self.incre[3](xs[3])
-        return nnx.relu(y)
+        x = _run(self.layer1, _run(self.stem, x))
+        ys = [x]
+        for transition, modules in zip(self.transitions, self.stages):
+            # New branches and changed widths derive from the lowest-resolution output.
+            xs = []
+            for i, layer in enumerate(transition):
+                if layer is None:
+                    xs.append(ys[i])
+                else:
+                    xs.append(_run(layer, ys[-1]) if isinstance(layer, nnx.List) else layer(ys[-1]))
+            for module in modules:
+                xs = module(xs)
+            ys = xs
+        y = _run(self.incre_modules[0], ys[0])
+        for incre, down, x in zip(self.incre_modules[1:], self.downsamp_modules, ys[1:]):
+            y = _run(incre, x) + down(y)
+        return self.final_layer(y)
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
 
-_CFGS = {  # widths, s1_blocks, s2_blocks, s3_modules, s4_modules, blocks_per_module
-    "hrnet_w18_small": ([16, 32, 64, 128], 2, 2, 3, 2, 2),
-    "hrnet_w18": ([18, 36, 72, 144], 4, 4, 4, 3, 4),
-    "hrnet_w32": ([32, 64, 128, 256], 4, 4, 4, 3, 4),
-    "hrnet_w48": ([48, 96, 192, 384], 4, 4, 4, 3, 4),
+# timm configurations: stage1 (blocks, channels); stages 2-4 (modules, blocks, channels).
+_CFGS = {
+    "hrnet_w18_small": (
+        (1, 32),
+        ((1, (2, 2), (16, 32)), (1, (2, 2, 2), (16, 32, 64)), (1, (2,) * 4, (16, 32, 64, 128))),
+    ),
+    "hrnet_w18": (
+        (4, 64),
+        ((1, (4, 4), (18, 36)), (4, (4, 4, 4), (18, 36, 72)), (3, (4,) * 4, (18, 36, 72, 144))),
+    ),
+    "hrnet_w32": (
+        (4, 64),
+        ((1, (4, 4), (32, 64)), (4, (4, 4, 4), (32, 64, 128)), (3, (4,) * 4, (32, 64, 128, 256))),
+    ),
+    "hrnet_w48": (
+        (4, 64),
+        ((1, (4, 4), (48, 96)), (4, (4, 4, 4), (48, 96, 192)), (3, (4,) * 4, (48, 96, 192, 384))),
+    ),
 }
 
 
 def _make(name):
-    widths, s1, s2, m3, m4, bpm = _CFGS[name]
+    stage1, stages = _CFGS[name]
 
     def entry(**kwargs):
-        model = HRNet(widths, s1, s2, m3, m4, bpm, **kwargs)
+        model = HRNet(stage1, stages, **kwargs)
         model.default_cfg = _cfg()
         return model
 

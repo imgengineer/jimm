@@ -8,7 +8,7 @@ import math
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, SqueezeExcite
+from ..layers import BatchNorm, ClassifierMixin, SqueezeExcite
 from ..registry import _cfg, register_model
 
 
@@ -41,7 +41,7 @@ class RegNetBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, stride, groups, se_ratio=0.0, *, rngs):
         mid = out_chs  # bottleneck multiplier 1 for RegNet
         self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn1 = BatchNorm(mid, rngs=rngs)
         self.conv2 = nnx.Conv(
             mid,
             mid,
@@ -51,16 +51,16 @@ class RegNetBlock(nnx.Module):
             feature_group_count=groups,
             rngs=rngs,
         )
-        self.bn2 = nnx.BatchNorm(mid, rngs=rngs)
+        self.bn2 = BatchNorm(mid, rngs=rngs)
         self.se = SqueezeExcite(mid, rngs=rngs, rd_ratio=se_ratio) if se_ratio > 0 else None
         self.conv3 = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn3 = nnx.BatchNorm(out_chs, rngs=rngs)
+        self.bn3 = BatchNorm(out_chs, rngs=rngs)
         self.shortcut = (
             nnx.Sequential(
                 nnx.Conv(
                     in_chs, out_chs, (1, 1), strides=(stride, stride), use_bias=False, rngs=rngs
                 ),
-                nnx.BatchNorm(out_chs, rngs=rngs),
+                BatchNorm(out_chs, rngs=rngs),
             )
             if (stride != 1 or in_chs != out_chs)
             else None
@@ -95,7 +95,7 @@ class RegNet(ClassifierMixin, nnx.Module):
         self.stem_conv = nnx.Conv(
             in_chans, stem_chs, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
         )
-        self.stem_bn = nnx.BatchNorm(stem_chs, rngs=rngs)
+        self.stem_bn = BatchNorm(stem_chs, rngs=rngs)
         stages, chs = [], stem_chs
         for w, d, g in zip(widths, depths, groups):
             blocks = []

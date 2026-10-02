@@ -2,7 +2,7 @@
 
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct, DropPath, Mlp
+from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, DropPath, Mlp
 from ..registry import _cfg, register_model
 from .vision_transformer import Attention
 
@@ -12,7 +12,7 @@ class SpatialAttention(nnx.Module):
 
     def __init__(self, dim, *, rngs):
         self.dw = nnx.Conv(dim, dim, (7, 7), feature_group_count=dim, use_bias=False, rngs=rngs)
-        self.bn = nnx.BatchNorm(dim, rngs=rngs)
+        self.bn = BatchNorm(dim, rngs=rngs)
         self.proj = nnx.Conv(dim, dim, (1, 1), rngs=rngs)
 
     def __call__(self, x):

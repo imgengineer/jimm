@@ -42,13 +42,14 @@ uv sync
 
 Dependencies in `pyproject.toml`:
 
-- `jax[cuda13] >= 0.11.1`
-- `flax >= 0.12.9`
-- `grain`
-- `optax`
-- `orbax-checkpoint`
-- `opencv-python-headless`
-- `numpy`
+- `einops >= 0.8.2`
+- `jax[cuda13] >= 0.11.2`
+- `flax >= 0.12.10`
+- `grain >= 0.2.18`
+- `optax >= 0.2.8`
+- `orbax-checkpoint >= 0.12.6`
+- `opencv-python-headless >= 5.0.0.93`
+- `numpy >= 2.5.3`
 
 ---
 

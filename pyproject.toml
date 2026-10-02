@@ -4,31 +4,31 @@ version = "0.1.0"
 description = "JAX Image Models - timm-style API on JAX/Flax nnx"
 requires-python = ">=3.12"
 dependencies = [
-  "einops",
-  "jax[cuda13]>=0.11.1",
-  "grain",
-  "flax>=0.12.9",
-  "optax",
-  "orbax-checkpoint",
-  "numpy",
+  "einops>=0.8.2",
+  "jax[cuda13]>=0.11.2",
+  "grain>=0.2.18",
+  "flax>=0.12.10",
+  "optax>=0.2.8",
+  "orbax-checkpoint>=0.12.6",
+  "numpy>=2.5.3",
   "opencv-python-headless>=5.0.0.93",
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["jimm"]
 
 [dependency-groups]
-dev = ["pytest>=9.1.1", "pytest-cov>=7.1.0", "pytest-xdist>=3.8.0", "ruff==0.16.4"]
+dev = ["pytest>=9.1.1", "pytest-cov>=7.1.0", "pytest-xdist>=3.8.0", "ruff==0.16.10"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.ruff]
-required-version = "==0.16.4"
+required-version = "==0.16.10"
 target-version = "py312"
 line-length = 100
 

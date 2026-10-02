@@ -1,101 +1,102 @@
-"""DLA (Deep Layer Aggregation) in flax nnx, NHWC. Mirrors timm.models.dla."""
+"""DLA (Deep Layer Aggregation) in flax nnx, NHWC. Mirrors timm.models.dla.
+
+Each level is a tree of residual blocks whose outputs, together with the
+max-pooled level input ("level root" for levels 3-5), are aggregated by a
+1x1 root convolution.
+"""
+
+import math
 
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct
+from ..layers import ClassifierMixin
 from ..registry import _cfg, register_model
+from ._conv import ConvNormAct
 
 
 class DlaBasic(nnx.Module):
-    def __init__(self, in_chs, out_chs, stride=1, *, rngs):
-        self.conv1 = ConvBNAct(in_chs, out_chs, 3, stride, rngs=rngs)
-        self.conv2 = ConvBNAct(out_chs, out_chs, 3, act="identity", rngs=rngs)
+    def __init__(self, in_chs, out_chs, stride=1, cardinality=1, base_width=64, *, rngs):
+        self.conv1 = ConvNormAct(in_chs, out_chs, 3, stride, act=nnx.relu, rngs=rngs)
+        self.conv2 = ConvNormAct(out_chs, out_chs, 3, rngs=rngs)
 
     def __call__(self, x, shortcut=None):
-        sc = x if shortcut is None else shortcut
-        y = self.conv2(self.conv1(x))
-        return nnx.relu(y + sc)
+        shortcut = x if shortcut is None else shortcut
+        return nnx.relu(self.conv2(self.conv1(x)) + shortcut)
 
 
 class DlaBottleneck(nnx.Module):
     expansion = 2
 
-    def __init__(self, in_chs, out_chs, stride=1, *, rngs):
-        mid = out_chs // self.expansion
-        self.conv1 = ConvBNAct(in_chs, mid, 1, rngs=rngs)
-        self.conv2 = ConvBNAct(mid, mid, 3, stride, rngs=rngs)
-        self.conv3 = ConvBNAct(mid, out_chs, 1, act="identity", rngs=rngs)
-        self.short_proj = (
-            ConvBNAct(in_chs, out_chs, 1, act="identity", rngs=rngs) if in_chs != out_chs else None
-        )
+    def __init__(self, in_chs, out_chs, stride=1, cardinality=1, base_width=64, *, rngs):
+        mid = int(math.floor(out_chs * (base_width / 64)) * cardinality) // self.expansion
+        self.conv1 = ConvNormAct(in_chs, mid, act=nnx.relu, rngs=rngs)
+        self.conv2 = ConvNormAct(mid, mid, 3, stride, cardinality, act=nnx.relu, rngs=rngs)
+        self.conv3 = ConvNormAct(mid, out_chs, rngs=rngs)
 
     def __call__(self, x, shortcut=None):
-        if shortcut is None:
-            shortcut = x if self.short_proj is None else self.short_proj(x)
-        y = self.conv3(self.conv2(self.conv1(x)))
-        return nnx.relu(y + shortcut)
+        shortcut = x if shortcut is None else shortcut
+        return nnx.relu(self.conv3(self.conv2(self.conv1(x))) + shortcut)
 
 
 class DlaRoot(nnx.Module):
     def __init__(self, in_chs, out_chs, shortcut=False, *, rngs):
-        self.conv = ConvBNAct(in_chs, out_chs, 1, act="identity", rngs=rngs)
+        self.conv = ConvNormAct(in_chs, out_chs, rngs=rngs)
         self.shortcut = shortcut
 
-    def __call__(self, x_children):
-        y = self.conv(jnp.concatenate(x_children, axis=-1))
+    def __call__(self, children):
+        x = self.conv(jnp.concatenate(children, axis=-1))
         if self.shortcut:
-            y = y + x_children[0]
-        return nnx.relu(y)
+            x = x + children[0]
+        return nnx.relu(x)
 
 
 class DlaTree(nnx.Module):
     def __init__(
-        self, levels, block, in_chs, out_chs, stride=1, root_dim=0, root_shortcut=False, *, rngs
+        self,
+        levels,
+        block,
+        in_chs,
+        out_chs,
+        stride=1,
+        cardinality=1,
+        base_width=64,
+        level_root=False,
+        root_dim=0,
+        root_shortcut=False,
+        *,
+        rngs,
     ):
-        self.levels = levels
-        if root_dim == 0:
-            root_dim = 2 * out_chs
-        self.down_stride = stride
-        root = None
-        project = None
+        root_dim = root_dim or 2 * out_chs
+        if level_root:
+            root_dim += in_chs
+        self.stride, self.level_root = stride, level_root
+        cargs = dict(cardinality=cardinality, base_width=base_width)
         if levels == 1:
-            self.tree1 = block(in_chs, out_chs, stride, rngs=rngs)
-            self.tree2 = block(out_chs, out_chs, 1, rngs=rngs)
-            project = (
-                ConvBNAct(in_chs, out_chs, 1, act="identity", rngs=rngs)
-                if in_chs != out_chs
-                else None
-            )
-            root = DlaRoot(root_dim, out_chs, root_shortcut, rngs=rngs)
+            self.tree1 = block(in_chs, out_chs, stride, **cargs, rngs=rngs)
+            self.tree2 = block(out_chs, out_chs, 1, **cargs, rngs=rngs)
+            self.project = ConvNormAct(in_chs, out_chs, rngs=rngs) if in_chs != out_chs else None
+            self.root = DlaRoot(root_dim, out_chs, root_shortcut, rngs=rngs)
         else:
-            self.tree1 = DlaTree(
-                levels - 1, block, in_chs, out_chs, stride, 0, root_shortcut, rngs=rngs
-            )
+            cargs["root_shortcut"] = root_shortcut
+            self.tree1 = DlaTree(levels - 1, block, in_chs, out_chs, stride, **cargs, rngs=rngs)
             self.tree2 = DlaTree(
-                levels - 1, block, out_chs, out_chs, 1, root_dim + out_chs, root_shortcut, rngs=rngs
+                levels - 1, block, out_chs, out_chs, root_dim=root_dim + out_chs, **cargs, rngs=rngs
             )
-        self.project = project
-        self.root = root
+            self.project = self.root = None
 
     def __call__(self, x, shortcut=None, children=None):
-        children = [] if children is None else list(children)
-        shortcut = x
-        if self.down_stride > 1:
-            shortcut = nnx.max_pool(
-                x,
-                (self.down_stride, self.down_stride),
-                strides=(self.down_stride, self.down_stride),
-            )
+        children = [] if children is None else children
+        s = self.stride
+        bottom = nnx.max_pool(x, (s, s), strides=(s, s)) if s > 1 else x
+        shortcut = bottom if self.project is None else self.project(bottom)
+        if self.level_root:
+            children.append(bottom)
+        x1 = self.tree1(x, shortcut)
         if self.root is not None:
-            if self.project is not None:
-                shortcut = self.project(shortcut)
-            x1 = self.tree1(x, shortcut)
-            x2 = self.tree2(x1)
-            return self.root([x2, x1] + children)
-        x1 = self.tree1(x)
+            return self.root([self.tree2(x1), x1] + children)
         children.append(x1)
-        return self.tree2(x1, children=children)
+        return self.tree2(x1, None, children)
 
 
 class DLA(ClassifierMixin, nnx.Module):
@@ -104,7 +105,9 @@ class DLA(ClassifierMixin, nnx.Module):
         levels,
         channels,
         block,
-        root_shortcut=False,
+        cardinality=1,
+        base_width=64,
+        shortcut_root=False,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
@@ -113,66 +116,92 @@ class DLA(ClassifierMixin, nnx.Module):
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.base_layer = ConvBNAct(in_chans, channels[0], 7, 1, rngs=rngs)
-        self.level0 = ConvBNAct(channels[0], channels[0], 3, 1, rngs=rngs)
-        self.level1 = ConvBNAct(channels[0], channels[1], 3, 2, rngs=rngs)
-        self.level2 = DlaTree(
-            levels[2], block, channels[1], channels[2], 2, root_shortcut=root_shortcut, rngs=rngs
+        self.base_layer = ConvNormAct(in_chans, channels[0], 7, act=nnx.relu, rngs=rngs)
+        self.level0 = nnx.List(
+            [
+                ConvNormAct(channels[0], channels[0], 3, act=nnx.relu, rngs=rngs)
+                for _ in range(levels[0])
+            ]
         )
-        self.level3 = DlaTree(
-            levels[3], block, channels[2], channels[3], 2, root_shortcut=root_shortcut, rngs=rngs
+        self.level1 = nnx.List(
+            [
+                ConvNormAct(
+                    channels[0] if i == 0 else channels[1],
+                    channels[1],
+                    3,
+                    2 if i == 0 else 1,
+                    act=nnx.relu,
+                    rngs=rngs,
+                )
+                for i in range(levels[1])
+            ]
         )
-        self.level4 = DlaTree(
-            levels[4], block, channels[3], channels[4], 2, root_shortcut=root_shortcut, rngs=rngs
-        )
-        self.level5 = DlaTree(
-            levels[5], block, channels[4], channels[5], 2, root_shortcut=root_shortcut, rngs=rngs
+        cargs = dict(cardinality=cardinality, base_width=base_width, root_shortcut=shortcut_root)
+        self.level2 = DlaTree(levels[2], block, channels[1], channels[2], 2, **cargs, rngs=rngs)
+        self.level3, self.level4, self.level5 = (
+            DlaTree(
+                levels[i],
+                block,
+                channels[i - 1],
+                channels[i],
+                2,
+                level_root=True,
+                **cargs,
+                rngs=rngs,
+            )
+            for i in (3, 4, 5)
         )
         self.num_features = channels[5]
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(channels[5], num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = self.level1(self.level0(self.base_layer(x)))
+        x = self.base_layer(x)
+        for layer in (*self.level0, *self.level1):
+            x = layer(x)
         return self.level5(self.level4(self.level3(self.level2(x))))
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
 
-def _dla(levels, channels, block, root_shortcut=False, **kwargs):
-    model = DLA(levels, channels, block, root_shortcut, **kwargs)
-    model.default_cfg = _cfg()
-    return model
-
-
-@register_model
-def dla34(**kwargs):
-    return _dla([1, 1, 1, 2, 2, 1], [16, 32, 64, 128, 256, 512], DlaBasic, **kwargs)
-
-
-@register_model
-def dla60(**kwargs):
-    return _dla([1, 1, 1, 2, 3, 1], [16, 32, 128, 256, 512, 1024], DlaBottleneck, **kwargs)
-
-
-@register_model
-def dla102(**kwargs):
-    return _dla(
-        [1, 1, 1, 3, 4, 1],
-        [16, 32, 128, 256, 512, 1024],
+_SMALL = (16, 32, 64, 64, 128, 256)
+_LARGE = (16, 32, 128, 256, 512, 1024)
+_CFGS = {
+    "dla34": ((1, 1, 1, 2, 2, 1), (16, 32, 64, 128, 256, 512), DlaBasic, {}),
+    "dla46_c": ((1, 1, 1, 2, 2, 1), _SMALL, DlaBottleneck, {}),
+    "dla46x_c": ((1, 1, 1, 2, 2, 1), _SMALL, DlaBottleneck, dict(cardinality=32, base_width=4)),
+    "dla60x_c": ((1, 1, 1, 2, 3, 1), _SMALL, DlaBottleneck, dict(cardinality=32, base_width=4)),
+    "dla60": ((1, 1, 1, 2, 3, 1), _LARGE, DlaBottleneck, {}),
+    "dla60x": ((1, 1, 1, 2, 3, 1), _LARGE, DlaBottleneck, dict(cardinality=32, base_width=4)),
+    "dla102": ((1, 1, 1, 3, 4, 1), _LARGE, DlaBottleneck, dict(shortcut_root=True)),
+    "dla102x": (
+        (1, 1, 1, 3, 4, 1),
+        _LARGE,
         DlaBottleneck,
-        root_shortcut=True,
-        **kwargs,
-    )
-
-
-@register_model
-def dla169(**kwargs):
-    return _dla(
-        [1, 1, 2, 3, 5, 1],
-        [16, 32, 128, 256, 512, 1024],
+        dict(cardinality=32, base_width=4, shortcut_root=True),
+    ),
+    "dla102x2": (
+        (1, 1, 1, 3, 4, 1),
+        _LARGE,
         DlaBottleneck,
-        root_shortcut=True,
-        **kwargs,
-    )
+        dict(cardinality=64, base_width=4, shortcut_root=True),
+    ),
+    "dla169": ((1, 1, 2, 3, 5, 1), _LARGE, DlaBottleneck, dict(shortcut_root=True)),
+}
+
+
+def _make(name):
+    levels, channels, block, fixed = _CFGS[name]
+
+    def entry(**kwargs):
+        model = DLA(levels, channels, block, **fixed, **kwargs)
+        model.default_cfg = _cfg()
+        return model
+
+    entry.__name__ = name
+    return entry
+
+
+for _name in _CFGS:
+    register_model(_make(_name))

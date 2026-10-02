@@ -1,53 +1,89 @@
-"""DPN (Dual Path Network) in flax nnx, NHWC. Mirrors timm.models.dpn exactly.
+"""DPN (Dual Path Network) in flax nnx, NHWC. Mirrors timm.models.dpn.
 
-Block: c1x1_a (in->r) -> c3x3_b (r->r, groups) -> c1x1_c (r->bw+inc).
-Shortcut path: 1x1 proj (in->bw+2*inc) split into residual (bw) + dense-seed (2*inc);
-output = residual (bw ch) concat dense (2*inc + inc per block, accumulating).
+Blocks are pre-activation (BatchNorm with epsilon 1e-3, ReLU, then a bias-free
+convolution). Each block adds to a residual path and appends ``inc`` channels to
+a densely connected path; the two paths travel concatenated as
+``[residual | dense]``. The stem and the final BatchNorm on the feature map use
+the model activation (ReLU, or SiLU for dpn48b); timm's ``fc_act_layer="elu"``
+does not take effect.
 """
+
+from functools import partial
 
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, global_pool_nhwc
+from ..layers import BatchNorm, ClassifierMixin
 from ..registry import _cfg, register_model
+
+_IMAGENET_DPN_MEAN = (124 / 255, 117 / 255, 104 / 255)
+_IMAGENET_DPN_STD = (1 / (0.0167 * 255),) * 3
+
+
+def _bn(chs, *, rngs):
+    return BatchNorm(chs, epsilon=1e-3, rngs=rngs)
+
+
+def _conv(in_chs, out_chs, kernel, stride=1, groups=1, *, rngs):
+    pad = ((stride - 1) + (kernel - 1)) // 2  # timm get_padding
+    return nnx.Conv(
+        in_chs,
+        out_chs,
+        (kernel, kernel),
+        strides=(stride, stride),
+        padding=((pad, pad), (pad, pad)),
+        feature_group_count=groups,
+        use_bias=False,
+        rngs=rngs,
+    )
+
+
+class BnAct(nnx.Module):
+    def __init__(self, chs, act, *, rngs):
+        self.norm = _bn(chs, rngs=rngs)
+        self.act = act
+
+    def __call__(self, x):
+        return self.act(self.norm(x))
+
+
+class BnActConv(nnx.Module):
+    """timm BnActConv2d: BatchNorm and activation on the input, then the convolution."""
+
+    def __init__(self, in_chs, out_chs, kernel, stride=1, groups=1, act=nnx.relu, *, rngs):
+        self.norm = _bn(in_chs, rngs=rngs)
+        self.conv = _conv(in_chs, out_chs, kernel, stride, groups, rngs=rngs)
+        self.act = act
+
+    def __call__(self, x):
+        return self.conv(self.act(self.norm(x)))
 
 
 class DualPathBlock(nnx.Module):
-    def __init__(self, in_chs, r, bw, inc, groups, key_stride, has_proj, b, *, rngs):
-        self.bw, self.inc = bw, inc
-        self.has_proj = has_proj
-        self.c1x1_w = (
-            ConvBNAct(in_chs, bw + 2 * inc, 1, key_stride, rngs=rngs) if has_proj else None
-        )
-        self.c1x1_a = ConvBNAct(in_chs, r, 1, rngs=rngs)
-        self.c3x3_b = ConvBNAct(r, r, 3, key_stride, groups=groups, rngs=rngs)
+    def __init__(self, in_chs, r, bw, inc, groups, block_type="normal", b=False, *, rngs):
+        self.bw = bw
+        stride = 2 if block_type == "down" else 1
+        conv = partial(BnActConv, rngs=rngs)
+        self.c1x1_w = conv(in_chs, bw + 2 * inc, 1, stride) if block_type != "normal" else None
+        self.c1x1_a = conv(in_chs, r, 1)
+        self.c3x3_b = conv(r, r, 3, stride, groups)
         if b:
-            self.c1 = nnx.Conv(r, bw, (1, 1), use_bias=False, rngs=rngs)
-            self.c2 = nnx.Conv(r, inc, (1, 1), use_bias=False, rngs=rngs)
-            self.c_bn = BatchNorm(r, rngs=rngs)
-            self.c1x1_c = None
+            self.c1x1_c = BnAct(r, nnx.relu, rngs=rngs)
+            self.c1x1_c1 = _conv(r, bw, 1, rngs=rngs)
+            self.c1x1_c2 = _conv(r, inc, 1, rngs=rngs)
         else:
-            self.c1x1_c = ConvBNAct(r, bw + inc, 1, act="identity", rngs=rngs)
-            self.c1 = self.c2 = self.c_bn = None
+            self.c1x1_c = conv(r, bw + inc, 1)
+            self.c1x1_c1 = self.c1x1_c2 = None
 
     def __call__(self, x):
-        if self.c1x1_w is not None:
-            x_s = self.c1x1_w(x)
-            x_s1, x_s2 = x_s[..., : self.bw], x_s[..., self.bw :]
+        x_s = x if self.c1x1_w is None else self.c1x1_w(x)
+        y = self.c1x1_c(self.c3x3_b(self.c1x1_a(x)))
+        if self.c1x1_c1 is not None:
+            out1, out2 = self.c1x1_c1(y), self.c1x1_c2(y)
         else:
-            x_s1, x_s2 = x[..., : self.bw], x[..., self.bw :]
-        y = self.c3x3_b(self.c1x1_a(x))
-        if self.c1x1_c is not None:
-            y = self.c1x1_c(y)
             out1, out2 = y[..., : self.bw], y[..., self.bw :]
-        else:
-            if self.c_bn is None or self.c1 is None or self.c2 is None:
-                raise RuntimeError("DPN projected branch is missing its bottleneck layers")
-            y = nnx.relu(self.c_bn(y))
-            out1, out2 = self.c1(y), self.c2(y)
-        resid = x_s1 + out1
-        dense = jnp.concatenate([x_s2, out2], axis=-1)
-        return jnp.concatenate([resid, dense], axis=-1)
+        resid = x_s[..., : self.bw] + out1
+        return jnp.concatenate([resid, x_s[..., self.bw :], out2], axis=-1)
 
 
 class DPN(ClassifierMixin, nnx.Module):
@@ -60,6 +96,7 @@ class DPN(ClassifierMixin, nnx.Module):
         small=False,
         num_init_features=64,
         b=False,
+        act="relu",
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
@@ -68,61 +105,69 @@ class DPN(ClassifierMixin, nnx.Module):
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
+        act = {"relu": nnx.relu, "silu": nnx.silu}[act]
         bw_factor = 1 if small else 4
-        self.conv1_1 = ConvBNAct(in_chans, num_init_features, 3 if small else 7, 2, rngs=rngs)
+        kernel = 3 if small else 7
+        self.conv1_1 = nnx.Sequential(
+            _conv(in_chans, num_init_features, kernel, 2, rngs=rngs),
+            BnAct(num_init_features, act, rngs=rngs),
+        )
         stages, in_chs = [], num_init_features
-        for i, k in enumerate(k_sec):
+        for i, (k, inc) in enumerate(zip(k_sec, inc_sec)):
             bw = 64 * bw_factor * 2**i
-            inc = inc_sec[i]
             r = (k_r * bw) // (64 * bw_factor)
             blocks = [
-                DualPathBlock(in_chs, r, bw, inc, groups, 1 if i == 0 else 2, True, b, rngs=rngs)
+                DualPathBlock(
+                    in_chs, r, bw, inc, groups, "proj" if i == 0 else "down", b, rngs=rngs
+                )
             ]
             in_chs = bw + 3 * inc
-            for _ in range(2, k + 1):
-                blocks.append(DualPathBlock(in_chs, r, bw, inc, groups, 1, False, b, rngs=rngs))
+            for _ in range(1, k):
+                blocks.append(DualPathBlock(in_chs, r, bw, inc, groups, "normal", b, rngs=rngs))
                 in_chs += inc
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
         self.num_features = in_chs
-        self.head_norm = BatchNorm(self.num_features, rngs=rngs)
+        self.final_norm = BnAct(in_chs, act, rngs=rngs)  # timm conv5_bn_ac
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
+        self.fc = nnx.Linear(in_chs, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
         x = self.conv1_1(x)
-        x = nnx.max_pool(x, (3, 3), strides=(2, 2), padding="SAME")
+        x = nnx.max_pool(x, (3, 3), strides=(2, 2), padding=((1, 1), (1, 1)))
         for stage in self.stages:
             for blk in stage:
                 x = blk(x)
-        return x
-
-    def forward_head(self, x):
-        x = global_pool_nhwc(x, self.global_pool)
-        x = nnx.elu(self.head_norm(x))
-        x = self.head_drop(x)
-        return self.fc(x) if self.fc is not None else x
+        return self.final_norm(x)
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
 
-_CFGS = {  # k_sec, inc_sec, k_r, groups, small, num_init_features, b
-    "dpn68": ((3, 4, 12, 3), (16, 32, 32, 64), 128, 32, True, 10, False),
-    "dpn68b": ((3, 4, 12, 3), (16, 32, 32, 64), 128, 32, True, 10, True),
-    "dpn92": ((3, 4, 20, 3), (16, 32, 24, 128), 96, 32, False, 64, False),
-    "dpn98": ((3, 6, 20, 3), (16, 32, 32, 128), 160, 40, False, 96, False),
-    "dpn107": ((4, 8, 20, 3), (20, 64, 64, 128), 200, 50, False, 128, False),
-    "dpn131": ((4, 8, 28, 3), (16, 32, 32, 128), 160, 40, False, 128, False),
+_CFGS = {  # k_sec, inc_sec, k_r, groups, small, num_init_features, b, act
+    "dpn48b": ((3, 4, 6, 3), (16, 32, 32, 64), 128, 32, True, 10, True, "silu"),
+    "dpn68": ((3, 4, 12, 3), (16, 32, 32, 64), 128, 32, True, 10, False, "relu"),
+    "dpn68b": ((3, 4, 12, 3), (16, 32, 32, 64), 128, 32, True, 10, True, "relu"),
+    "dpn92": ((3, 4, 20, 3), (16, 32, 24, 128), 96, 32, False, 64, False, "relu"),
+    "dpn98": ((3, 6, 20, 3), (16, 32, 32, 128), 160, 40, False, 96, False, "relu"),
+    "dpn107": ((4, 8, 20, 3), (20, 64, 64, 128), 200, 50, False, 128, False, "relu"),
+    "dpn131": ((4, 8, 28, 3), (16, 32, 32, 128), 160, 40, False, 128, False, "relu"),
 }
 
 
 def _make(name):
-    k_sec, inc_sec, k_r, groups, small, nif, b = _CFGS[name]
+    k_sec, inc_sec, k_r, groups, small, nif, b, act = _CFGS[name]
 
     def entry(**kwargs):
-        model = DPN(k_sec, inc_sec, k_r, groups, small, nif, b, **kwargs)
-        model.default_cfg = _cfg(input_size=(3, 224, 224))
+        model = DPN(k_sec, inc_sec, k_r, groups, small, nif, b, act, **kwargs)
+        if name in ("dpn48b", "dpn68b"):  # timm's default tags for these use ImageNet statistics
+            model.default_cfg = _cfg(
+                crop_pct=0.95 if name == "dpn68b" else 0.875, interpolation="bicubic"
+            )
+        else:
+            model.default_cfg = _cfg(
+                interpolation="bicubic", mean=_IMAGENET_DPN_MEAN, std=_IMAGENET_DPN_STD
+            )
         return model
 
     entry.__name__ = name

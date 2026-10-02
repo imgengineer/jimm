@@ -12,6 +12,10 @@
 
 ## What's New
 
+### October 3, 2026
+
+- Port Hiera and the SAM2 Hiera backbone (HieraDet) from timm. The previous versions ran global attention at every stage, including 3,136 tokens per image at stride 4, and downsampled with convolutions. Hiera now attends within 8×8 mask units of unrolled tokens in its first stages and max-pools queries and shortcuts at stage transitions; HieraDet uses windowed attention with periodic global blocks, the same pooling, and a position embedding resized with PyTorch's bicubic kernel. Both follow timm's initialization, reproduce timm outputs, and train faster than the approximations: Hiera-T 2,224 → 2,934 img/s (timm 1,657). SAM2 Hiera defaults to timm's 896×896 input (1,024 for Large). **198 registered names now match timm 1.0.29 parameter counts**.
+
 ### October 2, 2026
 
 - Port BEiT and ResNeSt from timm. BEiT was a plain ViT; it now has relative position biases in every block (with class-token entries), query and value biases only, layer scale, and a mean-pooled LayerNorm head, and adds `beit_base_patch16_384` and `beit_large_patch16_384`. ResNeSt gains the split-attention BatchNorm, PyTorch-style average pooling in strided blocks and shortcuts, and ResNeSt-101e's 64-wide stem and 256×256 input. **187 registered names now match timm 1.0.29 parameter counts**.
@@ -66,7 +70,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
 
-Parameter counts match timm 1.0.29 for **187 of the 366** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, SK-ResNet, TResNet, ConvNeXt, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, Swin/Swin V2, PoolFormer, ResNeSt, DenseNet, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, VGG, LeViT, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
+Parameter counts match timm 1.0.29 for **198 of the 366** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, SK-ResNet, TResNet, ConvNeXt, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, Swin/Swin V2, Hiera/SAM2 Hiera, PoolFormer, ResNeSt, DenseNet, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, VGG, LeViT, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -365,7 +369,7 @@ Use `uv run pytest tests/` for the full suite, including representative forward/
 
 The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
 
-The core regression suite passed **466 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, grouped-convolution gradients against `jax.lax`, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
+The core regression suite passed **479 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, grouped-convolution gradients against `jax.lax`, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
 
 ```bash
 uv run pytest tests/test_attention.py -q
@@ -404,6 +408,8 @@ For architectures whose parameter counts match timm, compiled jimm training step
 | `poolformer_s12` | 5,758 img/s | 2,798 img/s | 2.06× |
 | `beit_base_patch16_224` | 1,341 img/s | 1,070 img/s | 1.25× |
 | `resnest50d` | 2,158 img/s | 1,255 img/s | 1.72× |
+| `hiera_tiny_224` | 2,934 img/s | 1,657 img/s | 1.77× |
+| `hieradet_small` (256×256) | 1,701 img/s | 1,175 img/s | 1.45× |
 
 ### Data pipeline performance
 

@@ -132,11 +132,21 @@ class Mlp(nnx.Module):
         hidden_dim: int | None = None,
         drop: float = 0.0,
         *,
+        kernel_init=None,
+        out_kernel_init=None,
+        bias_init=None,
         rngs: nnx.Rngs,
     ):
+        """Optional initializers override Flax's defaults (``out_kernel_init`` for fc2)."""
         hidden_dim = hidden_dim or dim
-        self.fc1 = nnx.Linear(dim, hidden_dim, rngs=rngs)
-        self.fc2 = nnx.Linear(hidden_dim, dim, rngs=rngs)
+        init = {}
+        if kernel_init is not None:
+            init["kernel_init"] = kernel_init
+        if bias_init is not None:
+            init["bias_init"] = bias_init
+        out_init = init if out_kernel_init is None else {**init, "kernel_init": out_kernel_init}
+        self.fc1 = nnx.Linear(dim, hidden_dim, **init, rngs=rngs)
+        self.fc2 = nnx.Linear(hidden_dim, dim, **out_init, rngs=rngs)
         self.drop = nnx.Dropout(drop, rngs=rngs)
 
     def __call__(self, x: jax.Array) -> jax.Array:

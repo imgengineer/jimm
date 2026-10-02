@@ -13,7 +13,7 @@ import numpy as np
 from flax import nnx
 
 from ..attention import dot_product_attention
-from ..layers import ClassifierMixin, DropPath, PatchEmbed, gelu
+from ..layers import ClassifierMixin, DropPath, Mlp, PatchEmbed
 from ..registry import _cfg, register_model
 
 
@@ -70,16 +70,6 @@ class Attention(nnx.Module):
         return self.drop(self.proj(x))
 
 
-class Mlp(nnx.Module):
-    def __init__(self, dim, hidden_dim, drop=0.0, fc2_std=0.02, *, rngs):
-        self.fc1 = nnx.Linear(dim, hidden_dim, kernel_init=_trunc_normal(0.02), rngs=rngs)
-        self.fc2 = nnx.Linear(hidden_dim, dim, kernel_init=_trunc_normal(fc2_std), rngs=rngs)
-        self.drop = nnx.Dropout(drop, rngs=rngs)
-
-    def __call__(self, x):
-        return self.drop(self.fc2(self.drop(gelu(self.fc1(x)))))
-
-
 class Block(nnx.Module):
     def __init__(
         self,
@@ -99,7 +89,14 @@ class Block(nnx.Module):
         self.norm1 = nnx.LayerNorm(dim, epsilon=1e-6, rngs=rngs)
         self.attn = Attention(dim, num_heads, window_size, drop=drop, proj_std=out_std, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, epsilon=1e-6, rngs=rngs)
-        self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, fc2_std=out_std, rngs=rngs)
+        self.mlp = Mlp(
+            dim,
+            int(dim * mlp_ratio),
+            drop,
+            kernel_init=_trunc_normal(0.02),
+            out_kernel_init=_trunc_normal(out_std),
+            rngs=rngs,
+        )
         self.drop_path = DropPath(drop_path, rngs=rngs)
         self.gamma1 = nnx.Param(jnp.full((dim,), init_values)) if init_values else None
         self.gamma2 = nnx.Param(jnp.full((dim,), init_values)) if init_values else None

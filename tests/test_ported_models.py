@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 from jimm.models import _maxxvit
+from jimm.models.hiera import _unroll
+from jimm.models.hieradet_sam2 import _bicubic_matrix
 from jimm.models.levit import _bias_index
 from jimm.models.tresnet import blur_pool, space_to_depth
 
@@ -55,3 +57,26 @@ def test_tresnet_blur_pool_matches_binomial_filter(size):
         for j in range(3):
             expected += taps[i] * taps[j] * padded[:, i : i + 2 * out : 2, j : j + 2 * out : 2]
     np.testing.assert_allclose(blur_pool(x), expected, rtol=1e-6, atol=1e-6)
+
+
+def test_hiera_unroll_turns_2x2_max_pooling_into_a_leading_max():
+    x = np.random.default_rng(0).normal(size=(2, 8, 8, 3)).astype(np.float32)
+    tokens = np.asarray(_unroll(x.reshape(2, 64, 3), (8, 8), 3))
+    pooled = tokens.reshape(2, 4, -1, 3).max(axis=1)
+    pooled_map = x.reshape(2, 4, 2, 4, 2, 3).max(axis=(2, 4))
+    np.testing.assert_array_equal(
+        pooled, np.asarray(_unroll(pooled_map.reshape(2, 16, 3), (4, 4), 2))
+    )
+
+
+def test_hieradet_bicubic_matrix_matches_pytorch():
+    # torch.nn.functional.interpolate(mode="bicubic", align_corners=False) weights.
+    up = [[1.11025, -0.11025], [0.918, 0.082], [0.5, 0.5], [0.082, 0.918], [-0.11025, 1.11025]]
+    np.testing.assert_allclose(_bicubic_matrix(2, 5), up, atol=1e-7)
+    down = np.zeros((4, 7))
+    down[0, :3] = [0.63964844, 0.42626953, -0.06591797]
+    down[1, 1:5] = [-0.07177734, 0.96728516, 0.11474609, -0.01025391]
+    down[2] = down[1, ::-1]
+    down[3] = down[0, ::-1]
+    np.testing.assert_allclose(_bicubic_matrix(7, 4), down, atol=1e-7)
+    np.testing.assert_array_equal(_bicubic_matrix(7, 7), np.eye(7))

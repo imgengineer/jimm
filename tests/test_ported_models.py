@@ -1,9 +1,11 @@
 """Index and partition helpers shared by the timm ports."""
 
 import numpy as np
+import pytest
 
 from jimm.models import _maxxvit
 from jimm.models.levit import _bias_index
+from jimm.models.tresnet import blur_pool, space_to_depth
 
 
 def test_window_and_grid_partitions_invert_and_group_pixels():
@@ -32,3 +34,24 @@ def test_levit_bias_index_uses_absolute_offsets():
     strided = _bias_index((3, 3), 2)
     assert strided.shape == (4, 9)
     np.testing.assert_array_equal(strided[1], expected[2])  # query (0, 2)
+
+
+def test_tresnet_space_to_depth_orders_channels_like_timm():
+    x = np.arange(2 * 8 * 8 * 3, dtype=np.float32).reshape(2, 8, 8, 3)
+    y = np.asarray(space_to_depth(x))
+    assert y.shape == (2, 2, 2, 48)
+    # timm channel index: (row offset * 4 + column offset) * C + c
+    assert y[1, 1, 0, (2 * 4 + 3) * 3 + 1] == x[1, 4 + 2, 3, 1]
+
+
+@pytest.mark.parametrize("size", [8, 7])
+def test_tresnet_blur_pool_matches_binomial_filter(size):
+    x = np.random.default_rng(0).normal(size=(2, size, size, 3)).astype(np.float32)
+    taps = np.array([1.0, 2.0, 1.0]) / 4
+    padded = np.pad(x, ((0, 0), (1, 1), (1, 1), (0, 0)), mode="reflect")
+    out = (size + 1) // 2
+    expected = np.zeros((2, out, out, 3), np.float32)
+    for i in range(3):
+        for j in range(3):
+            expected += taps[i] * taps[j] * padded[:, i : i + 2 * out : 2, j : j + 2 * out : 2]
+    np.testing.assert_allclose(blur_pool(x), expected, rtol=1e-6, atol=1e-6)

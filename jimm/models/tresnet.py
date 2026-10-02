@@ -1,92 +1,174 @@
-"""TResNet in flax nnx, NHWC. Mirrors timm.models.tresnet (SpaceToDepth stem + SE bottlenecks)."""
+"""TResNet in flax nnx, NHWC. Mirrors timm.models.tresnet.
 
-from einops import rearrange
+SpaceToDepth stem, anti-aliased (BlurPool) downsampling, SE in the first three
+stages, and LeakyReLU blocks with ReLU after each residual sum.
+"""
+
+from functools import partial
+
+import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, ConvBNAct, SqueezeExcite
+from ..layers import ClassifierMixin, DropPath, SqueezeExcite
 from ..registry import _cfg, register_model
+from ._conv import ConvNormAct
+
+_block_act = partial(nnx.leaky_relu, negative_slope=1e-3)
 
 
-def space_to_depth(x, block_size=2):
-    """(B,H,W,C) -> (B,H/2,W/2,4C)."""
-    return rearrange(
-        x,
-        "b (h block_h) (w block_w) c -> b h w (block_h block_w c)",
-        block_h=block_size,
-        block_w=block_size,
-    )
+def space_to_depth(x, block_size=4):
+    """(B,H,W,C) -> (B,H/4,W/4,16C), channels ordered (row, column, C) as in timm."""
+    b, h, w, c = x.shape
+    x = x.reshape(b, h // block_size, block_size, w // block_size, block_size, c)
+    x = x.transpose(0, 1, 3, 2, 4, 5)
+    return x.reshape(b, h // block_size, w // block_size, block_size * block_size * c)
 
 
-class TResNetBasic(nnx.Module):
+def blur_pool(x):
+    """timm BlurPool2d: [1, 2, 1] binomial blur with reflect padding, then stride two.
+
+    The separable filter is applied as strided slices, which XLA fuses into one pass.
+    """
+    x = jnp.pad(x, ((0, 0), (1, 1), (1, 1), (0, 0)), mode="reflect")
+    h, w = x.shape[1] - 2, x.shape[2] - 2
+    x = (x[:, 0:h:2] + 2 * x[:, 1 : h + 1 : 2] + x[:, 2 : h + 2 : 2]) * 0.25
+    return (x[:, :, 0:w:2] + 2 * x[:, :, 1 : w + 1 : 2] + x[:, :, 2 : w + 2 : 2]) * 0.25
+
+
+class Downsample(nnx.Module):
+    """Average pool (ceil mode, no padding counted) before the 1x1 projection, as in timm."""
+
     def __init__(self, in_chs, out_chs, stride, *, rngs):
-        self.conv1 = ConvBNAct(in_chs, out_chs, 3, stride, rngs=rngs)
-        self.conv2 = ConvBNAct(out_chs, out_chs, 3, act="identity", rngs=rngs)
-        self.shortcut = (
-            ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs)
-            if (stride != 1 or in_chs != out_chs)
-            else None
-        )
+        self.stride = stride
+        self.conv = ConvNormAct(in_chs, out_chs, rngs=rngs)
 
     def __call__(self, x):
-        y = self.conv2(self.conv1(x))
-        sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + sc)
+        if self.stride == 2:
+            h, w = x.shape[1:3]
+            x = nnx.avg_pool(
+                x, (2, 2), strides=(2, 2), padding=((0, h % 2), (0, w % 2)), count_include_pad=False
+            )
+        return self.conv(x)
 
 
-class TResNetBottleneck(nnx.Module):
+class BasicBlock(nnx.Module):
+    expansion = 1
+
+    def __init__(self, in_chs, planes, stride=1, use_se=True, drop_path_rate=0.0, *, rngs):
+        self.stride = stride
+        self.conv1 = ConvNormAct(in_chs, planes, 3, act=_block_act, rngs=rngs)
+        # Zero-initialized BN scale makes each residual branch start as identity.
+        self.conv2 = ConvNormAct(planes, planes, 3, bn_weight_init=0.0, rngs=rngs)
+        self.se = (
+            SqueezeExcite(planes, rd_channels=max(planes // 4, 64), rngs=rngs) if use_se else None
+        )
+        self.downsample = (
+            Downsample(in_chs, planes, stride, rngs=rngs)
+            if stride != 1 or in_chs != planes
+            else None
+        )
+        self.drop_path = DropPath(drop_path_rate, rngs=rngs)
+
+    def __call__(self, x):
+        shortcut = x if self.downsample is None else self.downsample(x)
+        out = self.conv1(x)
+        if self.stride == 2:
+            out = blur_pool(out)
+        out = self.conv2(out)
+        if self.se is not None:
+            out = self.se(out)
+        return nnx.relu(self.drop_path(out) + shortcut)
+
+
+class Bottleneck(nnx.Module):
     expansion = 4
 
-    def __init__(self, in_chs, chs, stride, *, rngs):
-        out_chs = chs * self.expansion
-        self.conv1 = ConvBNAct(in_chs, chs, 1, rngs=rngs)
-        self.conv2 = ConvBNAct(chs, chs, 3, stride, rngs=rngs)
-        self.conv3 = ConvBNAct(chs, out_chs, 1, act="identity", rngs=rngs)
-        self.se = SqueezeExcite(out_chs, rngs=rngs, rd_ratio=0.0625)
-        self.shortcut = (
-            ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs)
-            if (stride != 1 or in_chs != out_chs)
+    def __init__(self, in_chs, planes, stride=1, use_se=True, drop_path_rate=0.0, *, rngs):
+        out_chs = planes * self.expansion
+        self.stride = stride
+        self.conv1 = ConvNormAct(in_chs, planes, 1, act=_block_act, rngs=rngs)
+        self.conv2 = ConvNormAct(planes, planes, 3, act=_block_act, rngs=rngs)
+        self.se = (
+            SqueezeExcite(planes, rd_channels=max(out_chs // 8, 64), rngs=rngs) if use_se else None
+        )
+        self.conv3 = ConvNormAct(planes, out_chs, 1, bn_weight_init=0.0, rngs=rngs)
+        self.downsample = (
+            Downsample(in_chs, out_chs, stride, rngs=rngs)
+            if stride != 1 or in_chs != out_chs
             else None
         )
+        self.drop_path = DropPath(drop_path_rate, rngs=rngs)
 
     def __call__(self, x):
-        y = self.conv3(self.conv2(self.conv1(x)))
-        y = self.se(y)
-        sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + sc)
+        shortcut = x if self.downsample is None else self.downsample(x)
+        out = self.conv2(self.conv1(x))
+        if self.stride == 2:
+            out = blur_pool(out)
+        if self.se is not None:
+            out = self.se(out)
+        out = self.conv3(out)
+        return nnx.relu(self.drop_path(out) + shortcut)
 
 
 class TResNet(ClassifierMixin, nnx.Module):
     def __init__(
         self,
         layers,
-        widths=(64, 128, 256, 512),
+        width_factor=1.0,
+        v2=False,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
         drop_rate=0.0,
+        drop_path_rate=0.0,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        # SpaceToDepth stem: 224 -> 112 with 12 chs, then 1x1 conv to 64
-        self.stem_s2d = lambda x: space_to_depth(x, 2)
-        self.stem_conv = ConvBNAct(in_chans * 4, 64, 1, rngs=rngs)
-        self.num_features = widths[-1] * TResNetBottleneck.expansion
-        chs, stages = 64, []
-        for i, (n, w) in enumerate(zip(layers, widths)):
-            block = TResNetBasic if i == 0 else TResNetBottleneck
-            stride = 1 if i == 0 else 2
+        planes = int(64 * width_factor)
+        if v2:
+            planes = planes // 8 * 8
+        self.conv1 = ConvNormAct(in_chans * 16, planes, 3, act=nnx.leaky_relu, rngs=rngs)
+        dpr = [drop_path_rate * i / max(sum(layers) - 1, 1) for i in range(sum(layers))]
+        first = Bottleneck if v2 else BasicBlock
+        stage_cfgs = (
+            (first, planes, 1, True),
+            (first, planes * 2, 2, True),
+            (Bottleneck, planes * 4, 2, True),
+            (Bottleneck, planes * 8, 2, False),
+        )
+        chs, idx, stages = planes, 0, []
+        for (block, stage_planes, stride, use_se), depth in zip(stage_cfgs, layers):
             blocks = []
-            for j in range(n):
-                blocks.append(block(chs, w, stride if j == 0 else 1, rngs=rngs))
-                chs = w if i == 0 else w * TResNetBottleneck.expansion
+            for i in range(depth):
+                blocks.append(
+                    block(
+                        chs,
+                        stage_planes,
+                        stride if i == 0 else 1,
+                        use_se=use_se,
+                        drop_path_rate=dpr[idx],
+                        rngs=rngs,
+                    )
+                )
+                chs, idx = stage_planes * block.expansion, idx + 1
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
+        self.num_features = chs
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
+        self.fc = (
+            nnx.Linear(
+                self.num_features,
+                num_classes,
+                kernel_init=nnx.initializers.normal(0.01),
+                rngs=rngs,
+            )
+            if num_classes > 0
+            else None
+        )
 
     def forward_features(self, x):
-        x = self.stem_conv(self.stem_s2d(x))
+        x = self.conv1(space_to_depth(x))
         for stage in self.stages:
             for blk in stage:
                 x = blk(x)
@@ -98,7 +180,7 @@ class TResNet(ClassifierMixin, nnx.Module):
 
 def _tresnet(layers, **kwargs):
     model = TResNet(layers, **kwargs)
-    model.default_cfg = _cfg()
+    model.default_cfg = _cfg(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0))
     return model
 
 
@@ -109,9 +191,14 @@ def tresnet_m(**kwargs):
 
 @register_model
 def tresnet_l(**kwargs):
-    return _tresnet([4, 5, 18, 3], **kwargs)
+    return _tresnet([4, 5, 18, 3], width_factor=1.2, **kwargs)
 
 
 @register_model
 def tresnet_xl(**kwargs):
-    return _tresnet([4, 5, 24, 3], **kwargs)
+    return _tresnet([4, 5, 24, 3], width_factor=1.3, **kwargs)
+
+
+@register_model
+def tresnet_v2_l(**kwargs):
+    return _tresnet([3, 4, 23, 3], v2=True, **kwargs)

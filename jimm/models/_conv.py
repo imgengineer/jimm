@@ -22,15 +22,18 @@ class ConvNormAct(nnx.Module):
         use_bias=False,
         bn_weight_init=1.0,
         ndim=2,
+        dilation=1,
         *,
         rngs,
     ):
+        pad = dilation * (kernel // 2)
         self.conv = nnx.Conv(
             in_chs,
             out_chs,
             (kernel,) * ndim,
             strides=(stride,) * ndim,
-            padding=((kernel // 2, kernel // 2),) * ndim,
+            padding=((pad, pad),) * ndim,
+            kernel_dilation=(dilation,) * ndim,
             feature_group_count=groups,
             use_bias=use_bias,
             rngs=rngs,

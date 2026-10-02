@@ -21,7 +21,15 @@ class Res2NetBottleneck(nnx.Module):
         self.bn1 = BatchNorm(mid, rngs=rngs)
         self.convs = nnx.List(
             [
-                nnx.Conv(width, width, (3, 3), strides=(stride, stride), use_bias=False, rngs=rngs)
+                nnx.Conv(
+                    width,
+                    width,
+                    (3, 3),
+                    strides=(stride, stride),
+                    padding=1,
+                    use_bias=False,
+                    rngs=rngs,
+                )
                 for _ in range(scale - 1)
             ]
         )
@@ -46,7 +54,9 @@ class Res2NetBottleneck(nnx.Module):
             out.append(prev)
         last = chunks[-1]
         if self.stride > 1:
-            last = nnx.avg_pool(last, (3, 3), strides=(self.stride, self.stride), padding="SAME")
+            last = nnx.avg_pool(
+                last, (3, 3), strides=(self.stride, self.stride), padding=((1, 1), (1, 1))
+            )
         out.append(last)
         y = jnp.concatenate(out, axis=-1)
         y = self.bn3(self.conv3(y))
@@ -99,7 +109,8 @@ class Res2Net(ClassifierMixin, nnx.Module):
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = nnx.max_pool(nnx.relu(self.bn1(self.conv1(x))), (3, 3), strides=(2, 2), padding="SAME")
+        x = nnx.relu(self.bn1(self.conv1(x)))
+        x = nnx.max_pool(x, (3, 3), strides=(2, 2), padding=((1, 1), (1, 1)))
         for stage in self.stages:
             for blk in stage:
                 x = blk(x)

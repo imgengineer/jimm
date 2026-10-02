@@ -27,6 +27,7 @@ class InvertedResidual(nnx.Module):
             mid,
             (3, 3),
             strides=(stride, stride),
+            padding=1,
             use_bias=False,
             feature_group_count=mid,
             rngs=rngs,
@@ -73,7 +74,9 @@ class MobileNetV2(ClassifierMixin, nnx.Module):
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         stem = round_chs(32, width_mult)
-        self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans, stem, (3, 3), strides=(2, 2), padding=1, use_bias=False, rngs=rngs
+        )
         self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for t, c, n, s in self.CFG:

@@ -25,7 +25,7 @@ class BasicBlock(nnx.Module):
     ):  # groups/base_width unused, kept for uniform block signature
         out_chs = chs * self.expansion
         self.conv1 = nnx.Conv(
-            in_chs, chs, (3, 3), strides=(stride, stride), use_bias=False, rngs=rngs
+            in_chs, chs, (3, 3), strides=(stride, stride), padding=1, use_bias=False, rngs=rngs
         )
         self.bn1 = BatchNorm(chs, rngs=rngs)
         self.conv2 = nnx.Conv(chs, out_chs, (3, 3), use_bias=False, rngs=rngs)
@@ -63,6 +63,7 @@ class Bottleneck(nnx.Module):
             mid,
             (3, 3),
             strides=(stride, stride),
+            padding=1,
             use_bias=False,
             feature_group_count=groups,
             rngs=rngs,
@@ -143,7 +144,9 @@ class ResNet(ClassifierMixin, nnx.Module):
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = nnx.max_pool(nnx.relu(self.bn1(self.conv1(x))), (3, 3), strides=(2, 2), padding="SAME")
+        # PyTorch padding throughout: Flax's SAME pads strided windows on one side only.
+        x = nnx.relu(self.bn1(self.conv1(x)))
+        x = nnx.max_pool(x, (3, 3), strides=(2, 2), padding=((1, 1), (1, 1)))
         for stage in self.stages:
             for blk in stage:
                 x = blk(x)

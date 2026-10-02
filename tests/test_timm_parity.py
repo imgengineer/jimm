@@ -1,6 +1,7 @@
 """Parameter-count parity with timm for architectures that reproduce it exactly."""
 
 import jax
+import jax.numpy as jnp
 import pytest
 from flax import nnx
 
@@ -195,6 +196,11 @@ TIMM_PARAM_COUNTS = {
     "swinv2_small_window8_256": 49_728_418,
     "swinv2_tiny_window16_256": 28_347_154,
     "swinv2_tiny_window8_256": 28_347_154,
+    "tinynet_a": 6_187_972,
+    "tinynet_b": 3_730_562,
+    "tinynet_c": 2_457_234,
+    "tinynet_d": 2_338_446,
+    "tinynet_e": 2_042_972,
     "tresnet_l": 55_989_256,
     "tresnet_m": 31_389_032,
     "tresnet_v2_l": 46_174_824,
@@ -232,3 +238,47 @@ def test_parameter_count_matches_timm(name):
     model = nnx.eval_shape(lambda: create_model(name, num_classes=1000))
     count = sum(leaf.size for leaf in jax.tree.leaves(nnx.state(model, nnx.Param)))
     assert count == TIMM_PARAM_COUNTS[name]
+
+
+def _strided_paddings(jaxpr):
+    for eqn in jaxpr.eqns:
+        name = eqn.primitive.name
+        if name == "conv_general_dilated" or name.startswith("reduce_window"):
+            if any(s > 1 for s in eqn.params["window_strides"]):
+                yield name, tuple(eqn.params["padding"])
+        for param in eqn.params.values():
+            sub = getattr(param, "jaxpr", param)
+            if hasattr(sub, "eqns"):
+                yield from _strided_paddings(sub)
+
+
+# One model per family that used Flax SAME padding before following PyTorch.
+@pytest.mark.parametrize(
+    "name",
+    [
+        "resnet50",
+        "res2net50_26w_4s",
+        "resnetv2_50",
+        "densenet121",
+        "efficientnet_b0",
+        "tinynet_a",
+        "mobilenetv2_100",
+        "mobilenetv3_large_100",
+        "mnasnet_100",
+        "ghostnet_100",
+        "inception_v3",
+        "pvt_v2_b0",
+        "darknet53",
+    ],
+)
+def test_strided_ops_pad_symmetrically_like_pytorch(name):
+    model = nnx.eval_shape(lambda: create_model(name, num_classes=10))
+    size = model.default_cfg["input_size"][1]
+    graphdef, state = nnx.split(model)
+    jaxpr = jax.make_jaxpr(lambda s, x: nnx.merge(graphdef, s)(x))(
+        state, jax.ShapeDtypeStruct((1, size, size, 3), jnp.float32)
+    )
+    asymmetric = [
+        (op, pad) for op, pad in _strided_paddings(jaxpr.jaxpr) if any(lo != hi for lo, hi in pad)
+    ]
+    assert not asymmetric

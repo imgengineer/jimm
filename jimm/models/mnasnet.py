@@ -19,6 +19,7 @@ class SepConv(nnx.Module):
             in_chs,
             (kernel, kernel),
             strides=(stride, stride),
+            padding=kernel // 2,
             use_bias=False,
             feature_group_count=in_chs,
             rngs=rngs,
@@ -42,6 +43,7 @@ class MBBlock(nnx.Module):
             mid,
             (kernel, kernel),
             strides=(stride, stride),
+            padding=kernel // 2,
             use_bias=False,
             feature_group_count=mid,
             rngs=rngs,
@@ -95,7 +97,9 @@ class MNASNet(ClassifierMixin, nnx.Module):
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         stem = make_divisible(32 * width_mult)
-        self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans, stem, (3, 3), strides=(2, 2), padding=1, use_bias=False, rngs=rngs
+        )
         self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for kind, k, s, e, out, n in cfg:

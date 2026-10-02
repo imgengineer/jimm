@@ -352,12 +352,16 @@ class ConvBNAct(nnx.Module):
         act: str = "relu",
         use_bn: bool = True,
         dilation: int = 1,
-        padding: str = "SAME",
+        padding: str | None = None,
         *,
         rngs: nnx.Rngs,
     ):
         k = (kernel, kernel) if isinstance(kernel, int) else tuple(kernel)
         s = (stride, stride) if isinstance(stride, int) else tuple(stride)
+        if padding is None:
+            # PyTorch-style symmetric padding (timm get_padding) instead of Flax's SAME,
+            # which pads strided convolutions on the bottom/right only.
+            padding = [(((si - 1) + dilation * (ki - 1)) // 2,) * 2 for ki, si in zip(k, s)]
         self.conv = nnx.Conv(
             in_chs,
             out_chs,

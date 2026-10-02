@@ -32,11 +32,14 @@ class MBConv(nnx.Module):
         if self.has_expand:
             self.expand = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
             self.bn1 = BatchNorm(mid, rngs=rngs)
+        # PyTorch-style symmetric padding (timm get_padding), not SAME.
+        pad = kernel // 2
         self.dw = nnx.Conv(
             mid,
             mid,
             (kernel, kernel),
             strides=(stride, stride),
+            padding=((pad, pad), (pad, pad)),
             use_bias=False,
             feature_group_count=mid,
             rngs=rngs,
@@ -75,12 +78,16 @@ _VARIANTS = {
     "efficientnet_b5": (1.6, 2.2, 456, 0.4),
     "efficientnet_b6": (1.8, 2.6, 528, 0.5),
     "efficientnet_b7": (2.0, 3.1, 600, 0.5),
-    # TinyNet ( EfficientNet scaled with r != 1 )
-    "tinynet_a": (0.86, 1.0, 192, 0.2),
-    "tinynet_b": (0.84, 0.75, 188, 0.2),
-    "tinynet_c": (0.825, 0.54, 184, 0.2),
-    "tinynet_d": (0.68, 0.71, 152, 0.2),
-    "tinynet_e": (0.475, 0.51, 106, 0.2),
+}
+
+# TinyNet (timm _gen_tinynet): name: (width_mult, depth_mult, img_size). The stem stays
+# at 32 channels, the head at 1,280, and stage depths round to the nearest integer.
+_TINYNETS = {
+    "tinynet_a": (1.0, 1.2, 192),
+    "tinynet_b": (0.75, 1.1, 188),
+    "tinynet_c": (0.54, 0.85, 184),
+    "tinynet_d": (0.54, 0.695, 152),
+    "tinynet_e": (0.51, 0.6, 106),
 }
 
 
@@ -94,7 +101,9 @@ def _round_width(c, mult):
     return new_c
 
 
-def _round_depth(n, mult):
+def _round_depth(n, mult, trunc="ceil"):
+    if trunc == "round":
+        return max(1, round(n * mult))
     return int(math.ceil(n * mult))
 
 
@@ -110,6 +119,9 @@ class EfficientNet(ClassifierMixin, nnx.Module):
         global_pool="avg",
         drop_rate=0.2,
         drop_path_rate=0.0,
+        fix_stem=False,
+        depth_trunc="ceil",
+        head_chs=None,
         *,
         rngs,
     ):
@@ -118,21 +130,29 @@ class EfficientNet(ClassifierMixin, nnx.Module):
         depth_mult = depth_multiplier if depth_multiplier is not None else depth_mult
         if width_mult <= 0 or depth_mult <= 0:
             raise ValueError("width and depth multipliers must be positive")
-        stem = _round_width(32, width_mult)
-        self.conv_stem = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
+        stem = 32 if fix_stem else _round_width(32, width_mult)
+        self.conv_stem = nnx.Conv(
+            in_chans,
+            stem,
+            (3, 3),
+            strides=(2, 2),
+            padding=((1, 1), (1, 1)),
+            use_bias=False,
+            rngs=rngs,
+        )
         self.bn1 = BatchNorm(stem, rngs=rngs)
-        total = sum(_round_depth(n, depth_mult) for _, _, _, n, _ in BASE_CFG)
+        total = sum(_round_depth(n, depth_mult, depth_trunc) for _, _, _, n, _ in BASE_CFG)
         dpr = [drop_path_rate * i / max(total - 1, 1) for i in range(total)]
         blocks, chs = [], stem
         for k, e, c, n, s in BASE_CFG:
             out = _round_width(c, width_mult)
-            for j in range(_round_depth(n, depth_mult)):
+            for j in range(_round_depth(n, depth_mult, depth_trunc)):
                 blocks.append(
                     MBConv(chs, out, k, s if j == 0 else 1, e, dpr[len(blocks)], rngs=rngs)
                 )
                 chs = out
         self.blocks = nnx.List(blocks)
-        head = _round_width(1280, width_mult)
+        head = head_chs or _round_width(1280, width_mult)
         self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
         self.bn_head = BatchNorm(head, rngs=rngs)
         self.num_features = head
@@ -164,3 +184,27 @@ def _make(name):
 
 for _name in _VARIANTS:
     register_model(_make(_name))
+
+
+def _make_tinynet(name):
+    w, d, img = _TINYNETS[name]
+
+    def entry(**kwargs):
+        kwargs.setdefault("drop_rate", 0.2)
+        model = EfficientNet(
+            w,
+            d,
+            fix_stem=True,
+            depth_trunc="round",
+            head_chs=max(1280, _round_width(1280, w)),
+            **kwargs,
+        )
+        model.default_cfg = _cfg(input_size=(3, img, img), interpolation="bicubic")
+        return model
+
+    entry.__name__ = name
+    return entry
+
+
+for _name in _TINYNETS:
+    register_model(_make_tinynet(_name))

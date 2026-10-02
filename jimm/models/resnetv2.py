@@ -14,7 +14,9 @@ class PreActBottleneck(nnx.Module):
         self.bn1 = BatchNorm(in_chs, rngs=rngs)
         self.conv1 = nnx.Conv(in_chs, chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn2 = BatchNorm(chs, rngs=rngs)
-        self.conv2 = nnx.Conv(chs, chs, (3, 3), strides=(stride, stride), use_bias=False, rngs=rngs)
+        self.conv2 = nnx.Conv(
+            chs, chs, (3, 3), strides=(stride, stride), padding=1, use_bias=False, rngs=rngs
+        )
         self.bn3 = BatchNorm(chs, rngs=rngs)
         self.conv3 = nnx.Conv(chs, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.short_conv = (
@@ -61,7 +63,7 @@ class ResNetV2(ClassifierMixin, nnx.Module):
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = nnx.max_pool(self.conv1(x), (3, 3), strides=(2, 2), padding="SAME")
+        x = nnx.max_pool(self.conv1(x), (3, 3), strides=(2, 2), padding=((1, 1), (1, 1)))
         for stage in self.stages:
             for blk in stage:
                 x = blk(x)

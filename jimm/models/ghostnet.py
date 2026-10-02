@@ -106,7 +106,9 @@ class GhostNet(ClassifierMixin, nnx.Module):
         self.num_classes, self.global_pool = num_classes, global_pool
         # timm rounds every width to a multiple of 4.
         stem = make_divisible(16 * width_mult, 4)
-        self.conv1 = nnx.Conv(in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs)
+        self.conv1 = nnx.Conv(
+            in_chans, stem, (3, 3), strides=(2, 2), padding=1, use_bias=False, rngs=rngs
+        )
         self.bn1 = BatchNorm(stem, rngs=rngs)
         blocks, chs = [], stem
         for k, e, c, se, s, n in GHOSTNET_CFG:

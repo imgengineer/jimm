@@ -75,7 +75,9 @@ class PVTBlock(nnx.Module):
 
 class OverlapPatchEmbed(nnx.Module):
     def __init__(self, patch, stride, in_chs, dim, *, rngs):
-        self.proj = nnx.Conv(in_chs, dim, (patch, patch), strides=(stride, stride), rngs=rngs)
+        self.proj = nnx.Conv(
+            in_chs, dim, (patch, patch), strides=(stride, stride), padding=patch // 2, rngs=rngs
+        )
         self.norm = nnx.LayerNorm(dim, rngs=rngs)
 
     def __call__(self, x):

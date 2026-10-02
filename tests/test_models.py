@@ -84,7 +84,8 @@ def test_variant_constructor_smoke():
         model = create_model(name, num_classes=5, rngs=nnx.Rngs(0))
         assert model.num_features > 0
         assert "input_size" in model.default_cfg
-    assert create_model("tinynet_a", num_classes=0, rngs=nnx.Rngs(0)).num_features == 1104
+    # timm keeps the TinyNet head at 1,280 channels.
+    assert create_model("tinynet_a", num_classes=0, rngs=nnx.Rngs(0)).num_features == 1280
 
 
 def test_extra_multi_architecture_modules():

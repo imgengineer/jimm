@@ -131,16 +131,17 @@ class InceptionV3(ClassifierMixin, nnx.Module):
     ):
         self.default_cfg = {}
         self.num_classes, self.global_pool = num_classes, global_pool
+        # timm/torchvision: unpadded 1a, 2a, and 4a convolutions and stem pools (299 -> 35).
         self.stem = nnx.List(
             [
-                ConvBNAct(in_chans, 32, 3, 2, padding="SAME", rngs=rngs),
-                ConvBNAct(32, 32, 3, padding="SAME", rngs=rngs),
-                ConvBNAct(32, 64, 3, padding="SAME", rngs=rngs),
+                ConvBNAct(in_chans, 32, 3, 2, padding="VALID", rngs=rngs),
+                ConvBNAct(32, 32, 3, padding="VALID", rngs=rngs),
+                ConvBNAct(32, 64, 3, rngs=rngs),
             ]
         )
-        self.pool0 = lambda x: nnx.max_pool(x, (3, 3), strides=(2, 2), padding="SAME")
-        self.conv1 = ConvBNAct(64, 80, 1, padding="SAME", rngs=rngs)
-        self.conv2 = ConvBNAct(80, 192, 3, padding="SAME", rngs=rngs)
+        self.pool0 = lambda x: nnx.max_pool(x, (3, 3), strides=(2, 2), padding="VALID")
+        self.conv1 = ConvBNAct(64, 80, 1, rngs=rngs)
+        self.conv2 = ConvBNAct(80, 192, 3, padding="VALID", rngs=rngs)
         self.mixed_5b = InceptionA(192, 32, rngs=rngs)
         self.mixed_5c = InceptionA(256, 64, rngs=rngs)
         self.mixed_5d = InceptionA(288, 64, rngs=rngs)

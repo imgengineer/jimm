@@ -74,7 +74,7 @@ class DenseNet(ClassifierMixin, nnx.Module):
 
     def forward_features(self, x):
         x = nnx.max_pool(
-            nnx.relu(self.norm0(self.conv0(x))), (3, 3), strides=(2, 2), padding="SAME"
+            nnx.relu(self.norm0(self.conv0(x))), (3, 3), strides=(2, 2), padding=((1, 1), (1, 1))
         )
         for stage in self.stages:
             x = stage(x) if isinstance(stage, Transition) else _run_dense(stage, x)

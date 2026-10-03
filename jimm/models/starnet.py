@@ -1,35 +1,64 @@
-"""StarNet in flax nnx, NHWC. Mirrors timm.models.starnet (elementwise-mul blocks)."""
+"""StarNet in flax nnx, NHWC. Mirrors timm.models.starnet ("Rewrite the Stars").
+
+Blocks: depthwise 7x7 conv + BN, two 1x1 expansions multiplied element-wise
+("star" operation, ReLU6 on one branch), a 1x1 projection + BN, and a second
+depthwise 7x7 conv. Each stage starts with a strided 3x3 conv + BN; the
+features end with BatchNorm before pooling.
+"""
 
 from flax import nnx
 
-from ..layers import BatchNorm, ClassifierMixin, ConvBNAct, DropPath
+from ..layers import BatchNorm, ClassifierMixin, DropPath
 from ..registry import _cfg, register_model
 
+_init = nnx.initializers.truncated_normal(0.02)
 
-class StarBlock(nnx.Module):
-    """dw 7x7 -> two 1x1 branches -> elementwise mul -> 1x1 (star operation)."""
 
-    def __init__(self, dim, mlp_ratio=4, drop_path=0.0, *, rngs):
-        self.dw = nnx.Conv(dim, dim, (7, 7), use_bias=False, feature_group_count=dim, rngs=rngs)
-        self.bn_dw = BatchNorm(dim, rngs=rngs)
-        self.f1 = nnx.Conv(dim, dim * mlp_ratio, (1, 1), rngs=rngs)
-        self.f2 = nnx.Conv(dim, dim * mlp_ratio, (1, 1), rngs=rngs)
-        self.g = nnx.Conv(dim * mlp_ratio, dim, (1, 1), use_bias=False, rngs=rngs)
-        self.bn = BatchNorm(dim, rngs=rngs)
+class ConvBN(nnx.Module):
+    """timm ConvBN: a biased convolution, optionally followed by BatchNorm."""
+
+    def __init__(self, in_chs, out_chs, kernel=1, stride=1, groups=1, with_bn=True, *, rngs):
+        pad = kernel // 2
+        self.conv = nnx.Conv(
+            in_chs,
+            out_chs,
+            (kernel, kernel),
+            strides=(stride, stride),
+            padding=((pad, pad), (pad, pad)),
+            feature_group_count=groups,
+            kernel_init=_init,
+            rngs=rngs,
+        )
+        self.bn = BatchNorm(out_chs, epsilon=1e-5, rngs=rngs) if with_bn else None
+
+    def __call__(self, x):
+        x = self.conv(x)
+        return x if self.bn is None else self.bn(x)
+
+
+class Block(nnx.Module):
+    def __init__(self, dim, mlp_ratio=3, drop_path=0.0, *, rngs):
+        self.dwconv = ConvBN(dim, dim, 7, groups=dim, rngs=rngs)
+        self.f1 = ConvBN(dim, mlp_ratio * dim, with_bn=False, rngs=rngs)
+        self.f2 = ConvBN(dim, mlp_ratio * dim, with_bn=False, rngs=rngs)
+        self.g = ConvBN(mlp_ratio * dim, dim, rngs=rngs)
+        self.dwconv2 = ConvBN(dim, dim, 7, groups=dim, with_bn=False, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
-        y = self.bn_dw(self.dw(x))
-        y = self.f1(y) * nnx.relu(self.f2(y))
-        y = self.bn(self.g(y))
-        return x + self.drop_path(y)
+        y = self.dwconv(x)
+        y = nnx.relu6(self.f1(y)) * self.f2(y)
+        return x + self.drop_path(self.dwconv2(self.g(y)))
 
 
 class StarNet(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
+
     def __init__(
         self,
-        channels=(48, 96, 192, 384),
+        base_dim=32,
         depths=(3, 3, 12, 5),
+        mlp_ratio=4,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
@@ -39,53 +68,52 @@ class StarNet(ClassifierMixin, nnx.Module):
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.num_features = channels[-1]
-        self.stem = nnx.List(
-            [
-                ConvBNAct(in_chans, channels[0] // 2, 3, 2, rngs=rngs),
-                ConvBNAct(channels[0] // 2, channels[0], 3, 2, rngs=rngs),
-            ]
-        )
-        dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
-        stages, chs, k = [], channels[0], 0
-        for i, (c, d) in enumerate(zip(channels, depths)):
-            blocks = []
-            if i > 0:
-                blocks.append(ConvBNAct(chs, c, 3, 2, act="identity", rngs=rngs))
-            for _ in range(d):
-                blocks.append(StarBlock(c, 4, dpr[k], rngs=rngs))
-                k += 1
-            stages.append(nnx.List(blocks))
-            chs = c
+        self.stem = ConvBN(in_chans, 32, 3, 2, rngs=rngs)
+        total = sum(depths)
+        dpr = [drop_path_rate * i / max(total - 1, 1) for i in range(total)]
+        stages, prev, k = [], 32, 0
+        for i, depth in enumerate(depths):
+            dim = base_dim * 2**i
+            layers = [ConvBN(prev, dim, 3, 2, rngs=rngs)]
+            layers += [Block(dim, mlp_ratio, dpr[k + j], rngs=rngs) for j in range(depth)]
+            stages.append(nnx.List(layers))
+            prev, k = dim, k + depth
         self.stages = nnx.List(stages)
+        self.num_features = prev
+        self.norm = BatchNorm(prev, epsilon=1e-5, rngs=rngs)
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
-        self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
+        self.head = (
+            nnx.Linear(prev, num_classes, kernel_init=_init, rngs=rngs) if num_classes > 0 else None
+        )
 
     def forward_features(self, x):
-        for layer in self.stem:
-            x = layer(x)
+        x = nnx.relu6(self.stem(x))
         for stage in self.stages:
-            for blk in stage:
-                x = blk(x)
-        return x
+            for layer in stage:
+                x = layer(x)
+        return self.norm(x)
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
 
-_CFGS = {
-    "starnet_s050": ((32, 64, 128, 256), (1, 1, 3, 1)),
-    "starnet_s1": ((48, 96, 192, 384), (2, 2, 6, 2)),
-    "starnet_s2": ((64, 128, 256, 512), (2, 3, 8, 3)),
+_CFGS = {  # base_dim, depths, mlp_ratio
+    "starnet_s050": (16, (1, 1, 3, 1), 3),
+    "starnet_s100": (20, (1, 2, 4, 1), 4),
+    "starnet_s150": (24, (1, 2, 4, 2), 3),
+    "starnet_s1": (24, (2, 2, 8, 3), 4),
+    "starnet_s2": (32, (1, 2, 6, 2), 4),
+    "starnet_s3": (32, (2, 2, 8, 4), 4),
+    "starnet_s4": (32, (3, 3, 12, 5), 4),
 }
 
 
 def _make(name):
-    channels, depths = _CFGS[name]
+    base_dim, depths, mlp_ratio = _CFGS[name]
 
     def entry(**kwargs):
-        model = StarNet(channels, depths, **kwargs)
-        model.default_cfg = _cfg()
+        model = StarNet(base_dim, depths, mlp_ratio, **kwargs)
+        model.default_cfg = _cfg(interpolation="bicubic")
         return model
 
     entry.__name__ = name

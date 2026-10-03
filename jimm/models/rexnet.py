@@ -1,114 +1,148 @@
-"""ReXNet in flax nnx, NHWC. Mirrors timm.models.rexnet (swish + SE inverted residuals)."""
+"""ReXNet in flax nnx, NHWC. Mirrors timm.models.rexnet.
 
+MobileNetV2-style linear bottlenecks whose widths grow linearly block by block,
+squeeze-excite with BatchNorm, ReLU6 after the depthwise convolution, and a
+residual added to the first ``in_chs`` output channels only.
+"""
+
+import math
+
+import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import BatchNorm, ClassifierMixin, SqueezeExcite
+from ..layers import BatchNorm, ClassifierMixin, DropPath, make_divisible
 from ..registry import _cfg, register_model
-from .mobilenetv2 import ConvBN, round_chs
+from ._conv import ConvNormAct
 
 
-class ReXBlock(nnx.Module):
-    def __init__(self, in_chs, out_chs, stride, expand, use_se, *, rngs):
-        mid = int(round(in_chs * expand))
-        self.use_residual = stride == 1 and in_chs == out_chs
-        self.expand = ConvBN(in_chs, mid, rngs=rngs) if expand != 1 else None
-        self.dw = nnx.Conv(
-            mid,
-            mid,
-            (3, 3),
-            strides=(stride, stride),
-            use_bias=False,
-            feature_group_count=mid,
-            rngs=rngs,
-        )
-        self.bn1 = BatchNorm(mid, rngs=rngs)
-        self.se = SqueezeExcite(mid, rngs=rngs, rd_ratio=1 / 12) if use_se else None
-        self.pw = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
-        self.bn2 = BatchNorm(out_chs, rngs=rngs)
+class SEWithNorm(nnx.Module):
+    def __init__(self, chs, rd_chs, *, rngs):
+        self.fc1 = nnx.Linear(chs, rd_chs, rngs=rngs)
+        self.bn = BatchNorm(rd_chs, epsilon=1e-5, rngs=rngs)
+        self.fc2 = nnx.Linear(rd_chs, chs, rngs=rngs)
 
     def __call__(self, x):
-        y = x if self.expand is None else nnx.silu(self.expand(x))
-        y = nnx.silu(self.bn1(self.dw(y)))
+        s = jnp.mean(x, axis=(1, 2), keepdims=True)
+        return x * nnx.sigmoid(self.fc2(nnx.relu(self.bn(self.fc1(s)))))
+
+
+class LinearBottleneck(nnx.Module):
+    def __init__(
+        self, in_chs, out_chs, stride, exp_ratio=1.0, se_ratio=0.0, ch_div=1, drop_path=0.0, *, rngs
+    ):
+        self.in_chs = in_chs
+        self.use_shortcut = stride == 1 and in_chs <= out_chs
+        if exp_ratio != 1.0:
+            dw_chs = make_divisible(round(in_chs * exp_ratio), ch_div)
+            self.conv_exp = ConvNormAct(in_chs, dw_chs, act=nnx.silu, rngs=rngs)
+        else:
+            dw_chs = in_chs
+            self.conv_exp = None
+        self.conv_dw = ConvNormAct(dw_chs, dw_chs, 3, stride, dw_chs, rngs=rngs)
+        self.se = (
+            SEWithNorm(dw_chs, make_divisible(int(dw_chs * se_ratio), ch_div), rngs=rngs)
+            if se_ratio > 0
+            else None
+        )
+        self.conv_pwl = ConvNormAct(dw_chs, out_chs, rngs=rngs)
+        self.drop_path = DropPath(drop_path, rngs=rngs)
+
+    def __call__(self, x):
+        shortcut = x
+        if self.conv_exp is not None:
+            x = self.conv_exp(x)
+        x = self.conv_dw(x)
         if self.se is not None:
-            y = self.se(y)
-        y = self.bn2(self.pw(y))
-        return x + y if self.use_residual else y
+            x = self.se(x)
+        x = self.conv_pwl(nnx.relu6(x))
+        if self.use_shortcut:
+            x = self.drop_path(x)
+            x = jnp.concatenate([x[..., : self.in_chs] + shortcut, x[..., self.in_chs :]], axis=-1)
+        return x
 
 
-# (expand, out, repeats, stride, se)
-REXNET_CFG = [
-    (1, 16, 1, 1, False),
-    (6, 24, 2, 2, False),
-    (6, 32, 3, 2, False),
-    (6, 64, 4, 2, True),
-    (6, 96, 3, 1, True),
-    (6, 160, 3, 2, True),
-    (6, 320, 1, 1, True),
-]
+def _block_cfg(width_mult, depth_mult, initial_chs=16, final_chs=180, se_ratio=1 / 12, ch_div=1):
+    layers = [math.ceil(n * depth_mult) for n in (1, 2, 2, 3, 3, 5)]
+    strides = sum([[s] + [1] * (n - 1) for s, n in zip((1, 2, 2, 2, 1, 2), layers)], [])
+    exp_ratios = [1] * layers[0] + [6] * sum(layers[1:])
+    se_ratios = [0.0] * (layers[0] + layers[1]) + [se_ratio] * sum(layers[2:])
+    num_blocks = sum(layers)
+    base_chs = initial_chs / width_mult if width_mult < 1.0 else initial_chs
+    out_chs = []
+    for _ in range(num_blocks):
+        out_chs.append(make_divisible(round(base_chs * width_mult), ch_div))
+        base_chs += final_chs / num_blocks
+    return list(zip(out_chs, exp_ratios, strides, se_ratios))
 
 
-class ReXNet(ClassifierMixin, nnx.Module):
+class RexNet(ClassifierMixin, nnx.Module):
     def __init__(
         self,
         width_mult=1.0,
+        depth_mult=1.0,
+        ch_div=1,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
-        drop_rate=0.0,
+        drop_rate=0.2,
+        drop_path_rate=0.0,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        stem = round_chs(32, width_mult)
-        self.conv1 = nnx.Conv(
-            in_chans, stem, (3, 3), strides=(2, 2), use_bias=False, padding="VALID", rngs=rngs
-        )
-        self.bn1 = BatchNorm(stem, rngs=rngs)
-        blocks, chs = [], stem
-        for e, c, n, s, se in REXNET_CFG:
-            out = round_chs(c, width_mult)
-            for j in range(n):
-                blocks.append(ReXBlock(chs, out, s if j == 0 else 1, e, se, rngs=rngs))
-                chs = out
-        self.blocks = nnx.List(blocks)
-        head = round_chs(1280, width_mult)
-        self.conv_head = nnx.Conv(chs, head, (1, 1), use_bias=False, rngs=rngs)
-        self.bn_head = BatchNorm(head, rngs=rngs)
-        self.num_features = head
+        stem_base = 32 / width_mult if width_mult < 1.0 else 32
+        stem_chs = make_divisible(round(stem_base * width_mult), ch_div)
+        self.stem = ConvNormAct(in_chans, stem_chs, 3, 2, act=nnx.silu, rngs=rngs)
+        cfg = _block_cfg(width_mult, depth_mult, ch_div=ch_div)
+        blocks, prev = [], stem_chs
+        for i, (chs, exp_ratio, stride, se_ratio) in enumerate(cfg):
+            dpr = drop_path_rate * i / max(len(cfg) - 1, 1)
+            blocks.append(
+                LinearBottleneck(prev, chs, stride, exp_ratio, se_ratio, ch_div, dpr, rngs=rngs)
+            )
+            prev = chs
+        pen_chs = make_divisible(1280 * width_mult, ch_div)
+        blocks.append(ConvNormAct(prev, pen_chs, act=nnx.silu, rngs=rngs))
+        self.features = nnx.List(blocks)
+        self.num_features = pen_chs
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
-        self.fc = nnx.Linear(head, num_classes, rngs=rngs) if num_classes > 0 else None
+        self.fc = nnx.Linear(pen_chs, num_classes, rngs=rngs) if num_classes > 0 else None
 
     def forward_features(self, x):
-        x = nnx.silu(self.bn1(self.conv1(x)))
-        for blk in self.blocks:
+        x = self.stem(x)
+        for blk in self.features:
             x = blk(x)
-        return nnx.silu(self.bn_head(self.conv_head(x)))
+        return x
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
 
-def _rexnet(width_mult, **kwargs):
-    model = ReXNet(width_mult, **kwargs)
-    model.default_cfg = _cfg()
-    return model
+_CFGS = {  # width_mult, ch_div
+    "rexnet_100": (1.0, 1),
+    "rexnet_130": (1.3, 1),
+    "rexnet_150": (1.5, 1),
+    "rexnet_200": (2.0, 1),
+    "rexnet_300": (3.0, 1),
+    "rexnetr_100": (1.0, 8),
+    "rexnetr_130": (1.3, 8),
+    "rexnetr_150": (1.5, 8),
+    "rexnetr_200": (2.0, 8),
+    "rexnetr_300": (3.0, 16),
+}
 
 
-@register_model
-def rexnet_100(**kwargs):
-    return _rexnet(1.0, **kwargs)
+def _make(name):
+    width_mult, ch_div = _CFGS[name]
+
+    def entry(**kwargs):
+        model = RexNet(width_mult, ch_div=ch_div, **kwargs)
+        model.default_cfg = _cfg(interpolation="bicubic")
+        return model
+
+    entry.__name__ = name
+    return entry
 
 
-@register_model
-def rexnet_130(**kwargs):
-    return _rexnet(1.3, **kwargs)
-
-
-@register_model
-def rexnet_150(**kwargs):
-    return _rexnet(1.5, **kwargs)
-
-
-@register_model
-def rexnet_200(**kwargs):
-    return _rexnet(2.0, **kwargs)
+for _name in _CFGS:
+    register_model(_make(_name))

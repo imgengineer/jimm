@@ -14,6 +14,7 @@
 
 ### October 3, 2026
 
+- Port StarNet and ReXNet from timm and add `starnet_s100`, `starnet_s150`, `starnet_s3`, `starnet_s4`, `rexnet_300`, and `rexnetr_100`–`rexnetr_300`. StarNet previously used other widths and depths (S1 had 7.9M instead of 2.9M parameters); ReXNet now grows its widths linearly block by block, uses squeeze-excite with BatchNorm, ReLU6 after the depthwise convolution, and residuals on the first input channels only. Both reproduce timm outputs; **254 registered names now match timm 1.0.29 parameter counts**.
 - Freeze long-lived Python objects after the first training step in the CLI. Every step dispatch allocates enough short-lived objects to trigger Python's cyclic garbage collector, which then rescans all long-lived objects; with Tokamax imported before the first compilation (as `--attn-autotune` does), RepViT-M0.9 steps took 19.8 ms instead of 13.0 ms at batch size 64.
 - Port InceptionNeXt, MambaOut, and RepViT from timm, adding `inception_next_base`, `mambaout_small`, `mambaout_base`, `repvit_m1_0`, `repvit_m2_3`, and the legacy `repvit_m1`, `repvit_m2`, and `repvit_m3`. InceptionNeXt now splits channels between identity, 3×3, 1×11, and 11×1 depthwise branches with BatchNorm and an MLP head; MambaOut uses gated CNN blocks with timm's widths (Femto ends at 288 instead of 384 channels) and its MLP head; RepViT uses RepVGG-style depthwise mixers, squeeze-excite in alternating blocks, and averaged classifier and distillation heads. All reproduce timm outputs; **237 registered names now match timm 1.0.29 parameter counts**.
 - Pad strided convolutions and pooling like PyTorch. Flax's SAME padding puts the extra row and column of a stride-2 window on the bottom/right only, so 57 models whose parameter counts matched timm still computed different outputs, including every ResNet, ResNeXt, SE-ResNet, Res2Net, ResNetV2, DenseNet, EfficientNet, MobileNetV2/V3, MNASNet, GhostNet, PVTv2, and DarkNet-53; Inception-v3 also padded stem layers that timm leaves unpadded, giving 38×38 instead of 35×35 maps. `ConvBNAct` now defaults to timm's padding rule, a test checks every strided operation in representative models, and ResNet-50, DenseNet-121, MobileNetV2, and EfficientNet-B0 reproduce timm outputs (ResNet-50 previously differed by 25 at output scale 743). TinyNet now uses timm's width and depth multipliers, an unscaled stem, and a 1,280-channel head; **220 registered names now match timm 1.0.29 parameter counts**.
@@ -53,7 +54,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 445
+print(len(jimm.list_models()))  # 455
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -74,7 +75,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
 
-Parameter counts match timm 1.0.29 for **237 of the 381** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, SK-ResNet, TResNet, ConvNeXt, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, Swin/Swin V2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, PoolFormer, ResNeSt, DenseNet, DLA, DPN, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, VGG, LeViT, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
+Parameter counts match timm 1.0.29 for **254 of the 391** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, SK-ResNet, TResNet, ConvNeXt, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, Swin/Swin V2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, PoolFormer, ResNeSt, DenseNet, DLA, DPN, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, VGG, LeViT, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -373,7 +374,7 @@ Use `uv run pytest tests/` for the full suite, including representative forward/
 
 The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
 
-The core regression suite passed **531 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, PyTorch-style padding of strided operations, grouped-convolution gradients against `jax.lax`, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
+The core regression suite passed **548 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, PyTorch-style padding of strided operations, grouped-convolution gradients against `jax.lax`, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
 
 ```bash
 uv run pytest tests/test_attention.py -q
@@ -419,6 +420,8 @@ For architectures whose parameter counts match timm, compiled jimm training step
 | `inception_next_tiny` | 2,270 img/s | 1,964 img/s | 1.16× |
 | `mambaout_tiny` | 2,882 img/s | 1,661 img/s | 1.74× |
 | `repvit_m0_9` | 4,945 img/s | 4,277 img/s | 1.16× |
+| `starnet_s1` | 8,684 img/s | 6,476 img/s | 1.34× |
+| `rexnet_100` | 5,570 img/s | 3,547 img/s | 1.57× |
 
 ### Data pipeline performance
 

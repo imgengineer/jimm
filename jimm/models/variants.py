@@ -6,7 +6,7 @@ to a generic ResNet or ViT. Add new entries with architecture-level tests.
 """
 
 from ..registry import _cfg, is_model, model_entrypoint, register_model
-from . import convnext, regnet, resnet, swin_transformer, vision_transformer
+from . import convnext, resnet, swin_transformer, vision_transformer
 
 
 def _make(name, ctor, args, fixed, input_size):
@@ -93,13 +93,6 @@ _SPECS = [
         (),
         {"img_size": 384, "patch_size": 16, "embed_dim": 192, "depth": 12, "num_heads": 3},
         (3, 384, 384),
-    ),
-    (
-        ("regnety_008_tv",),
-        regnet.RegNet,
-        (*regnet.gen_cfg(14, 56, 38.84, 2.4, 16),),
-        {"se_ratio": 0.25},
-        (3, 224, 224),
     ),
     (
         ("resnet200",),

@@ -1,143 +1,173 @@
-"""PiT (Pooling-based Vision Transformer) in flax nnx. Mirrors timm.models.pit."""
+"""PiT (Pooling-based Vision Transformer) in flax nnx, NHWC. Mirrors timm.models.pit.
+
+An overlapping patch embedding with a learned 2D position embedding feeds three
+transformer stages. Between stages, a depthwise convolution with channel
+multiplier 2 pools the patch tokens and a linear layer widens the class
+token(s); the head reads the normalized class token, averaged with the
+distillation token's head for the distilled variants.
+"""
 
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin, DropPath, Mlp
+from ..layers import ClassifierMixin
 from ..registry import _cfg, register_model
-from .vision_transformer import Attention
+from .vision_transformer import Block
+
+_init = nnx.initializers.truncated_normal(0.02)
 
 
-class PiTBlock(nnx.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4.0, drop=0.0, drop_path=0.0, *, rngs):
-        self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
-        self.attn = Attention(dim, num_heads, rngs=rngs)
-        self.drop_path = DropPath(drop_path, rngs=rngs)
-        self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
-        self.mlp = Mlp(dim, int(dim * mlp_ratio), drop, rngs=rngs)
-
-    def __call__(self, x):
-        x = x + self.drop_path(self.attn(self.norm1(x)))
-        return x + self.drop_path(self.mlp(self.norm2(x)))
-
-
-class PoolingLayer(nnx.Module):
-    """Depthwise conv 3x3 stride 2 on tokens (cls token stays), then dim projection."""
-
-    def __init__(self, dim_in, dim_out, *, rngs):
-        self.dw = nnx.Conv(
-            dim_in, dim_in, (3, 3), strides=(2, 2), feature_group_count=dim_in, rngs=rngs
+class Pooling(nnx.Module):
+    def __init__(self, in_dim, out_dim, stride=2, *, rngs):
+        pad = stride // 2
+        self.conv = nnx.Conv(
+            in_dim,
+            out_dim,
+            (stride + 1, stride + 1),
+            strides=(stride, stride),
+            padding=((pad, pad), (pad, pad)),
+            feature_group_count=in_dim,
+            rngs=rngs,
         )
-        self.pw = nnx.Conv(dim_in, dim_out, (1, 1), rngs=rngs)
-        self.norm1 = nnx.LayerNorm(dim_in, rngs=rngs)
-        self.norm2 = nnx.LayerNorm(dim_out, rngs=rngs)
-        self.cls_fc = nnx.Linear(dim_in, dim_out, rngs=rngs)
+        self.fc = nnx.Linear(in_dim, out_dim, rngs=rngs)
 
-    def __call__(self, x, H, W):
-        cls, tokens = x[:, :1], x[:, 1:]
-        B = x.shape[0]
-        t = self.norm1(tokens).reshape(B, H, W, -1)
-        t = self.pw(self.dw(t))
-        tokens = t.reshape(B, -1, t.shape[-1])
-        cls = self.cls_fc(self.norm1(cls))
-        return jnp.concatenate([cls, self.norm2(tokens)], axis=1), t.shape[1], t.shape[2]
+    def __call__(self, x, cls_tokens):
+        return self.conv(x), self.fc(cls_tokens)
 
 
-class PiT(ClassifierMixin, nnx.Module):
+class Transformer(nnx.Module):
+    def __init__(self, base_dim, depth, heads, mlp_ratio, pool=None, dpr=None, *, rngs):
+        embed_dim = base_dim * heads
+        self.pool = pool
+        dpr = dpr or [0.0] * depth
+        self.blocks = nnx.List(
+            [Block(embed_dim, heads, mlp_ratio, True, 0.0, r, rngs=rngs) for r in dpr]
+        )
+
+    def __call__(self, x, cls_tokens):
+        if self.pool is not None:
+            x, cls_tokens = self.pool(x, cls_tokens)
+        B, H, W, C = x.shape
+        n = cls_tokens.shape[1]
+        tokens = jnp.concatenate([cls_tokens, x.reshape(B, H * W, C)], axis=1)
+        for blk in self.blocks:
+            tokens = blk(tokens)
+        return tokens[:, n:].reshape(B, H, W, C), tokens[:, :n]
+
+
+class PoolingVisionTransformer(ClassifierMixin, nnx.Module):
     _classifier_attr = "head"
-    _default_global_pool = ""
+    _default_global_pool = "token"
 
     def __init__(
         self,
         img_size=224,
         patch_size=16,
-        in_chans=3,
-        num_classes=1000,
-        global_pool="",
-        embed_dim=384,
+        stride=8,
+        base_dims=(48, 48, 48),
         depth=(2, 6, 4),
-        num_heads=6,
+        heads=(2, 4, 8),
         mlp_ratio=4.0,
+        distilled=False,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="token",
         drop_rate=0.0,
         drop_path_rate=0.0,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        heads = [num_heads * 2**i for i in range(len(depth))]
-        dims = [embed_dim * 2**i for i in range(len(depth))]
-        self.num_features = dims[-1]
+        embed_dim = base_dims[0] * heads[0]
         self.patch_embed = nnx.Conv(
             in_chans,
             embed_dim,
             (patch_size, patch_size),
-            strides=(patch_size, patch_size),
+            strides=(stride, stride),
+            padding="VALID",
             rngs=rngs,
         )
-        n = (img_size // patch_size) ** 2
-        self.cls_token = nnx.Param(jnp.zeros((1, 1, embed_dim)))
-        self.pos_embed = nnx.Param(jnp.zeros((1, n + 1, embed_dim)))
-        dpr = [drop_path_rate * i / max(sum(depth) - 1, 1) for i in range(sum(depth))]
-        stages, k = [], 0
-        for i, d in enumerate(depth):
-            stages.append(
-                nnx.List(
-                    [
-                        PiTBlock(dims[i], heads[i], mlp_ratio, drop_rate, dpr[k + j], rngs=rngs)
-                        for j in range(d)
-                    ]
-                )
-            )
-            k += d
-        self.stages = nnx.List(stages)
-        self.pools = nnx.List(
-            [PoolingLayer(dims[i], dims[i + 1], rngs=rngs) for i in range(len(depth) - 1)]
+        grid = (img_size - patch_size) // stride + 1
+        self.pos_embed = nnx.Param(_init(rngs.params(), (1, grid, grid, embed_dim)))
+        self.cls_token = nnx.Param(_init(rngs.params(), (1, 2 if distilled else 1, embed_dim)))
+        # timm calculate_drop_path_rates(stagewise=True): linear over all blocks, split by stage.
+        total = sum(depth)
+        rates = [drop_path_rate * i / max(total - 1, 1) for i in range(total)]
+        stages, prev = [], embed_dim
+        for i, (base_dim, d, h) in enumerate(zip(base_dims, depth, heads)):
+            dim = base_dim * h
+            pool = Pooling(prev, dim, rngs=rngs) if i else None
+            dpr = rates[sum(depth[:i]) : sum(depth[: i + 1])]
+            stages.append(Transformer(base_dim, d, h, mlp_ratio, pool, dpr, rngs=rngs))
+            prev = dim
+        self.transformers = nnx.List(stages)
+        self.norm = nnx.LayerNorm(prev, epsilon=1e-6, rngs=rngs)
+        self.num_features = prev
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
+        self.head = nnx.Linear(prev, num_classes, rngs=rngs) if num_classes > 0 else None
+        self.head_dist = (
+            nnx.Linear(prev, num_classes, rngs=rngs) if distilled and num_classes > 0 else None
         )
-        self.norm = nnx.LayerNorm(dims[-1], rngs=rngs)
-        self.head = nnx.Linear(dims[-1], num_classes, rngs=rngs) if num_classes > 0 else None
-        self.res0 = img_size // patch_size
+
+    def reset_classifier(self, num_classes, global_pool=None):
+        distilled = self.cls_token.shape[1] == 2
+        super().reset_classifier(num_classes, global_pool or "token")
+        if distilled:
+            self.head_dist = (
+                nnx.Linear(self.num_features, num_classes, rngs=nnx.Rngs(0))
+                if num_classes > 0
+                else None
+            )
 
     def forward_features(self, x):
-        B = x.shape[0]
-        x = self.patch_embed(x).reshape(B, -1, self.patch_embed.out_features)
-        x = jnp.concatenate([jnp.broadcast_to(self.cls_token[...], (B, 1, x.shape[-1])), x], axis=1)
-        H = W = self.res0
-        for i, stage in enumerate(self.stages):
-            for blk in stage:
-                x = blk(x)
-            if i < len(self.pools):
-                x, H, W = self.pools[i](x, H, W)
-        return self.norm(x)
+        x = self.patch_embed(x) + self.pos_embed[...]
+        cls_tokens = jnp.broadcast_to(self.cls_token[...], (x.shape[0], *self.cls_token.shape[1:]))
+        for stage in self.transformers:
+            x, cls_tokens = stage(x, cls_tokens)
+        return self.norm(cls_tokens)
 
     def forward_head(self, x):
-        x = x[:, 0] if self.global_pool == "" else jnp.mean(x[:, 1:], axis=1)
+        if self.cls_token.shape[1] == 2:
+            x, x_dist = self.head_drop(x[:, 0]), self.head_drop(x[:, 1])
+            if self.head is None:
+                return x
+            # Distilled models average the class and distillation heads.
+            return (self.head(x) + self.head_dist(x_dist)) / 2
+        x = self.head_drop(x[:, 0])
         return self.head(x) if self.head is not None else x
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
 
-def _pit(embed_dim, depth, num_heads, **kwargs):
-    model = PiT(embed_dim=embed_dim, depth=depth, num_heads=num_heads, **kwargs)
-    model.default_cfg = _cfg()
-    return model
+_CFGS = {  # patch_size, stride, base_dims, depth, heads
+    "pit_b_224": (14, 7, (64, 64, 64), (3, 6, 4), (4, 8, 16)),
+    "pit_s_224": (16, 8, (48, 48, 48), (2, 6, 4), (3, 6, 12)),
+    "pit_xs_224": (16, 8, (48, 48, 48), (2, 6, 4), (2, 4, 8)),
+    "pit_ti_224": (16, 8, (32, 32, 32), (2, 6, 4), (2, 4, 8)),
+}
 
 
-@register_model
-def pit_ti_224(**kwargs):
-    return _pit(256, (2, 6, 4), 4, **kwargs)
+def _make(name, distilled=False):
+    patch_size, stride, base_dims, depth, heads = _CFGS[name.replace("_distilled", "")]
+
+    def entry(**kwargs):
+        model = PoolingVisionTransformer(
+            patch_size=patch_size,
+            stride=stride,
+            base_dims=base_dims,
+            depth=depth,
+            heads=heads,
+            distilled=distilled,
+            **kwargs,
+        )
+        model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
+        return model
+
+    entry.__name__ = name
+    return entry
 
 
-@register_model
-def pit_xs_224(**kwargs):
-    return _pit(384, (2, 6, 4), 6, **kwargs)
-
-
-@register_model
-def pit_s_224(**kwargs):
-    return _pit(384, (2, 9, 4), 6, **kwargs)
-
-
-@register_model
-def pit_b_224(**kwargs):
-    return _pit(512, (3, 11, 4), 8, **kwargs)
+for _name in _CFGS:
+    register_model(_make(_name))
+    register_model(_make(_name.replace("_224", "_distilled_224"), distilled=True))

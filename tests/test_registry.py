@@ -85,7 +85,8 @@ def test_variant_architecture_configs():
     regnet = nnx.eval_shape(lambda: create_model("regnety_008_tv"))
     reference = nnx.eval_shape(lambda: create_model("regnety_008"))
     assert [len(stage) for stage in regnet.stages] == [len(stage) for stage in reference.stages]
-    assert regnet.num_features == reference.num_features
+    # torchvision width rounding (timm ``group_min_ratio=0.9``) widens the last stage.
+    assert (regnet.num_features, reference.num_features) == (784, 768)
     vit = nnx.eval_shape(lambda: create_model("vit_small_patch16_384"))
     assert vit.num_features == 384
     assert vit.patch_embed.img_size == vit.default_cfg["input_size"][1] == 384

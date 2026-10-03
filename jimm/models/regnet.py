@@ -8,7 +8,7 @@ import math
 
 from flax import nnx
 
-from ..layers import BatchNorm, ClassifierMixin, SqueezeExcite
+from ..layers import BatchNorm, ClassifierMixin, SqueezeExcite, make_divisible
 from ..registry import _cfg, register_model
 
 
@@ -16,8 +16,12 @@ def _quantize(v, q):
     return int(round(v / q) * q)  # timm quantize_float (timm default group_min_ratio=0)
 
 
-def gen_cfg(depth, w0, wa, wm, group_width):
-    """Returns (widths, depths, groups) per stage, torchvision-exact."""
+def gen_cfg(depth, w0, wa, wm, group_width, group_min_ratio=0.0):
+    """Returns (widths, depths, groups) per stage, as timm's generate_regnet.
+
+    ``group_min_ratio`` > 0 rounds widths to the group size the torchvision way
+    (timm ``_tv`` variants) instead of to the nearest multiple.
+    """
     QUANT = 8
     widths_cont = [i * wa + w0 for i in range(depth)]
     capacity = [round(math.log(w / w0) / math.log(wm)) for w in widths_cont]
@@ -30,7 +34,10 @@ def gen_cfg(depth, w0, wa, wm, group_width):
             widths.append(w)
             depths.append(1)
     groups = [min(group_width, w) for w in widths]  # group WIDTH, bottleneck_multiplier == 1.0
-    widths = [_quantize(w, g) for w, g in zip(widths, groups)]
+    if group_min_ratio:
+        widths = [make_divisible(w, g) for w, g in zip(widths, groups)]
+    else:
+        widths = [_quantize(w, g) for w, g in zip(widths, groups)]
     groups = [w // g for w, g in zip(widths, groups)]
     return widths, depths, groups
 
@@ -47,12 +54,18 @@ class RegNetBlock(nnx.Module):
             mid,
             (3, 3),
             strides=(stride, stride),
+            padding=1,
             use_bias=False,
             feature_group_count=groups,
             rngs=rngs,
         )
         self.bn2 = BatchNorm(mid, rngs=rngs)
-        self.se = SqueezeExcite(mid, rngs=rngs, rd_ratio=se_ratio) if se_ratio > 0 else None
+        # timm sizes the squeeze-excite bottleneck from the block input channels.
+        self.se = (
+            SqueezeExcite(mid, rd_channels=int(round(in_chs * se_ratio)), rngs=rngs)
+            if se_ratio > 0
+            else None
+        )
         self.conv3 = nnx.Conv(mid, out_chs, (1, 1), use_bias=False, rngs=rngs)
         self.bn3 = BatchNorm(out_chs, rngs=rngs)
         self.shortcut = (
@@ -93,7 +106,7 @@ class RegNet(ClassifierMixin, nnx.Module):
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.stem_conv = nnx.Conv(
-            in_chans, stem_chs, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
+            in_chans, stem_chs, (3, 3), strides=(2, 2), padding=1, use_bias=False, rngs=rngs
         )
         self.stem_bn = BatchNorm(stem_chs, rngs=rngs)
         stages, chs = [], stem_chs
@@ -130,12 +143,12 @@ _CFGS = {
     "regnety_008": (14, 56, 38.84, 2.4, 16),
     "regnety_016": (27, 48, 20.71, 2.65, 24),
     "regnety_032": (21, 80, 42.63, 2.66, 24),
+    "regnety_008_tv": (14, 56, 38.84, 2.4, 16, 0.9),
 }
 
 
 def _make(name):
-    depth, w0, wa, wm, gw = _CFGS[name]
-    widths, depths, groups = gen_cfg(depth, w0, wa, wm, gw)
+    widths, depths, groups = gen_cfg(*_CFGS[name])
     se = 0.25 if name.startswith("regnety") else 0.0
 
     def entry(**kwargs):

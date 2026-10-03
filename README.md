@@ -15,7 +15,7 @@
 
 ### October 3, 2026
 
-- Port timm's RegNet, PiT, EfficientFormer, SENet-154, aligned Xception, SelecSLS, HardCoReNAS, RepGhostNet, VoVNet, HGNet/HGNetV2, TinyViT, EdgeNeXt, XCiT, FasterNet, SwiftFormer, ConViT, Twins, NesT, DaViT (including the Florence-2 image towers), FocalNet, GCViT, MobileViT, and MViTv2, and register their remaining timm variants.
+- Port timm's RegNet, PiT, EfficientFormer, SENet-154, aligned Xception, SelecSLS, HardCoReNAS, RepGhostNet, VoVNet, HGNet/HGNetV2, TinyViT, EdgeNeXt, XCiT, FasterNet, SwiftFormer, ConViT, Twins, NesT, DaViT (including the Florence-2 image towers), FocalNet, GCViT, MobileViT, MViTv2, and the MetaFormer baselines (CAFormer, ConvFormer, PoolFormerV2), and register their remaining timm variants.
 - Port timm's StarNet, ReXNet, InceptionNeXt, MambaOut, RepViT, DLA, DPN, Hiera, and SAM2 Hiera (HieraDet).
 - Pad strided convolutions and pooling symmetrically, as PyTorch does, instead of Flax's SAME padding; TinyNet follows timm's width and depth scaling.
 - Freeze long-lived Python objects after the first training step to reduce garbage-collection pauses in the training loop.
@@ -46,7 +46,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 546
+print(len(jimm.list_models()))  # 556
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -67,7 +67,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer, ResNeSt, DenseNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, PVTv2, VGG, LeViT, EfficientFormer, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, PVTv2, VGG, LeViT, EfficientFormer, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -434,6 +434,9 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `gcvit_tiny` | 1,363 img/s | 885 img/s | 1.54× |
 | `mobilevit_s` (256×256) | 2,779 img/s | 1,635 img/s | 1.70× |
 | `mvitv2_tiny` | 1,836 img/s | 964 img/s | 1.90× |
+| `caformer_s18` | 3,297 img/s | 1,109 img/s | 2.97× |
+| `convformer_s18` | 3,173 img/s | 1,074 img/s | 2.95× |
+| `poolformerv2_s12` | 6,965 img/s | 1,883 img/s | 3.70× |
 
 ### Attention
 

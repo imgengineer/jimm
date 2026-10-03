@@ -6,7 +6,8 @@
 - [Features](#features)
 - [Getting Started](#getting-started)
 - [Training, Validation, and Inference](#training-validation-and-inference)
-- [Verification](#verification)
+- [Testing](#testing)
+- [Performance](#performance)
 - [Repository Layout](#repository-layout)
 - [Licenses and Acknowledgments](#licenses-and-acknowledgments)
 
@@ -14,40 +15,23 @@
 
 ### October 3, 2026
 
-- Port DaViT and FocalNet from timm, adding `davit_large`, `davit_huge`, `davit_giant`, Florence-2's `davit_base_fl` and `davit_huge_fl` image towers, the FocalNet `_lrf` variants, and FocalNet-L/XL/H with three or four focal levels. DaViT used other depths (DaViT-T had 33.8M instead of 28.4M parameters); its stages now alternate window-attention and channel-attention blocks, each wrapped in residual depthwise convolutional position encodings. FocalNet (FocalNet-T had 24.3M instead of 28.4M parameters) now gates depthwise convolutions with growing kernels plus a global context in its focal modulation, and the large models use post-norm with layer scale and overlapping downsampling. Both reproduce timm outputs. **401 registered names now match timm 1.0.29 parameter counts**.
-- Port ConViT, Twins, and NesT from timm, adding `twins_pcpvt_small`, `twins_pcpvt_base`, `twins_pcpvt_large`, and the TensorFlow-padded `nest_tiny_jx`, `nest_small_jx`, and `nest_base_jx`. ConViT used other widths and a single softmax over mixed content and position logits (ConViT-Ti had 27.8M instead of 5.7M parameters); its first ten blocks now use gated positional self-attention that mixes separate softmaxes over content and over each token pair's relative offset and distance, with timm's local initialization, and the class token joins only before the last two blocks. Twins-SVT used other depths and widths (Twins-SVT-B had 37.6M instead of 56.1M parameters); its stages now add a convolutional position encoding after the first block and alternate locally grouped attention in 7×7 windows with global attention over a strided-convolution subsampled map, which the PCPVT models use throughout. NesT (NesT-T had 30.6M instead of 17.1M parameters) now attends within 16, 4, and 1 blocks of 14×14 tokens across three levels and aggregates between them with convolution, LayerNorm, and max pooling. All reproduce timm outputs, and ConViT-Ti trains 2.9× faster than timm. **381 registered names now match timm 1.0.29 parameter counts**.
-- Port FasterNet and SwiftFormer from timm, adding `fasternet_t2`, `fasternet_m`, `fasternet_l`, and `swiftformer_l3`. FasterNet used other widths and no head projection (FasterNet-S had 16.9M instead of 31.2M parameters); its blocks now mix space with a partial 3×3 convolution over a quarter of the channels followed by a BatchNorm 1×1-conv MLP, stages merge patches with 2×2 strided convolutions, the head projects pooled features to 1,280 channels, and T0/T1 use GELU. SwiftFormer used softmax additive attention in LayerNorm blocks; each stage now ends with timm's block of local representation, efficient additive attention (L2-normalized queries and keys pooled into one global query by a learned vector), and a BatchNorm MLP after convolutional encoders, and the head averages classifier and distillation outputs. Both reproduce timm outputs. **366 registered names now match timm 1.0.29 parameter counts**.
-- Port TinyViT, EdgeNeXt, and XCiT from timm, adding `tiny_vit_21m_384`, `tiny_vit_21m_512`, `edgenext_base`, `edgenext_small_rw`, and the 25 missing XCiT variants (all 28 timm names). TinyViT used Swin window attention and MobileNetV2 blocks with other widths (TinyViT-5M had 7.6M instead of 5.4M parameters); it now has an MBConv stage, patch merging with strided depthwise convolutions, attention with an internal LayerNorm and learned relative position biases over zero-padded windows, depthwise convolutions between attention and MLP, and a LayerNorm head. EdgeNeXt had three to six times timm's parameters; it now combines depthwise-convolution encoders with layer scale and split depth-wise transpose attention: a cascade of depthwise 3×3 convolutions over channel groups, cross-covariance attention with L2-normalized queries and keys and a learned temperature, and a Fourier positional encoding in the second stage. XCiT (XCiT-S12 had 22.2M instead of 26.3M parameters) now embeds patches with strided convolutions and BatchNorm, adds the Fourier encoding, applies local patch interaction (depthwise convolutions around GELU and BatchNorm) in every block, and classifies the class token after timm's two class-attention blocks. All reproduce timm outputs, and XCiT-T12 trains 2.2× faster than timm. **356 registered names now match timm 1.0.29 parameter counts**.
-- Port VoVNet and HGNet from timm, adding `ese_vovnet19b_dw`, `ese_vovnet19b_slim`, `ese_vovnet19b_slim_dw`, `ese_vovnet57b`, `ese_vovnet99b`, and PP-HGNetV2 `hgnetv2_b0`–`hgnetv2_b6`. VoVNet used other stage depths and widths (VoVNet-39 had 28.9M instead of 22.6M parameters); it now follows timm's configurations with ceil-mode max pooling between stages, residuals and effective squeeze-excite (one 1×1 convolution with a hard-sigmoid gate) in the V2 models, and separable convolutions in the `_dw` variants. HGNet stacked depthwise convolutions (HGNet-Tiny had 4.1M instead of 14.7M parameters); it now aggregates chains of 3×3 convolutions like VoVNet with sigmoid squeeze-excite, downsamples with strided depthwise convolutions, and projects pooled features to 2,048 channels before the classifier, while HGNetV2 adds its two-branch stem, 1×1 + depthwise light blocks, and learnable affine activations in B0–B3. Both reproduce timm outputs. **318 registered names now match timm 1.0.29 parameter counts**.
-- Port HardCoReNAS and RepGhostNet from timm, adding `hardcorenas_b`–`hardcorenas_e` and `repghostnet_058`, `repghostnet_080`, `repghostnet_111`, `repghostnet_150`, and `repghostnet_200`. HardCoReNAS was a generic grouped-convolution residual network (HardCoReNAS-A had 1.4M instead of 5.3M parameters); it is now timm's MobileNetV3 with the searched inverted-residual blocks, decoded from timm's block strings. RepGhostNet concatenated GhostNet modules with GhostNet's expansion widths; its modules now add a BatchNorm fusion branch to the depthwise convolution instead of concatenating, with RepGhost's narrower expansions, hard-sigmoid squeeze-excite rounded to multiples of 4, and a 1,280-wide head. Both reproduce timm outputs, and HardCoReNAS-A trains at 10,524 img/s (timm 6,607). **300 registered names now match timm 1.0.29 parameter counts**.
-- Port SENet-154, aligned Xception, and SelecSLS from timm, adding `xception71`, `xception41p`, `xception65p`, `selecsls42b`, `selecsls60b`, and `selecsls84`. timm builds SENet-154 as a ResNet with a three-convolution stem, 64 groups of width 4 whose first 1×1 convolution halves the grouped width, and 3×3 strided shortcut convolutions; the previous version had 17.3M instead of 115.1M parameters. Xception41 and Xception65 reused the original Xception's blocks with max pooling (Xception41 had 9.3M instead of 27.0M parameters); they now stack modules of three separable convolutions, the last one strided, with BatchNorm epsilon 1e-3 and Inception normalization, and the `p` variants use pre-activation modules. SelecSLS was a generic residual network with 5.7M instead of 30.4M parameters (SelecSLS-42); each block now fuses a 3×3 convolution and two 1×1/3×3 pairs with the output of its stage's first block, followed by a head of plain convolutions. All reproduce timm outputs; **286 registered names now match timm 1.0.29 parameter counts**.
-- Port RegNet, PiT, and EfficientFormer from timm and add `pit_ti_distilled_224`, `pit_xs_distilled_224`, `pit_s_distilled_224`, and `pit_b_distilled_224`. PiT previously embedded non-overlapping patches and doubled its widths at every stage (PiT-Ti had 73.5M instead of 4.8M parameters); it now embeds overlapping patches with a learned 2D position embedding, pools with a stride-2 depthwise convolution while a linear layer widens the class token, and the distilled variants average their class and distillation heads. RegNetY sizes squeeze-excite from the block input width (RegNetY-032 had 20.3M instead of 19.4M parameters), RegNet pads like PyTorch, and `regnety_008_tv` uses torchvision's width rounding (784 final channels). EfficientFormer used depthwise-convolution blocks and plain self-attention; it now mixes tokens by average pooling minus identity with layer scale and BatchNorm MLPs, adds learned attention biases over the 7×7 grid in its last-stage transformer blocks, and averages classifier and distillation heads. All reproduce timm outputs, and PiT-Ti trains at 10,397 img/s (previously 6,852; timm 6,668). **275 registered names now match timm 1.0.29 parameter counts**.
-- Port StarNet and ReXNet from timm and add `starnet_s100`, `starnet_s150`, `starnet_s3`, `starnet_s4`, `rexnet_300`, and `rexnetr_100`–`rexnetr_300`. StarNet previously used other widths and depths (S1 had 7.9M instead of 2.9M parameters); ReXNet now grows its widths linearly block by block, uses squeeze-excite with BatchNorm, ReLU6 after the depthwise convolution, and residuals on the first input channels only. Both reproduce timm outputs; **254 registered names now match timm 1.0.29 parameter counts**.
-- Freeze long-lived Python objects after the first training step in the CLI. Every step dispatch allocates enough short-lived objects to trigger Python's cyclic garbage collector, which then rescans all long-lived objects; with Tokamax imported before the first compilation (as `--attn-autotune` does), RepViT-M0.9 steps took 19.8 ms instead of 13.0 ms at batch size 64.
-- Port InceptionNeXt, MambaOut, and RepViT from timm, adding `inception_next_base`, `mambaout_small`, `mambaout_base`, `repvit_m1_0`, `repvit_m2_3`, and the legacy `repvit_m1`, `repvit_m2`, and `repvit_m3`. InceptionNeXt now splits channels between identity, 3×3, 1×11, and 11×1 depthwise branches with BatchNorm and an MLP head; MambaOut uses gated CNN blocks with timm's widths (Femto ends at 288 instead of 384 channels) and its MLP head; RepViT uses RepVGG-style depthwise mixers, squeeze-excite in alternating blocks, and averaged classifier and distillation heads. All reproduce timm outputs; **237 registered names now match timm 1.0.29 parameter counts**.
-- Pad strided convolutions and pooling like PyTorch. Flax's SAME padding puts the extra row and column of a stride-2 window on the bottom/right only, so 57 models whose parameter counts matched timm still computed different outputs, including every ResNet, ResNeXt, SE-ResNet, Res2Net, ResNetV2, DenseNet, EfficientNet, MobileNetV2/V3, MNASNet, GhostNet, PVTv2, and DarkNet-53; Inception-v3 also padded stem layers that timm leaves unpadded, giving 38×38 instead of 35×35 maps. `ConvBNAct` now defaults to timm's padding rule, a test checks every strided operation in representative models, and ResNet-50, DenseNet-121, MobileNetV2, and EfficientNet-B0 reproduce timm outputs (ResNet-50 previously differed by 25 at output scale 743). TinyNet now uses timm's width and depth multipliers, an unscaled stem, and a 1,280-channel head; **220 registered names now match timm 1.0.29 parameter counts**.
-- Port DLA and DPN from timm and add `dla46_c`, `dla46x_c`, `dla60x_c`, `dla60x`, `dla102x`, `dla102x2`, and `dpn48b`. DLA levels 3–5 now aggregate the downsampled level input in their root convolutions, without extra projections inside the bottlenecks; DPN blocks are pre-activation with timm's BatchNorm epsilon, and the final BatchNorm acts on the feature map before pooling. Both use PyTorch's symmetric padding and reproduce timm outputs. **215 registered names now match timm 1.0.29 parameter counts**.
-- Port Hiera and the SAM2 Hiera backbone (HieraDet) from timm. The previous versions ran global attention at every stage, including 3,136 tokens per image at stride 4, and downsampled with convolutions. Hiera now attends within 8×8 mask units of unrolled tokens in its first stages and max-pools queries and shortcuts at stage transitions; HieraDet uses windowed attention with periodic global blocks, the same pooling, and a position embedding resized with PyTorch's bicubic kernel. Both follow timm's initialization, reproduce timm outputs, and train faster than the approximations: Hiera-T 2,224 → 2,934 img/s (timm 1,657). SAM2 Hiera defaults to timm's 896×896 input (1,024 for Large). **198 registered names now match timm 1.0.29 parameter counts**.
+- Port timm's RegNet, PiT, EfficientFormer, SENet-154, aligned Xception, SelecSLS, HardCoReNAS, RepGhostNet, VoVNet, HGNet/HGNetV2, TinyViT, EdgeNeXt, XCiT, FasterNet, SwiftFormer, ConViT, Twins, NesT, DaViT (including the Florence-2 image towers), and FocalNet, and register their remaining timm variants.
+- Port timm's StarNet, ReXNet, InceptionNeXt, MambaOut, RepViT, DLA, DPN, Hiera, and SAM2 Hiera (HieraDet).
+- Pad strided convolutions and pooling symmetrically, as PyTorch does, instead of Flax's SAME padding; TinyNet follows timm's width and depth scaling.
+- Freeze long-lived Python objects after the first training step to reduce garbage-collection pauses in the training loop.
 
 ### October 2, 2026
 
-- Port BEiT and ResNeSt from timm. BEiT was a plain ViT; it now has relative position biases in every block (with class-token entries), query and value biases only, layer scale, and a mean-pooled LayerNorm head, and adds `beit_base_patch16_384` and `beit_large_patch16_384`. ResNeSt gains the split-attention BatchNorm, PyTorch-style average pooling in strided blocks and shortcuts, and ResNeSt-101e's 64-wide stem and 256×256 input. **187 registered names now match timm 1.0.29 parameter counts**.
-- Fix Swin Transformer shifted-window attention. The attention mask merged the strip rolled in from the opposite image edge with its window neighbors, so those tokens attended across the boundary, and LayerNorm used Flax's epsilon (1e-6) instead of timm's 1e-5; Swin-T now reproduces timm outputs (float64 difference 9e-16). Port Swin V2 and Swin V2-CR from timm, which previously reused Swin V1 position-bias tables and normalized the residual sum: scaled cosine attention with a learned temperature, continuous position biases from a meta-MLP, and res-post-norm blocks, with Swin V2-CR's extra main-branch norms and corrected Huge head counts.
-- Port DeiT-III layer scale and patch-only position embeddings, CaiT talking-heads attention (class attention also queries with the normalized class token), and timm's MetaFormer PoolFormer (GroupNorm before pooling, pooling that excludes padding, symmetric patch-embedding padding, and a LayerNorm head), and add `poolformer_m36` and `poolformer_m48`. Every changed model reproduces timm outputs with identical weights; **180 registered names now match timm 1.0.29 parameter counts**.
-- Speed up training of models with grouped convolutions, including every ConvNeXt and ConvNeXt V2 variant, FastViT, MambaOut, StarNet, and FocalNet-SRF. On GPU, XLA lowered two kinds of kernel gradients to cuDNN grouped convolutions that launch one kernel per channel group: depthwise kernels as large as their feature map, such as 7×7 kernels on the 7×7 last stage at 224×224, and dilated grouped convolutions. `create_model` now routes grouped convolutions through `jimm.layers.conv_general_dilated`, which computes those gradients with a batched matmul, or as undilated convolutions over the dilation phases, and matches `jax.lax` outputs and gradients. ConvNeXt-T trains **1.42× faster** (2,061 → 2,920 img/s), ConvNeXt V2-T 1.36×, FastViT-T8 1.53×, MambaOut-Femto 1.43×, StarNet-S1 1.32×, and FocalNet-T-SRF 1.26×.
-- Port TResNet, RDNet, and SK-ResNet from timm, adding `tresnet_v2_l`, `rdnet_large`, `skresnet18`, `skresnet34`, `skresnet50d`, and `skresnext50_32x4d`. The previous versions used other stems, blocks, and widths (RDNet-T had a third of timm's parameters); TResNet-M now trains **3.8× faster** (793 → 3,045 img/s) and SK-ResNet-50 2.4× faster. With the grouped-convolution fix, RDNet-T and SK-ResNeXt-50 train 1.24× and 2.05× faster than with `jax.lax` convolutions. Every ported variant reproduces timm outputs with identical weights; **156 registered names now match timm 1.0.29 parameter counts**.
-- Port LeViT, MaxViT, CoAtNet, EfficientViT (MIT), and Visformer from timm. LeViT no longer diverges to NaN in bfloat16, MaxViT-T no longer runs out of memory at batch size 64, EfficientViT starts from a normal loss instead of ~146, and Visformer trains **26× faster** than the previous approximation. Every ported variant reproduces timm outputs with identical weights; **143 registered names now match timm 1.0.29 parameter counts**.
-- Use Tokamax's heuristic kernel configurations for GPU bfloat16 attention by default. Per-shape autotuning compiled MaxViT-T in 450 s instead of 35 s for 1.9% higher throughput; `--attn-autotune` or `jimm.attention.set_attention_autotuning(True)` enables it.
-- Port HRNet from timm and align SE-ResNet/SE-ResNeXt, MobileNetV3, MNASNet, SPNASNet, MLP-Mixer, ResMLP, ConvMixer, GhostNet, PVTv2, and VGG-BN with their timm architectures. **129 registered names now reproduce timm 1.0.29 parameter counts** (up from 92), checked by [tests/test_timm_parity.py](tests/test_timm_parity.py). HRNet previously shared fusion layers across modules and diverged to NaN within a few bfloat16 steps; the port trains stably and matches timm outputs with identical weights.
-- Use PyTorch-equivalent BatchNorm momentum (Flax `momentum=0.9`). Flax's default of 0.99 left evaluation statistics behind the trained weights: in a ResNet-50 run with 100 steps per epoch, first-epoch validation accuracy rose from 0.38 to 0.79, with unchanged training loss.
-- Fix the training CLI for 130 architectures without stochastic depth, which failed on the unconditional `drop_path_rate` argument; like timm, the CLI passes regularization and pooling overrides only when requested. `get_default_cfg` now returns every model's configuration, such as 300×300 for `efficientnet_b3`, without allocating weights.
-- Fix training color jitter: brightness was an additive shift of up to ±1.4 × 255, so the default `--color-jitter 0.4` turned about **36% of training images** completely black or white. Color jitter, AutoAugment, RandAugment, and AugMix operations now follow timm's PIL semantics and magnitude mappings; random erasing follows timm's box sampling in normalized space; evaluation resizes the shorter edge before the center crop instead of squashing the aspect ratio. See [data pipeline performance](#data-pipeline-performance).
-- Speed up the training input pipeline **2.6×**: augmentation runs on uint8 OpenCV lookup tables and blends, and the training CLI keeps images as uint8 from Grain workers to the device, normalizing and erasing them inside the compiled step like timm's prefetcher. With the default four workers on an RTX 5090, ResNet-18 trains **2.5× faster** and ResNet-50 **1.3× faster** end to end.
-- Add **37 model variants** from five families following [timm 1.0.30](https://github.com/huggingface/pytorch-image-models/releases/tag/v1.0.30): LowFormer, iFormer, EfficientViM, Qwen3 ViT, and DeepSeek ViT. The registry now contains **420 models across 99 families**.
-- Support Qwen3 spatial-merger and DeepSeek aligner classifiers, native VLM encoders, and distilled iFormer/EfficientViM heads.
-- Update dependencies to the latest stable releases checked on this date, including **JAX 0.11.2 with CUDA 13** and **Flax 0.12.10**. The resolved environment is recorded in [uv.lock](uv.lock).
-- Use **Tokamax 0.0.14** fused attention by default for GPU bfloat16 execution, with optional kernel autotuning, and use `nnx.jit_partial` for cached training/evaluation steps. Fix LowFormer transposed convolutions for mixed-precision training. See [attention performance](#attention-performance) for measurements.
-- Improve ImageFolder scanning and color jitter, and fix Mixup and throughput reporting.
+- Port timm's BEiT, ResNeSt, Swin V2, Swin V2-CR, DeiT-III, CaiT, PoolFormer, TResNet, RDNet, SK-ResNet, LeViT, MaxViT, CoAtNet, EfficientViT (MIT), Visformer, and HRNet, and align SE-ResNet/SE-ResNeXt, MobileNetV3, MNASNet, SPNASNet, MLP-Mixer, ResMLP, ConvMixer, GhostNet, PVTv2, and VGG-BN with timm.
+- Fix the Swin shifted-window attention mask and LayerNorm epsilon.
+- Compute grouped-convolution kernel gradients with `jimm.layers.conv_general_dilated`, which avoids slow XLA lowerings of large depthwise and dilated grouped kernels on GPU.
+- Use Tokamax fused attention with heuristic kernel configurations for GPU bfloat16; `--attn-autotune` enables per-shape autotuning.
+- Use PyTorch-equivalent BatchNorm momentum.
+- Follow timm for color jitter, AutoAugment, RandAugment, AugMix, and random erasing, and resize the shorter edge before center cropping at evaluation.
+- Keep training images as uint8 from loader workers to the device, where normalization and random erasing run inside the compiled step.
+- Add LowFormer, iFormer, EfficientViM, Qwen3 ViT, and DeepSeek ViT from timm 1.0.30, with Qwen3 spatial-merger and DeepSeek aligner classifiers and native VLM encoders.
+- Update to JAX 0.11.2 (CUDA 13), Flax 0.12.10, and Tokamax 0.0.14.
+- Pass regularization and pooling overrides to models only when requested, and fix ImageFolder scanning, Mixup, and throughput reporting.
 
 ## Introduction
 
@@ -83,7 +67,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
 
-Parameter counts match timm 1.0.29 for **401 of the 475** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer, ResNeSt, DenseNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, PVTv2, VGG, LeViT, EfficientFormer, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer, ResNeSt, DenseNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, PVTv2, VGG, LeViT, EfficientFormer, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -101,7 +85,7 @@ The following families retain the upstream configurations and parameter counts. 
 
 Models initialize randomly by default. There are currently no registered downloadable pretrained weights, so `jimm.list_models(pretrained=True)` returns an empty list and `pretrained=True` raises `NotImplementedError`.
 
-Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/path/to/weights.npz"` and array state dictionaries are also supported through [jimm/weights.py](jimm/weights.py), provided their names and shapes match the converter. Automatic import of timm checkpoints is not implemented; architecture verification does not imply checkpoint compatibility for every family.
+Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/path/to/weights.npz"` and array state dictionaries are also supported through [jimm/weights.py](jimm/weights.py), provided their names and shapes match the converter. Automatic import of timm checkpoints is not implemented; architecture verification does not imply checkpoint compatibility for every family. ImageNet accuracy has not been evaluated for jimm models.
 
 ## Features
 
@@ -110,7 +94,7 @@ Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/pat
 - **NNX transformations:** models work with `nnx.jit` and `nnx.grad`; pass the model as an explicit argument to transformed functions. Use `model.train()` and `model.eval()` to control dropout and batch normalization.
 - **Attention:** Tokamax fused kernels for GPU bfloat16 self/cross-attention, including relative-position bias, with heuristic kernel configurations or optional per-shape autotuning. Value heads may differ in width from query/key heads. CPU, float32, and float16 use Flax attention; active attention dropout retains its existing implementation.
 - **Grouped convolutions:** `create_model` routes grouped `nnx.Conv` layers through `jimm.layers.conv_general_dilated`, a drop-in for `jax.lax.conv_general_dilated` that computes two kernel gradients XLA lowers poorly on GPU: depthwise kernels as large as their feature map, and dilated grouped convolutions. Apply it to other models with `jimm.layers.use_fast_grouped_conv_grads(model)`.
-- **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix. Photometric and AutoAugment operations reproduce timm's PIL semantics with OpenCV lookup tables, blends, and affine warps; the training CLI normalizes uint8 batches and applies random erasing, Mixup, and CutMix on device.
+- **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix. Photometric and AutoAugment operations follow timm's PIL semantics with OpenCV lookup tables, blends, and affine warps (OpenCV rounding can differ from Pillow by a few intensity levels); the training CLI normalizes uint8 batches and applies random erasing, Mixup, and CutMix on device.
 - **Training:** AdamW with cosine scheduling and warmup, label smoothing, gradient clipping, optional bfloat16 computation, and JAX SPMD data parallelism or FSDP.
 - **Checkpointing:** asynchronous Orbax model/optimizer checkpoints, retention settings, and epoch resume with restored data position.
 
@@ -133,7 +117,7 @@ uv run python -c "import jax; print(jax.__version__, jax.devices())"
 
 `uv sync` installs the project in editable mode and includes development tools. To force CPU execution with this environment, prefix commands with `JAX_PLATFORMS=cpu`.
 
-Tokamax and Triton are installed by default. GPU bfloat16 attention uses [Tokamax's automatic backend selection](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py) with heuristic kernel configurations. Pass `--attn-autotune` to the training CLI, or call `jimm.attention.set_attention_autotuning(True)`, to benchmark candidate forward and backward kernels for each new shape instead; later calls in the same process reuse the fastest configuration. Autotuning adds compilation time for every new shape and process (450 s instead of 35 s for MaxViT-T on an RTX 5090) for about 1–2% faster steps. Unsupported shapes fall back to XLA. CPU, float32, and float16 keep Flax attention. No extra installation flags or model configuration changes are required.
+Tokamax and Triton are installed by default. GPU bfloat16 attention uses [Tokamax's automatic backend selection](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py) with heuristic kernel configurations. Pass `--attn-autotune` to the training CLI, or call `jimm.attention.set_attention_autotuning(True)`, to benchmark candidate forward and backward kernels for each new shape instead; later calls in the same process reuse the fastest configuration. Autotuning adds substantial compilation time for every new shape and process and typically improves step time only slightly. Unsupported shapes fall back to XLA. CPU, float32, and float16 keep Flax attention. No extra installation flags or model configuration changes are required.
 
 ### Classification and embeddings
 
@@ -360,39 +344,35 @@ print(epoch)  # 1
 
 The helpers also accept an optimizer for training-state restoration. For asynchronous saves, use `wait=False` and call `wait_for_checkpoints()` before exit. Switch a restored model to evaluation mode before inference, then use the classification or encoder examples above with your preprocessed NHWC images.
 
-## Verification
+## Testing
 
-Run the core regression suite and static checks with the locked environment:
+Run the regression suite and static checks with the locked environment:
 
 ```bash
 JAX_PLATFORMS=cpu uv run pytest tests/ --ignore=tests/test_models.py -q
-JAX_PLATFORMS=cpu uv run pytest tests/test_models.py::test_all_registered_model_entrypoints_instantiation -q
+JAX_PLATFORMS=cpu uv run pytest tests/test_models.py -q
 uv run ruff check .
 uv run ruff format --check .
 ```
 
-Standalone scripts check representative forward passes and gradients:
+`tests/test_models.py` instantiates every registered model and runs a forward and backward pass for one model of each family; it takes about half an hour on CPU. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
+
+```bash
+uv run pytest tests/test_attention.py -q
+```
+
+Standalone scripts check forward passes and gradients; `scripts/test_jimm.py --all` covers every registered model at its configured input size:
 
 ```bash
 uv run python scripts/test_jimm.py
 uv run python scripts/test_backprop.py
 ```
 
-Use `uv run pytest tests/` for the full suite, including representative forward/backward tests across model families. `scripts/test_jimm.py --all` checks every registered model at its configured input size; large variants require substantial memory and compilation time.
+## Performance
 
-The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
+### Training throughput
 
-The core regression suite passed **708 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, PyTorch-style padding of strided operations, grouped-convolution gradients against `jax.lax`, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
-
-```bash
-uv run pytest tests/test_attention.py -q
-```
-
-The training CLI also completed CUDA 13 training, validation, and checkpoint saving on an RTX 5090 with `vit_tiny_patch16_224` at 224×224 (`mlp_ratio=2.0`), using the default four Grain workers, bfloat16, and autotuned Tokamax forward/backward kernels. Training and validation used separate batch sizes of four and eight.
-
-### Training throughput compared with timm
-
-For architectures whose parameter counts match timm, compiled jimm training steps run at 0.97–3.02× the speed of timm 1.0.29 with eager PyTorch 2.10. Both sides use an RTX 5090, batch size 64, bfloat16 autocast, AdamW, and label smoothing; PyTorch uses channels-last tensors, fused AdamW, and cuDNN benchmarking without `torch.compile`. Throughput is the median over 20 steps after warmup; jimm uses its default settings, including heuristic Tokamax attention kernels.
+The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorch 2.10 on an RTX 5090: batch size 64, bfloat16 autocast, AdamW, and label smoothing, at 224×224 unless noted. PyTorch uses channels-last tensors, fused AdamW, and cuDNN benchmarking without `torch.compile`; jimm uses its defaults. Throughput is the median over 20 steps after warmup.
 
 | Model | jimm | timm (eager) | Ratio |
 | --- | ---: | ---: | ---: |
@@ -452,40 +432,14 @@ For architectures whose parameter counts match timm, compiled jimm training step
 | `davit_tiny` | 2,744 img/s | 1,721 img/s | 1.59× |
 | `focalnet_tiny_srf` | 2,670 img/s | 1,533 img/s | 1.74× |
 
-### Data pipeline performance
+### Attention
 
-Measurements below use the default training augmentation (random resized crop, horizontal flip, color jitter 0.4, random erasing 0.2), batch size 128 at 224×224, a 12,807-image JPEG ImageFolder at ImageNet-like resolution (500×375), JAX 0.11.2/CUDA 13, and an RTX 5090. CLI throughput is the mean of the steady-state epochs of three-epoch runs with four Grain workers and bfloat16.
-
-| Measurement | Before | After | Speedup |
-| --- | ---: | ---: | ---: |
-| Color jitter, per image (one CPU core) | 0.82 ms | 0.12 ms | 6.8× |
-| Training transform, per image (one CPU core) | 1.77 ms | 0.96 ms | 1.8× |
-| Training loader, four workers | 1,830 img/s | 4,806 img/s | 2.6× |
-| ResNet-18 CLI training | 2,147 img/s | 5,370 img/s | 2.5× |
-| ResNet-50 CLI training | 2,121 img/s | 2,803 img/s | 1.3× |
-
-Before the fix, both ResNets were limited by the input pipeline. On this nine-class dataset, three-epoch ResNet-50 validation accuracy rose from 0.82 to 0.98, because color jitter no longer blanks training images. Compared with timm 1.0.29, torchvision 0.25, and Pillow 12.3 on 11 images at five magnitudes, AutoContrast, Equalize, Invert, Posterize, Solarize, SolarizeAdd, and integer translations match exactly. Brightness, contrast, saturation, and sharpness differ by at most two intensity levels because OpenCV rounds where Pillow truncates; hue differs by up to ten levels from HSV quantization. Rotation, shear, and fractional translation differ by more than one level on under 1% of pixels, mostly at fill boundaries, and Gaussian blur differs where Pillow approximates it with box blurs.
-
-### Attention performance
-
-Measurements below use an **RTX 5090**, JAX 0.11.2/CUDA 13, Flax 0.12.10, Tokamax 0.0.14, and bfloat16 with kernel autotuning (`--autotune`); the heuristic default measured 0.105 ms and 0.420 ms for the same attention workloads. Times are median GPU device execution times after compilation and tuning, measured with `tokamax.benchmark`; compilation, tuning, and host-to-device transfers are excluded. The shared attention path follows the [JAX attention conventions](https://docs.jax.dev/en/latest/_autosummary/jax.nn.dot_product_attention.html) and [Tokamax attention implementation](https://github.com/openxla/tokamax/blob/main/tokamax/_src/ops/attention/api.py).
-
-| Workload | Flax attention | jimm + Tokamax | Speedup |
-| --- | ---: | ---: | ---: |
-| Attention forward, `(1, 2304, 12, 64)` BTHD | 0.481 ms | 0.104 ms | 4.64× |
-| Attention forward + backward, same shape | 1.287 ms | 0.419 ms | 3.07× |
-| Full `qwen3_vit_88m` forward, batch 1, 768×768, 5 classes | 8.452 ms | 3.941 ms | 2.14× |
-
-For the attention forward/backward workload, XLA's compiled temporary-buffer estimate fell from **607.5 MiB to 3.69 MiB**. The full Qwen3 forward estimate fell from **372.96 MiB to 67.46 MiB**. These estimates exclude input/output and parameter buffers and do not measure peak GPU allocation. Performance depends on model shapes and hardware.
-
-Reproduce the attention benchmark and export its timings, numerical difference, and temporary-buffer estimates:
+GPU bfloat16 attention dispatches to Tokamax fused kernels, which reduce attention time and compiled temporary memory relative to Flax attention; results depend on shapes and hardware. To measure them on your hardware:
 
 ```bash
 uv run python scripts/benchmark_attention.py \
     --seq-len 2304 --iterations 10 --autotune --output attention-benchmark.json
 ```
-
-Native-resolution bfloat16 forward comparisons passed for ViT, Swin, LowFormer, Qwen3, and DeepSeek with identical weights, using mixed-precision tolerances. Native Qwen3 training with autotuning produced a finite loss and preserved FP32 master weights; ViT and Swin also passed native bfloat16 training checks. Float32 attention outputs and gradients remain identical to Flax.
 
 ## Repository Layout
 
@@ -511,4 +465,4 @@ uv.lock             Resolved dependency versions
 
 Code is licensed under [Apache License 2.0](LICENSE). [NOTICE](NOTICE) retains attribution and applicable MIT notices for the adapted implementations.
 
-Thanks to [Ross Wightman and the timm contributors](https://github.com/huggingface/pytorch-image-models) and the original architecture authors. The five new model families follow the implementations in timm 1.0.30, and this document follows the organization of [its README](https://github.com/huggingface/pytorch-image-models/blob/v1.0.30/README.md). External model weights retain their own licenses; consult their original model cards before use.
+Thanks to [Ross Wightman and the timm contributors](https://github.com/huggingface/pytorch-image-models) and the original architecture authors. The model implementations follow timm, and this document follows the organization of [its README](https://github.com/huggingface/pytorch-image-models/blob/v1.0.30/README.md). External model weights retain their own licenses; consult their original model cards before use.

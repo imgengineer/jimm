@@ -20,6 +20,14 @@ TIMM_PARAM_COUNTS = {
     "caformer_s36": 39_297_102,
     "cait_s24_224": 46_916_200,
     "cait_xxs24_224": 11_956_264,
+    "coat_lite_medium": 44_571_048,
+    "coat_lite_medium_384": 44_571_048,
+    "coat_lite_mini": 11_011_560,
+    "coat_lite_small": 19_838_504,
+    "coat_lite_tiny": 5_721_960,
+    "coat_mini": 10_337_004,
+    "coat_small": 21_693_908,
+    "coat_tiny": 5_498_540,
     "coatnet_0_rw_224": 27_435_562,
     "coatnet_1_rw_224": 41_721_502,
     "coatnet_2_rw_224": 73_868_400,
@@ -553,6 +561,7 @@ def _strided_paddings(jaxpr):
         "shvit_s1",
         "nfnet_f0",
         "cspresnet50",
+        "coat_lite_tiny",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

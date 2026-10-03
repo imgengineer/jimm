@@ -75,7 +75,7 @@ class ScaledStdConv(nnx.Module):
 
 class SEModule(nnx.Module):
     def __init__(self, chs, rd_ratio=0.5, *, rngs):
-        rd = make_divisible(chs * rd_ratio, 8)
+        rd = make_divisible(chs * rd_ratio, 8, round_limit=0.0)
         self.fc1 = nnx.Linear(chs, rd, rngs=rngs)
         self.fc2 = nnx.Linear(rd, chs, rngs=rngs)
 

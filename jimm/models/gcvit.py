@@ -29,7 +29,7 @@ class SEModule(nnx.Module):
     """timm SEModule with bias-free 1x1 convolutions and GELU."""
 
     def __init__(self, chs, *, rngs):
-        rd = make_divisible(chs * 0.25, 8)
+        rd = make_divisible(chs * 0.25, 8, round_limit=0.0)
         self.fc1 = nnx.Linear(chs, rd, use_bias=False, rngs=rngs)
         self.fc2 = nnx.Linear(rd, chs, use_bias=False, rngs=rngs)
 

@@ -383,11 +383,16 @@ class ConvBNAct(nnx.Module):
         return x if self.act is None else self.act(x)
 
 
-def make_divisible(value: float, divisor: int = 8, min_value: int | None = None) -> int:
-    """Round channels to a multiple of ``divisor`` as timm does, staying within 10%."""
+def make_divisible(
+    value: float, divisor: int = 8, min_value: int | None = None, round_limit: float = 0.9
+) -> int:
+    """Round channels to a multiple of ``divisor`` as timm does.
+
+    Rounding down stays above ``round_limit`` times ``value`` (timm's SEModule uses 0).
+    """
     min_value = min_value or divisor
     rounded = max(min_value, int(value + divisor / 2) // divisor * divisor)
-    return rounded + divisor if rounded < 0.9 * value else rounded
+    return rounded + divisor if rounded < round_limit * value else rounded
 
 
 class SqueezeExcite(nnx.Module):

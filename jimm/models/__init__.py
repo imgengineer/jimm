@@ -25,7 +25,7 @@ from . import (  # noqa: F401  (imports trigger registration)
     convnextv2,
     inception_v3,
     ghostnet,
-    darknet,
+    cspnet,
     vovnet,
     tresnet,
     dpn,

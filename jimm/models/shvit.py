@@ -26,7 +26,7 @@ def _conv_norm(in_chs, out_chs, kernel=1, stride=1, groups=1, bn_weight_init=1.0
 
 class SqueezeExcite(nnx.Module):
     def __init__(self, chs, rd_ratio=0.25, *, rngs):
-        rd = make_divisible(chs * rd_ratio, 8)
+        rd = make_divisible(chs * rd_ratio, 8, round_limit=0.0)
         self.fc1 = nnx.Linear(chs, rd, rngs=rngs)
         self.fc2 = nnx.Linear(rd, chs, rngs=rngs)
 

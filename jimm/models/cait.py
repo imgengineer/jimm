@@ -179,33 +179,41 @@ class CaiT(ClassifierMixin, nnx.Module):
         return self.forward_head(self.forward_features(x))
 
 
-def _cait(embed_dim, depth, num_heads, depth_token_only=2, **kwargs):
-    model = CaiT(
-        embed_dim=embed_dim,
-        depth=depth,
-        num_heads=num_heads,
-        depth_token_only=depth_token_only,
-        **kwargs,
-    )
-    model.default_cfg = _cfg(crop_pct=1.0, interpolation="bicubic")
-    return model
+_CFGS = {  # embed_dim, depth, num_heads, layer-scale init, input size
+    "cait_xxs24_224": (192, 24, 4, 1e-5, 224),
+    "cait_xxs24_384": (192, 24, 4, 1e-5, 384),
+    "cait_xxs36_224": (192, 36, 4, 1e-5, 224),
+    "cait_xxs36_384": (192, 36, 4, 1e-5, 384),
+    "cait_xs24_384": (288, 24, 6, 1e-5, 384),
+    "cait_s24_224": (384, 24, 8, 1e-5, 224),
+    "cait_s24_384": (384, 24, 8, 1e-5, 384),
+    "cait_s36_384": (384, 36, 8, 1e-6, 384),
+    "cait_m36_384": (768, 36, 16, 1e-6, 384),
+    "cait_m48_448": (768, 48, 16, 1e-6, 448),
+}
 
 
-@register_model
-def cait_xxs24_224(**kwargs):
-    return _cait(192, 24, 4, **kwargs)
+def _make(name):
+    embed_dim, depth, num_heads, init_values, size = _CFGS[name]
+
+    def entry(**kwargs):
+        model = CaiT(
+            **{
+                "img_size": size,
+                "embed_dim": embed_dim,
+                "depth": depth,
+                "num_heads": num_heads,
+                "depth_token_only": 2,
+                "init_values": init_values,
+                **kwargs,
+            }
+        )
+        model.default_cfg = _cfg(input_size=(3, size, size), crop_pct=1.0, interpolation="bicubic")
+        return model
+
+    entry.__name__ = name
+    return entry
 
 
-@register_model
-def cait_xs24_224(**kwargs):
-    return _cait(288, 24, 6, **kwargs)
-
-
-@register_model
-def cait_s24_224(**kwargs):
-    return _cait(384, 24, 8, **kwargs)
-
-
-@register_model
-def cait_m36_224(**kwargs):
-    return _cait(768, 36, 16, init_values=1e-6, **kwargs)
+for _name in _CFGS:
+    register_model(_make(_name))

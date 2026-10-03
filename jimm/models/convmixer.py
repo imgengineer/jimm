@@ -65,7 +65,7 @@ def convmixer_768_32(**kwargs):
 
 
 @register_model
-def convmixer_1024_20(**kwargs):
+def convmixer_1024_20_ks9_p14(**kwargs):
     model = ConvMixer(1024, 20, patch_size=14, kernel=9, **kwargs)
     model.default_cfg = _cfg()
     return model

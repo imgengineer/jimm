@@ -13,6 +13,10 @@
 
 ## What's New
 
+### October 4, 2026
+
+- Register timm's remaining CaiT variants and timm's name for the 1024-wide ConvMixer, replacing jimm-only names.
+
 ### October 3, 2026
 
 - Port timm's RegNet, PiT, EfficientFormer, SENet-154, aligned Xception, SelecSLS, HardCoReNAS, RepGhostNet, VoVNet, HGNet/HGNetV2, TinyViT, EdgeNeXt, XCiT, FasterNet, SwiftFormer, ConViT, Twins, NesT, DaViT (including the Florence-2 image towers), FocalNet, GCViT, MobileViT, MViTv2, EfficientFormer-V2, SHViT, Sequencer2D, NFNet, CSPNet/DarkNet (including the CS3 variants), CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT (including the MobileCLIP image towers), CPUBone, CSATv2, MobileNetV5 (including the Gemma 3n encoder), NASNet-A Large, the Gemma 4 vision towers, NaFlexViT, and the MetaFormer baselines (CAFormer, ConvFormer, PoolFormerV2), and register their remaining timm variants.
@@ -46,7 +50,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 632
+print(len(jimm.list_models()))  # 638
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))

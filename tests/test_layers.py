@@ -312,6 +312,35 @@ def test_dilated_grouped_conv_matches_lax(size, groups, dilation, stride, paddin
         np.testing.assert_allclose(a, e, rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.parametrize(
+    "stride,dilation,padding", [(1, 1, "SAME"), (2, 1, ((1, 1), (1, 1))), (1, 2, ((2, 2), (2, 2)))]
+)
+def test_two_group_conv_matches_lax(stride, dilation, padding):
+    x = jax.random.normal(jax.random.key(0), (2, 9, 9, 6))
+    w = jax.random.normal(jax.random.key(1), (3, 3, 3, 10))
+
+    def loss(conv):
+        def f(x, w):
+            y = conv(
+                x,
+                w,
+                (stride, stride),
+                padding,
+                rhs_dilation=(dilation, dilation),
+                dimension_numbers=("NHWC", "HWIO", "NHWC"),
+                feature_group_count=2,
+            )
+            return jnp.sum(jnp.sin(y))
+
+        return f
+
+    with jax.default_matmul_precision("float32"):
+        expected = jax.value_and_grad(loss(jax.lax.conv_general_dilated), argnums=(0, 1))(x, w)
+        actual = jax.value_and_grad(loss(conv_general_dilated), argnums=(0, 1))(x, w)
+    for a, e in zip(jax.tree.leaves(actual), jax.tree.leaves(expected)):
+        np.testing.assert_allclose(a, e, rtol=1e-5, atol=1e-5)
+
+
 def test_use_fast_grouped_conv_grads_routes_grouped_convs():
     class Net(nnx.Module):
         def __init__(self, rngs):

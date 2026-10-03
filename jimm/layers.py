@@ -267,12 +267,13 @@ def conv_general_dilated(
 
     XLA lowers some grouped kernel gradients to a cuDNN grouped convolution with the
     batch folded into the channels, which launches one kernel per group: 10-70x
-    slower than the forward pass at batch 64. Two NHWC cases are rerouted:
+    slower than the forward pass at batch 64. Three NHWC cases are rerouted:
 
     - depthwise kernels as large as their input map (a 7x7 kernel on the 7x7 last
       stage of ConvNeXt at 224 px) compute the kernel gradient as a batched matmul;
     - dilated grouped convolutions with stride 1 or equal to the dilation (SK-ResNeXt)
-      run as undilated convolutions over the input's dilation phases.
+      run as undilated convolutions over the input's dilation phases;
+    - two-group convolutions (CPUBone) run as two half-width convolutions.
 
     All other calls go straight to ``lax``.
     """
@@ -293,6 +294,22 @@ def conv_general_dilated(
         depthwise = feature_group_count == lhs.shape[3] == rhs.shape[3] and rhs.shape[2] == 1
         if depthwise and strides == dilation == (1, 1) and lhs.shape[1:3] == rhs.shape[:2]:
             return _full_map_depthwise(lhs, rhs, padding, precision, preferred_element_type)
+        if feature_group_count == 2 and not depthwise:
+            # Two half-width convolutions train faster than one two-group convolution.
+            convs = [
+                conv_general_dilated(
+                    xs,
+                    ks,
+                    strides,
+                    padding,
+                    rhs_dilation=dilation,
+                    dimension_numbers=dimension_numbers,
+                    precision=precision,
+                    preferred_element_type=preferred_element_type,
+                )
+                for xs, ks in zip(jnp.split(lhs, 2, axis=-1), jnp.split(rhs, 2, axis=-1))
+            ]
+            return jnp.concatenate(convs, axis=-1)
         d = dilation[0]
         if d > 1 and dilation == (d, d) and strides in ((1, 1), (d, d)):
             return _phase_dilated_conv(

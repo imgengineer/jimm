@@ -281,6 +281,7 @@ TIMM_PARAM_COUNTS = {
     "mvitv2_small": 34_870_216,
     "mvitv2_small_cls": 34_870_312,
     "mvitv2_tiny": 24_173_320,
+    "nasnetalarge": 88_753_150,
     "nest_base": 67_723_368,
     "nest_base_jx": 67_723_368,
     "nest_small": 38_351_176,

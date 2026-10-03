@@ -267,6 +267,9 @@ TIMM_PARAM_COUNTS = {
     "mobilenetv2_140": 6_108_776,
     "mobilenetv3_large_100": 5_483_032,
     "mobilenetv3_small_100": 2_542_856,
+    "mobilenetv5_300m": 296_175_912,
+    "mobilenetv5_300m_enc": 294_126_912,
+    "mobilenetv5_base": 82_647_976,
     "mobilevit_s": 5_578_632,
     "mobilevit_xs": 2_317_848,
     "mobilevit_xxs": 1_272_024,
@@ -633,6 +636,7 @@ def _strided_paddings(jaxpr):
         "fastvit_mci0",
         "cpubone_nano",
         "csatv2",
+        "mobilenetv5_base",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

@@ -261,6 +261,9 @@ TIMM_PARAM_COUNTS = {
     "nest_small_jx": 38_351_176,
     "nest_tiny": 17_057_608,
     "nest_tiny_jx": 17_057_608,
+    "nextvit_base": 44_818_856,
+    "nextvit_large": 57_874_344,
+    "nextvit_small": 31_763_368,
     "nfnet_f0": 71_489_272,
     "nfnet_f1": 132_634_232,
     "nfnet_f2": 193_779_192,
@@ -562,6 +565,7 @@ def _strided_paddings(jaxpr):
         "nfnet_f0",
         "cspresnet50",
         "coat_lite_tiny",
+        "nextvit_small",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

@@ -320,6 +320,9 @@ TIMM_PARAM_COUNTS = {
     "selecsls60b": 32_774_064,
     "selecsls84": 50_954_600,
     "senet154": 115_088_984,
+    "sequencer2d_l": 54_298_216,
+    "sequencer2d_m": 38_307_688,
+    "sequencer2d_s": 27_651_688,
     "seresnet101": 49_326_872,
     "seresnet152": 66_821_848,
     "seresnet50": 28_088_024,
@@ -327,6 +330,10 @@ TIMM_PARAM_COUNTS = {
     "seresnext101_32x8d": 93_569_048,
     "seresnext101_64x4d": 88_232_984,
     "seresnext50_32x4d": 27_559_896,
+    "shvit_s1": 6_330_808,
+    "shvit_s2": 11_483_072,
+    "shvit_s3": 14_245_273,
+    "shvit_s4": 16_588_484,
     "skresnet18": 11_958_056,
     "skresnet34": 22_282_376,
     "skresnet50": 25_803_160,
@@ -501,6 +508,7 @@ def _strided_paddings(jaxpr):
         "mvitv2_tiny",
         "caformer_s18",
         "efficientformerv2_s0",
+        "shvit_s1",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

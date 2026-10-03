@@ -61,7 +61,6 @@ def test_list_models_and_modules():
     "name",
     [
         "mobilevitv2_050",
-        "volo_d5_512",
         "vit_7b_patch16_dinov3",
         "vit_so400m_patch14_siglip_gap_896",
         "eca_vovnet39b",

@@ -15,7 +15,7 @@
 
 ### October 3, 2026
 
-- Port timm's RegNet, PiT, EfficientFormer, SENet-154, aligned Xception, SelecSLS, HardCoReNAS, RepGhostNet, VoVNet, HGNet/HGNetV2, TinyViT, EdgeNeXt, XCiT, FasterNet, SwiftFormer, ConViT, Twins, NesT, DaViT (including the Florence-2 image towers), FocalNet, GCViT, MobileViT, MViTv2, EfficientFormer-V2, SHViT, Sequencer2D, NFNet, CSPNet/DarkNet (including the CS3 variants), CoaT, Next-ViT, and the MetaFormer baselines (CAFormer, ConvFormer, PoolFormerV2), and register their remaining timm variants.
+- Port timm's RegNet, PiT, EfficientFormer, SENet-154, aligned Xception, SelecSLS, HardCoReNAS, RepGhostNet, VoVNet, HGNet/HGNetV2, TinyViT, EdgeNeXt, XCiT, FasterNet, SwiftFormer, ConViT, Twins, NesT, DaViT (including the Florence-2 image towers), FocalNet, GCViT, MobileViT, MViTv2, EfficientFormer-V2, SHViT, Sequencer2D, NFNet, CSPNet/DarkNet (including the CS3 variants), CoaT, Next-ViT, VOLO, and the MetaFormer baselines (CAFormer, ConvFormer, PoolFormerV2), and register their remaining timm variants.
 - Port timm's StarNet, ReXNet, InceptionNeXt, MambaOut, RepViT, DLA, DPN, Hiera, and SAM2 Hiera (HieraDet).
 - Pad strided convolutions and pooling symmetrically, as PyTorch does, instead of Flax's SAME padding; TinyNet follows timm's width and depth scaling.
 - Freeze long-lived Python objects after the first training step to reduce garbage-collection pauses in the training loop.
@@ -46,7 +46,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 598
+print(len(jimm.list_models()))  # 604
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -67,7 +67,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -448,6 +448,7 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `coat_tiny` | 1,211 img/s | 734 img/s | 1.65× |
 | `coat_lite_small` | 1,842 img/s | 1,323 img/s | 1.39× |
 | `nextvit_small` | 2,318 img/s | 1,938 img/s | 1.20× |
+| `volo_d1_224` | 2,278 img/s | 1,328 img/s | 1.72× |
 
 ### Attention
 

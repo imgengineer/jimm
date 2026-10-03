@@ -93,6 +93,10 @@ TIMM_PARAM_COUNTS = {
     "efficientformer_l1": 12_289_928,
     "efficientformer_l3": 31_406_000,
     "efficientformer_l7": 82_229_328,
+    "efficientformerv2_l": 26_322_288,
+    "efficientformerv2_s0": 3_600_256,
+    "efficientformerv2_s1": 6_185_560,
+    "efficientformerv2_s2": 12_710_112,
     "efficientnet_b0": 5_288_548,
     "efficientnet_b1": 7_794_184,
     "efficientnet_b2": 9_109_994,
@@ -496,6 +500,7 @@ def _strided_paddings(jaxpr):
         "mobilevit_xxs",
         "mvitv2_tiny",
         "caformer_s18",
+        "efficientformerv2_s0",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

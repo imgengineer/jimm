@@ -1,94 +1,161 @@
-"""HardCoReNAS (RegNet-style NAS) in flax nnx, NHWC. Mirrors timm.models.hardcorenas."""
+"""HardCoReNAS in flax nnx, NHWC. Mirrors timm.models.hardcorenas.
 
-from flax import nnx
+The searched architectures are MobileNetV3 networks: a 32-channel stem,
+inverted residual blocks with hard-swish (ReLU for ``nre`` blocks) and
+optional hard-sigmoid squeeze-excite, a 960-channel 1x1 convolution, and a
+1,280-wide head after pooling. timm's block strings are decoded into
+:class:`~jimm.models.mobilenetv3.MobileNetV3` block tuples.
+"""
 
-from ..layers import ClassifierMixin, ConvBNAct
 from ..registry import _cfg, register_model
+from .mobilenetv3 import MobileNetV3
 
 
-class HardBlock(nnx.Module):
-    """bottleneck 1x1 -> dw 3x3 (groups) -> 1x1, residual."""
-
-    def __init__(self, in_chs, out_chs, mid_chs, stride, groups, *, rngs):
-        self.conv1 = ConvBNAct(in_chs, mid_chs, 1, act="silu", rngs=rngs)
-        self.conv2 = ConvBNAct(mid_chs, mid_chs, 3, stride, groups=groups, act="silu", rngs=rngs)
-        self.conv3 = ConvBNAct(mid_chs, out_chs, 1, act="identity", rngs=rngs)
-        self.shortcut = (
-            ConvBNAct(in_chs, out_chs, 1, stride, act="identity", rngs=rngs)
-            if (stride != 1 or in_chs != out_chs)
-            else None
+def _decode(arch_def, in_chs=32):
+    """timm block strings (``ir_r1_k5_s2_e3_c24_nre_se0.25``) -> MobileNetV3 tuples
+    ``(kernel, expand, in, out, se, act, stride)``; ``ds`` blocks have no expansion."""
+    cfg = []
+    for block in (b for stage in arch_def for b in stage):
+        _, *ops = block.split("_")
+        args = {"e": 1.0, "se": 0, "act": "hswish"}
+        for op in ops:
+            if op == "nre":
+                args["act"] = "relu"
+            elif op.startswith("se"):
+                args["se"] = 1  # timm ratio 0.25 of the expanded width
+            else:
+                args[op[0]] = float(op[1:])
+        assert args["r"] == 1
+        out = int(args["c"])
+        cfg.append(
+            (int(args["k"]), args["e"], in_chs, out, args["se"], args["act"], int(args["s"]))
         )
-
-    def __call__(self, x):
-        y = self.conv3(self.conv2(self.conv1(x)))
-        sc = x if self.shortcut is None else self.shortcut(x)
-        return nnx.relu(y + sc)
+        in_chs = out
+    return cfg
 
 
-# (in->mid->out, stride, groups, repeats) per stage entry
-_CFGS = {
+_STEM = [["ds_r1_k3_s1_e1_c16_nre"]]
+_ARCHS = {
     "hardcorenas_a": [
-        (16, 16, 1, 1, 1),
-        (24, 24, 2, 1, 1),
-        (24, 24, 1, 1, 1),
-        (40, 40, 2, 8, 1),
-        (40, 40, 1, 8, 2),
-        (80, 80, 2, 8, 1),
-        (80, 80, 1, 8, 2),
-        (96, 96, 1, 8, 1),
-        (192, 192, 2, 8, 1),
-        (192, 192, 1, 8, 2),
-        (192, 192, 1, 8, 1),
-        (376, 376, 1, 8, 1),
+        ["ir_r1_k5_s2_e3_c24_nre", "ir_r1_k5_s1_e3_c24_nre_se0.25"],
+        ["ir_r1_k5_s2_e3_c40_nre", "ir_r1_k5_s1_e6_c40_nre_se0.25"],
+        ["ir_r1_k5_s2_e6_c80_se0.25", "ir_r1_k5_s1_e6_c80_se0.25"],
+        ["ir_r1_k5_s1_e6_c112_se0.25", "ir_r1_k5_s1_e6_c112_se0.25"],
+        ["ir_r1_k5_s2_e6_c192_se0.25", "ir_r1_k5_s1_e6_c192_se0.25"],
+    ],
+    "hardcorenas_b": [
+        ["ir_r1_k5_s2_e3_c24_nre", "ir_r1_k5_s1_e3_c24_nre_se0.25", "ir_r1_k3_s1_e3_c24_nre"],
+        ["ir_r1_k5_s2_e3_c40_nre", "ir_r1_k5_s1_e3_c40_nre", "ir_r1_k5_s1_e3_c40_nre"],
+        ["ir_r1_k5_s2_e3_c80", "ir_r1_k5_s1_e3_c80", "ir_r1_k3_s1_e3_c80", "ir_r1_k3_s1_e3_c80"],
+        [
+            "ir_r1_k5_s1_e3_c112",
+            "ir_r1_k3_s1_e3_c112",
+            "ir_r1_k3_s1_e3_c112",
+            "ir_r1_k3_s1_e3_c112",
+        ],
+        ["ir_r1_k5_s2_e6_c192_se0.25", "ir_r1_k5_s1_e6_c192_se0.25", "ir_r1_k3_s1_e3_c192_se0.25"],
+    ],
+    "hardcorenas_c": [
+        ["ir_r1_k5_s2_e3_c24_nre", "ir_r1_k5_s1_e3_c24_nre_se0.25"],
+        [
+            "ir_r1_k5_s2_e3_c40_nre",
+            "ir_r1_k5_s1_e3_c40_nre",
+            "ir_r1_k5_s1_e3_c40_nre",
+            "ir_r1_k5_s1_e3_c40_nre",
+        ],
+        [
+            "ir_r1_k5_s2_e4_c80",
+            "ir_r1_k5_s1_e6_c80_se0.25",
+            "ir_r1_k3_s1_e3_c80",
+            "ir_r1_k3_s1_e3_c80",
+        ],
+        [
+            "ir_r1_k5_s1_e6_c112_se0.25",
+            "ir_r1_k3_s1_e3_c112",
+            "ir_r1_k3_s1_e3_c112",
+            "ir_r1_k3_s1_e3_c112",
+        ],
+        ["ir_r1_k5_s2_e6_c192_se0.25", "ir_r1_k5_s1_e6_c192_se0.25", "ir_r1_k3_s1_e3_c192_se0.25"],
+    ],
+    "hardcorenas_d": [
+        ["ir_r1_k5_s2_e3_c24_nre_se0.25", "ir_r1_k5_s1_e3_c24_nre_se0.25"],
+        [
+            "ir_r1_k5_s2_e3_c40_nre_se0.25",
+            "ir_r1_k5_s1_e4_c40_nre_se0.25",
+            "ir_r1_k3_s1_e3_c40_nre_se0.25",
+        ],
+        [
+            "ir_r1_k5_s2_e4_c80_se0.25",
+            "ir_r1_k3_s1_e3_c80_se0.25",
+            "ir_r1_k3_s1_e3_c80_se0.25",
+            "ir_r1_k3_s1_e3_c80_se0.25",
+        ],
+        [
+            "ir_r1_k3_s1_e4_c112_se0.25",
+            "ir_r1_k5_s1_e4_c112_se0.25",
+            "ir_r1_k3_s1_e3_c112_se0.25",
+            "ir_r1_k5_s1_e3_c112_se0.25",
+        ],
+        [
+            "ir_r1_k5_s2_e6_c192_se0.25",
+            "ir_r1_k5_s1_e6_c192_se0.25",
+            "ir_r1_k5_s1_e6_c192_se0.25",
+            "ir_r1_k3_s1_e6_c192_se0.25",
+        ],
+    ],
+    "hardcorenas_e": [
+        ["ir_r1_k5_s2_e3_c24_nre_se0.25", "ir_r1_k5_s1_e3_c24_nre_se0.25"],
+        [
+            "ir_r1_k5_s2_e6_c40_nre_se0.25",
+            "ir_r1_k5_s1_e4_c40_nre_se0.25",
+            "ir_r1_k5_s1_e4_c40_nre_se0.25",
+            "ir_r1_k3_s1_e3_c40_nre_se0.25",
+        ],
+        ["ir_r1_k5_s2_e4_c80_se0.25", "ir_r1_k3_s1_e6_c80_se0.25"],
+        [
+            "ir_r1_k5_s1_e6_c112_se0.25",
+            "ir_r1_k5_s1_e6_c112_se0.25",
+            "ir_r1_k5_s1_e6_c112_se0.25",
+            "ir_r1_k5_s1_e3_c112_se0.25",
+        ],
+        [
+            "ir_r1_k5_s2_e6_c192_se0.25",
+            "ir_r1_k5_s1_e6_c192_se0.25",
+            "ir_r1_k5_s1_e6_c192_se0.25",
+            "ir_r1_k3_s1_e6_c192_se0.25",
+        ],
     ],
     "hardcorenas_f": [
-        (16, 16, 1, 1, 1),
-        (24, 24, 2, 1, 1),
-        (24, 24, 1, 1, 1),
-        (40, 40, 2, 8, 1),
-        (40, 40, 1, 8, 2),
-        (80, 80, 2, 8, 1),
-        (80, 80, 1, 8, 2),
-        (112, 112, 1, 8, 1),
-        (224, 224, 2, 8, 1),
-        (224, 224, 1, 8, 2),
-        (224, 224, 1, 8, 1),
-        (480, 480, 1, 8, 1),
+        ["ir_r1_k5_s2_e3_c24_nre_se0.25", "ir_r1_k5_s1_e3_c24_nre_se0.25"],
+        ["ir_r1_k5_s2_e6_c40_nre_se0.25", "ir_r1_k5_s1_e6_c40_nre_se0.25"],
+        [
+            "ir_r1_k5_s2_e6_c80_se0.25",
+            "ir_r1_k5_s1_e6_c80_se0.25",
+            "ir_r1_k3_s1_e3_c80_se0.25",
+            "ir_r1_k3_s1_e3_c80_se0.25",
+        ],
+        [
+            "ir_r1_k3_s1_e6_c112_se0.25",
+            "ir_r1_k5_s1_e6_c112_se0.25",
+            "ir_r1_k5_s1_e6_c112_se0.25",
+            "ir_r1_k3_s1_e3_c112_se0.25",
+        ],
+        [
+            "ir_r1_k5_s2_e6_c192_se0.25",
+            "ir_r1_k5_s1_e6_c192_se0.25",
+            "ir_r1_k3_s1_e6_c192_se0.25",
+            "ir_r1_k3_s1_e6_c192_se0.25",
+        ],
     ],
 }
 
 
-class HardCoReNAS(ClassifierMixin, nnx.Module):
-    def __init__(
-        self, cfg, num_classes=1000, in_chans=3, global_pool="avg", drop_rate=0.0, *, rngs
-    ):
-        self.num_classes, self.global_pool = num_classes, global_pool
-        self.stem = ConvBNAct(in_chans, 32, 3, 2, act="silu", rngs=rngs)
-        blocks, chs = [], 32
-        for c, out, s, g, n in cfg:
-            for j in range(n):
-                blocks.append(HardBlock(chs, out, c, s if j == 0 else 1, g, rngs=rngs))
-                chs = out
-        self.blocks = nnx.List(blocks)
-        self.num_features = cfg[-1][1]
-        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
-        self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
-
-    def forward_features(self, x):
-        x = self.stem(x)
-        for blk in self.blocks:
-            x = blk(x)
-        return x
-
-    def __call__(self, x):
-        return self.forward_head(self.forward_features(x))
-
-
 def _make(name):
-    cfg = _CFGS[name]
+    cfg = _decode(_STEM + _ARCHS[name])
 
     def entry(**kwargs):
-        model = HardCoReNAS(cfg, **kwargs)
+        # timm's final ``cn_r1_k1_s1_c960`` block is MobileNetV3's 960-channel head conv.
+        model = MobileNetV3(cfg, 960, 1280, stem_chs=32, **kwargs)
         model.default_cfg = _cfg()
         return model
 
@@ -96,5 +163,5 @@ def _make(name):
     return entry
 
 
-for _name in _CFGS:
+for _name in _ARCHS:
     register_model(_make(_name))

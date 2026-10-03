@@ -14,6 +14,7 @@
 
 ### October 3, 2026
 
+- Port HardCoReNAS and RepGhostNet from timm, adding `hardcorenas_b`–`hardcorenas_e` and `repghostnet_058`, `repghostnet_080`, `repghostnet_111`, `repghostnet_150`, and `repghostnet_200`. HardCoReNAS was a generic grouped-convolution residual network (HardCoReNAS-A had 1.4M instead of 5.3M parameters); it is now timm's MobileNetV3 with the searched inverted-residual blocks, decoded from timm's block strings. RepGhostNet concatenated GhostNet modules with GhostNet's expansion widths; its modules now add a BatchNorm fusion branch to the depthwise convolution instead of concatenating, with RepGhost's narrower expansions, hard-sigmoid squeeze-excite rounded to multiples of 4, and a 1,280-wide head. Both reproduce timm outputs, and HardCoReNAS-A trains at 10,524 img/s (timm 6,607). **300 registered names now match timm 1.0.29 parameter counts**.
 - Port SENet-154, aligned Xception, and SelecSLS from timm, adding `xception71`, `xception41p`, `xception65p`, `selecsls42b`, `selecsls60b`, and `selecsls84`. timm builds SENet-154 as a ResNet with a three-convolution stem, 64 groups of width 4 whose first 1×1 convolution halves the grouped width, and 3×3 strided shortcut convolutions; the previous version had 17.3M instead of 115.1M parameters. Xception41 and Xception65 reused the original Xception's blocks with max pooling (Xception41 had 9.3M instead of 27.0M parameters); they now stack modules of three separable convolutions, the last one strided, with BatchNorm epsilon 1e-3 and Inception normalization, and the `p` variants use pre-activation modules. SelecSLS was a generic residual network with 5.7M instead of 30.4M parameters (SelecSLS-42); each block now fuses a 3×3 convolution and two 1×1/3×3 pairs with the output of its stage's first block, followed by a head of plain convolutions. All reproduce timm outputs; **286 registered names now match timm 1.0.29 parameter counts**.
 - Port RegNet, PiT, and EfficientFormer from timm and add `pit_ti_distilled_224`, `pit_xs_distilled_224`, `pit_s_distilled_224`, and `pit_b_distilled_224`. PiT previously embedded non-overlapping patches and doubled its widths at every stage (PiT-Ti had 73.5M instead of 4.8M parameters); it now embeds overlapping patches with a learned 2D position embedding, pools with a stride-2 depthwise convolution while a linear layer widens the class token, and the distilled variants average their class and distillation heads. RegNetY sizes squeeze-excite from the block input width (RegNetY-032 had 20.3M instead of 19.4M parameters), RegNet pads like PyTorch, and `regnety_008_tv` uses torchvision's width rounding (784 final channels). EfficientFormer used depthwise-convolution blocks and plain self-attention; it now mixes tokens by average pooling minus identity with layer scale and BatchNorm MLPs, adds learned attention biases over the 7×7 grid in its last-stage transformer blocks, and averages classifier and distillation heads. All reproduce timm outputs, and PiT-Ti trains at 10,397 img/s (previously 6,852; timm 6,668). **275 registered names now match timm 1.0.29 parameter counts**.
 - Port StarNet and ReXNet from timm and add `starnet_s100`, `starnet_s150`, `starnet_s3`, `starnet_s4`, `rexnet_300`, and `rexnetr_100`–`rexnetr_300`. StarNet previously used other widths and depths (S1 had 7.9M instead of 2.9M parameters); ReXNet now grows its widths linearly block by block, uses squeeze-excite with BatchNorm, ReLU6 after the depthwise convolution, and residuals on the first input channels only. Both reproduce timm outputs; **254 registered names now match timm 1.0.29 parameter counts**.
@@ -56,7 +57,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 465
+print(len(jimm.list_models()))  # 474
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -77,7 +78,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
 
-Parameter counts match timm 1.0.29 for **286 of the 401** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, Swin/Swin V2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, PoolFormer, ResNeSt, DenseNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, MLP-Mixer, PVTv2, VGG, LeViT, EfficientFormer, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
+Parameter counts match timm 1.0.29 for **300 of the 410** registered names that timm also provides, including the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, Swin/Swin V2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, PoolFormer, ResNeSt, DenseNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, PVTv2, VGG, LeViT, EfficientFormer, MaxViT, CoAtNet, EfficientViT, and Visformer families; [tests/test_timm_parity.py](tests/test_timm_parity.py) lists them. Other entries approximate their timm namesakes and can differ in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -376,7 +377,7 @@ Use `uv run pytest tests/` for the full suite, including representative forward/
 
 The architecture update passed construction checks for **all 420 models** and native-resolution CUDA 13 inference checks for one model from each new family on an RTX 5090. All **37 new variants** match timm 1.0.30 parameter counts. In a separate comparison environment, **13 reduced models** across those five families matched timm outputs with identical weights (maximum absolute error below `5e-8`). ImageNet accuracy has not been evaluated for jimm.
 
-The core regression suite passed **585 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, PyTorch-style padding of strided operations, grouped-convolution gradients against `jax.lax`, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
+The core regression suite passed **600 tests** (four GPU-only cases skipped on CPU), including timm parameter-count parity, PyTorch-style padding of strided operations, grouped-convolution gradients against `jax.lax`, timm-style arguments, color jitter and AutoAugment magnitude mappings, device-side normalization and random erasing, YAML overrides, AdamW numerical updates, multiworker validation batches, and checkpoint resume. The attention implementation also passed **11 GPU attention checks**, covering automatic backend selection, the heuristic default and opt-in autotuning policy, Flax output and gradient parity, shared dropout RNGs, optimizer and batch-statistic updates, and mixed-precision master weights. Run the GPU attention tests with:
 
 ```bash
 uv run pytest tests/test_attention.py -q
@@ -430,6 +431,8 @@ For architectures whose parameter counts match timm, compiled jimm training step
 | `senet154` | 482 img/s | 393 img/s | 1.23× |
 | `xception41` (299×299) | 1,153 img/s | 897 img/s | 1.29× |
 | `selecsls42` | 5,152 img/s | 4,506 img/s | 1.14× |
+| `hardcorenas_a` | 10,524 img/s | 6,607 img/s | 1.59× |
+| `repghostnet_100` | 6,131 img/s | 5,720 img/s | 1.07× |
 
 ### Data pipeline performance
 

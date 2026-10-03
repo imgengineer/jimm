@@ -97,14 +97,15 @@ class MobileNetV3(ClassifierMixin, nnx.Module):
         in_chans=3,
         global_pool="avg",
         drop_rate=0.0,
+        stem_chs=16,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.conv1 = nnx.Conv(
-            in_chans, 16, (3, 3), strides=(2, 2), padding=1, use_bias=False, rngs=rngs
+            in_chans, stem_chs, (3, 3), strides=(2, 2), padding=1, use_bias=False, rngs=rngs
         )
-        self.bn1 = BatchNorm(16, rngs=rngs)
+        self.bn1 = BatchNorm(stem_chs, rngs=rngs)
         self.blocks = nnx.List(
             [InvertedResidualV3(i, o, k, s, e, se, a, rngs=rngs) for k, e, i, o, se, a, s in cfg]
         )

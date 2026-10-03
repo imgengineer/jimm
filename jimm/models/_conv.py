@@ -23,6 +23,7 @@ class ConvNormAct(nnx.Module):
         bn_weight_init=1.0,
         ndim=2,
         dilation=1,
+        eps=1e-5,
         *,
         rngs,
     ):
@@ -41,7 +42,7 @@ class ConvNormAct(nnx.Module):
         self.norm = (
             BatchNorm(
                 out_chs,
-                epsilon=1e-5,
+                epsilon=eps,
                 momentum=0.9,
                 scale_init=nnx.initializers.constant(bn_weight_init),
                 rngs=rngs,

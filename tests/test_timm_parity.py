@@ -211,6 +211,12 @@ TIMM_PARAM_COUNTS = {
     "sam2_hiera_large": 213_304_600,
     "sam2_hiera_small": 34_717_864,
     "sam2_hiera_tiny": 27_620_008,
+    "selecsls42": 30_354_952,
+    "selecsls42b": 32_458_248,
+    "selecsls60": 30_670_768,
+    "selecsls60b": 32_774_064,
+    "selecsls84": 50_954_600,
+    "senet154": 115_088_984,
     "seresnet101": 49_326_872,
     "seresnet152": 66_821_848,
     "seresnet50": 28_088_024,
@@ -285,6 +291,11 @@ TIMM_PARAM_COUNTS = {
     "vit_small_patch16_384": 22_196_584,
     "vit_tiny_patch16_224": 5_717_416,
     "vit_tiny_patch16_384": 5_790_376,
+    "xception41": 26_969_560,
+    "xception41p": 26_907_752,
+    "xception65": 39_916_312,
+    "xception65p": 39_819_560,
+    "xception71": 42_338_736,
 }
 
 
@@ -327,6 +338,8 @@ def _strided_paddings(jaxpr):
         "regnety_008",
         "pit_ti_224",
         "efficientformer_l1",
+        "senet154",
+        "xception41",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

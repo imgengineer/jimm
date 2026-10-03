@@ -7,9 +7,18 @@ from ..registry import _cfg, register_model
 
 
 class Downsample(nnx.Module):
-    def __init__(self, in_chs, out_chs, stride, *, rngs):
+    def __init__(self, in_chs, out_chs, stride, kernel=1, *, rngs):
+        # timm downsample_conv: stride-1 projections stay 1x1.
+        kernel = 1 if stride == 1 else kernel
+        pad = (stride - 1 + kernel - 1) // 2
         self.conv = nnx.Conv(
-            in_chs, out_chs, kernel_size=(1, 1), strides=(stride, stride), use_bias=False, rngs=rngs
+            in_chs,
+            out_chs,
+            kernel_size=(kernel, kernel),
+            strides=(stride, stride),
+            padding=((pad, pad), (pad, pad)),
+            use_bias=False,
+            rngs=rngs,
         )
         self.bn = BatchNorm(out_chs, rngs=rngs)
 
@@ -21,19 +30,31 @@ class BasicBlock(nnx.Module):
     expansion = 1
 
     def __init__(
-        self, in_chs, chs, stride=1, drop_path_rate=0.0, se=False, groups=1, base_width=64, *, rngs
+        self,
+        in_chs,
+        chs,
+        stride=1,
+        drop_path_rate=0.0,
+        se=False,
+        groups=1,
+        base_width=64,
+        reduce_first=1,
+        down_kernel=1,
+        *,
+        rngs,
     ):  # groups/base_width unused, kept for uniform block signature
         out_chs = chs * self.expansion
+        first = chs // reduce_first
         self.conv1 = nnx.Conv(
-            in_chs, chs, (3, 3), strides=(stride, stride), padding=1, use_bias=False, rngs=rngs
+            in_chs, first, (3, 3), strides=(stride, stride), padding=1, use_bias=False, rngs=rngs
         )
-        self.bn1 = BatchNorm(chs, rngs=rngs)
-        self.conv2 = nnx.Conv(chs, out_chs, (3, 3), use_bias=False, rngs=rngs)
+        self.bn1 = BatchNorm(first, rngs=rngs)
+        self.conv2 = nnx.Conv(first, out_chs, (3, 3), use_bias=False, rngs=rngs)
         self.bn2 = BatchNorm(out_chs, rngs=rngs)
         # timm SEModule: reduce channels by 16 (rd_divisor 8 is exact for ResNet widths).
         self.se = SqueezeExcite(out_chs, rd_ratio=1 / 16, rngs=rngs) if se else None
         self.shortcut = (
-            Downsample(in_chs, out_chs, stride, rngs=rngs)
+            Downsample(in_chs, out_chs, stride, down_kernel, rngs=rngs)
             if (stride != 1 or in_chs != out_chs)
             else None
         )
@@ -52,14 +73,26 @@ class Bottleneck(nnx.Module):
     expansion = 4
 
     def __init__(
-        self, in_chs, chs, stride=1, drop_path_rate=0.0, se=False, groups=1, base_width=64, *, rngs
+        self,
+        in_chs,
+        chs,
+        stride=1,
+        drop_path_rate=0.0,
+        se=False,
+        groups=1,
+        base_width=64,
+        reduce_first=1,
+        down_kernel=1,
+        *,
+        rngs,
     ):
         out_chs = chs * self.expansion
         mid = chs * base_width * groups // 64
-        self.conv1 = nnx.Conv(in_chs, mid, (1, 1), use_bias=False, rngs=rngs)
-        self.bn1 = BatchNorm(mid, rngs=rngs)
+        first = mid // reduce_first
+        self.conv1 = nnx.Conv(in_chs, first, (1, 1), use_bias=False, rngs=rngs)
+        self.bn1 = BatchNorm(first, rngs=rngs)
         self.conv2 = nnx.Conv(
-            mid,
+            first,
             mid,
             (3, 3),
             strides=(stride, stride),
@@ -74,7 +107,7 @@ class Bottleneck(nnx.Module):
         # timm SEModule: reduce channels by 16 (rd_divisor 8 is exact for ResNet widths).
         self.se = SqueezeExcite(out_chs, rd_ratio=1 / 16, rngs=rngs) if se else None
         self.shortcut = (
-            Downsample(in_chs, out_chs, stride, rngs=rngs)
+            Downsample(in_chs, out_chs, stride, down_kernel, rngs=rngs)
             if (stride != 1 or in_chs != out_chs)
             else None
         )
@@ -103,23 +136,48 @@ class ResNet(ClassifierMixin, nnx.Module):
         se=False,
         groups=1,
         base_width=64,
+        deep_stem=False,
+        stem_width=64,
+        reduce_first=1,
+        down_kernel=1,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.num_features = 512 * block.expansion
-        self.conv1 = nnx.Conv(
-            in_chans,
-            64,
-            (7, 7),
-            strides=(2, 2),
-            padding=[(3, 3), (3, 3)],
-            use_bias=False,
-            rngs=rngs,
-        )
-        self.bn1 = BatchNorm(64, rngs=rngs)
+        chs = 2 * stem_width if deep_stem else 64
+        if deep_stem:
+            # timm "deep" stem: three 3x3 convolutions, the first strided.
+            self.conv1 = nnx.Sequential(
+                nnx.Conv(
+                    in_chans,
+                    stem_width,
+                    (3, 3),
+                    strides=(2, 2),
+                    padding=1,
+                    use_bias=False,
+                    rngs=rngs,
+                ),
+                BatchNorm(stem_width, rngs=rngs),
+                nnx.relu,
+                nnx.Conv(stem_width, stem_width, (3, 3), padding=1, use_bias=False, rngs=rngs),
+                BatchNorm(stem_width, rngs=rngs),
+                nnx.relu,
+                nnx.Conv(stem_width, chs, (3, 3), padding=1, use_bias=False, rngs=rngs),
+            )
+        else:
+            self.conv1 = nnx.Conv(
+                in_chans,
+                chs,
+                (7, 7),
+                strides=(2, 2),
+                padding=[(3, 3), (3, 3)],
+                use_bias=False,
+                rngs=rngs,
+            )
+        self.bn1 = BatchNorm(chs, rngs=rngs)
         dpr = [drop_path_rate * i / max(sum(layers) - 1, 1) for i in range(sum(layers))]
-        chs, stages, k = 64, [], 0
+        stages, k = [], 0
         for i, (n, stride) in enumerate(zip(layers, [1, 2, 2, 2])):
             width = 64 * 2**i
             blocks = []
@@ -133,6 +191,8 @@ class ResNet(ClassifierMixin, nnx.Module):
                         se=se,
                         groups=groups,
                         base_width=base_width,
+                        reduce_first=reduce_first,
+                        down_kernel=down_kernel,
                         rngs=rngs,
                     )
                 )

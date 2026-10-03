@@ -79,6 +79,8 @@ TIMM_PARAM_COUNTS = {
     "cs3sedarknet_l": 21_913_592,
     "cs3sedarknet_x": 35_397_904,
     "cs3sedarknet_xdw": 21_601_488,
+    "csatv2": 11_103_444,
+    "csatv2_21m": 20_697_785,
     "cspdarknet53": 27_642_184,
     "cspresnet50": 21_616_168,
     "cspresnet50d": 21_635_400,
@@ -630,6 +632,7 @@ def _strided_paddings(jaxpr):
         "fastvit_t8",
         "fastvit_mci0",
         "cpubone_nano",
+        "csatv2",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

@@ -1,131 +1,215 @@
-"""RepViT in flax nnx, NHWC. Mirrors timm.models.repvit (reparam-style dw blocks + SE)."""
+"""RepViT in flax nnx, NHWC. Mirrors timm.models.repvit.
+
+RepVGG-style depthwise token mixers (3x3 conv + BN, 1x1 depthwise conv, and
+identity, then BN), squeeze-excite in every other block, 1x1-conv MLPs, and a
+BatchNorm + Linear classifier averaged with a distillation head.
+"""
 
 from flax import nnx
 
-from ..layers import BatchNorm, ClassifierMixin, DropPath, SqueezeExcite
+from ..layers import (
+    BatchNorm,
+    ClassifierMixin,
+    SqueezeExcite,
+    gelu,
+    global_pool_nhwc,
+    make_divisible,
+)
 from ..registry import _cfg, register_model
 
 
-class RepViTBlock(nnx.Module):
-    """token mixer: dw 3x3 (+1x1 fusion at train merged); channel MLP with SE."""
-
-    def __init__(self, dim, mlp_ratio=2.0, use_se=False, drop_path=0.0, *, rngs):
-        self.dw = nnx.Conv(dim, dim, (3, 3), use_bias=False, feature_group_count=dim, rngs=rngs)
-        self.bn_dw = BatchNorm(dim, rngs=rngs)
-        hidden = int(dim * mlp_ratio)
-        self.se = (
-            SqueezeExcite(hidden, rd_ratio=0.25, rngs=rngs) if use_se else None
-        )  # SE on expanded features
-        self.pw1 = nnx.Conv(dim, hidden, (1, 1), rngs=rngs)
-        self.bn1 = BatchNorm(hidden, rngs=rngs)
-        self.pw2 = nnx.Conv(hidden, dim, (1, 1), rngs=rngs)
-        self.bn2 = BatchNorm(dim, rngs=rngs)
-        self.drop_path = DropPath(drop_path, rngs=rngs)
+class ConvNorm(nnx.Module):
+    def __init__(self, in_dim, out_dim, kernel=1, stride=1, groups=1, bn_weight_init=1.0, *, rngs):
+        pad = (kernel - 1) // 2
+        self.c = nnx.Conv(
+            in_dim,
+            out_dim,
+            (kernel, kernel),
+            strides=(stride, stride),
+            padding=((pad, pad), (pad, pad)),
+            feature_group_count=groups,
+            use_bias=False,
+            rngs=rngs,
+        )
+        self.bn = BatchNorm(
+            out_dim, epsilon=1e-5, scale_init=nnx.initializers.constant(bn_weight_init), rngs=rngs
+        )
 
     def __call__(self, x):
-        x = x + self.bn_dw(self.dw(x))
-        y = self.bn1(self.pw1(x))
+        return self.bn(self.c(x))
+
+
+class RepVggDw(nnx.Module):
+    def __init__(self, dim, kernel, legacy=False, *, rngs):
+        self.conv = ConvNorm(dim, dim, kernel, groups=dim, rngs=rngs)
+        if legacy:
+            self.conv1 = ConvNorm(dim, dim, 1, groups=dim, rngs=rngs)
+            self.bn = None
+        else:
+            self.conv1 = nnx.Conv(dim, dim, (1, 1), feature_group_count=dim, rngs=rngs)
+            self.bn = BatchNorm(dim, epsilon=1e-5, rngs=rngs)
+
+    def __call__(self, x):
+        x = self.conv(x) + self.conv1(x) + x
+        return x if self.bn is None else self.bn(x)
+
+
+class RepVitMlp(nnx.Module):
+    def __init__(self, dim, hidden, *, rngs):
+        self.conv1 = ConvNorm(dim, hidden, rngs=rngs)
+        self.conv2 = ConvNorm(hidden, dim, bn_weight_init=0.0, rngs=rngs)
+
+    def __call__(self, x):
+        return self.conv2(gelu(self.conv1(x)))
+
+
+class RepViTBlock(nnx.Module):
+    def __init__(self, dim, mlp_ratio, kernel, use_se, legacy=False, *, rngs):
+        self.token_mixer = RepVggDw(dim, kernel, legacy, rngs=rngs)
+        # timm SqueezeExcite (SEModule): rd = make_divisible(dim / 4, 8), ReLU, sigmoid.
+        self.se = (
+            SqueezeExcite(dim, rd_channels=make_divisible(dim * 0.25, 8), rngs=rngs)
+            if use_se
+            else None
+        )
+        self.channel_mixer = RepVitMlp(dim, dim * mlp_ratio, rngs=rngs)
+
+    def __call__(self, x):
+        x = self.token_mixer(x)
         if self.se is not None:
-            y = self.se(y)
-        y = self.bn2(self.pw2(y))
-        return x + self.drop_path(y)
+            x = self.se(x)
+        return x + self.channel_mixer(x)
 
 
-class RepViT(ClassifierMixin, nnx.Module):
+class RepVitDownsample(nnx.Module):
+    def __init__(self, in_dim, mlp_ratio, out_dim, kernel, legacy=False, *, rngs):
+        self.pre_block = RepViTBlock(in_dim, mlp_ratio, kernel, False, legacy, rngs=rngs)
+        self.spatial_downsample = ConvNorm(in_dim, in_dim, kernel, 2, groups=in_dim, rngs=rngs)
+        self.channel_downsample = ConvNorm(in_dim, out_dim, rngs=rngs)
+        self.ffn = RepVitMlp(out_dim, out_dim * mlp_ratio, rngs=rngs)
+
+    def __call__(self, x):
+        x = self.channel_downsample(self.spatial_downsample(self.pre_block(x)))
+        return x + self.ffn(x)
+
+
+class RepVitStage(nnx.Module):
+    def __init__(self, in_dim, out_dim, depth, mlp_ratio, kernel, downsample, legacy, *, rngs):
+        self.downsample = (
+            RepVitDownsample(in_dim, mlp_ratio, out_dim, kernel, legacy, rngs=rngs)
+            if downsample
+            else None
+        )
+        # Squeeze-excite in every other block, starting with the first.
+        self.blocks = nnx.List(
+            [
+                RepViTBlock(out_dim, mlp_ratio, kernel, j % 2 == 0, legacy, rngs=rngs)
+                for j in range(depth)
+            ]
+        )
+
+    def __call__(self, x):
+        if self.downsample is not None:
+            x = self.downsample(x)
+        for blk in self.blocks:
+            x = blk(x)
+        return x
+
+
+class NormLinear(nnx.Module):
+    def __init__(self, in_dim, out_dim, *, rngs):
+        self.bn = BatchNorm(in_dim, epsilon=1e-5, rngs=rngs)
+        self.l = nnx.Linear(
+            in_dim, out_dim, kernel_init=nnx.initializers.truncated_normal(0.02), rngs=rngs
+        )
+
+    def __call__(self, x):
+        return self.l(self.bn(x))
+
+
+class RepVit(ClassifierMixin, nnx.Module):
+    _classifier_attr = "head"
+
     def __init__(
         self,
-        channels=(48, 96, 192, 384),
-        depths=(2, 2, 14, 2),
-        se_from=2,
+        embed_dim=(48, 96, 192, 384),
+        depth=(2, 2, 14, 2),
+        mlp_ratio=2,
+        kernel_size=3,
+        legacy=False,
+        distillation=True,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
         drop_rate=0.0,
-        drop_path_rate=0.0,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
-        self.num_features = channels[-1]
-        self.stem = nnx.List(
-            [
-                nnx.Conv(
-                    in_chans, channels[0] // 2, (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
-                ),
-                BatchNorm(channels[0] // 2, rngs=rngs),
-                nnx.Conv(
-                    channels[0] // 2, channels[0], (3, 3), strides=(2, 2), use_bias=False, rngs=rngs
-                ),
-                BatchNorm(channels[0], rngs=rngs),
-            ]
-        )
-        dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
-        stages, chs, k = [], channels[0], 0
-        for i, (c, d) in enumerate(zip(channels, depths)):
-            blocks = []
-            for j in range(d):
-                stride_down = j == 0 and i > 0
-                blocks.append(
-                    RepViTBlock(chs if j == 0 else c, 2.0, i >= se_from, dpr[k], rngs=rngs)
-                    if not stride_down
-                    else RepViTDown(chs, c, rngs=rngs)
-                )
-                chs = c
-                k += 1
-            stages.append(nnx.List(blocks))
+        self.stem1 = ConvNorm(in_chans, embed_dim[0] // 2, 3, 2, rngs=rngs)
+        self.stem2 = ConvNorm(embed_dim[0] // 2, embed_dim[0], 3, 2, rngs=rngs)
+        stages, in_dim = [], embed_dim[0]
+        for i, (dim, d) in enumerate(zip(embed_dim, depth)):
+            stages.append(
+                RepVitStage(in_dim, dim, d, mlp_ratio, kernel_size, i > 0, legacy, rngs=rngs)
+            )
+            in_dim = dim
         self.stages = nnx.List(stages)
+        self.num_features = in_dim
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
-        self.fc = nnx.Linear(channels[-1], num_classes, rngs=rngs) if num_classes > 0 else None
+        self.head = NormLinear(in_dim, num_classes, rngs=rngs) if num_classes > 0 else None
+        self.head_dist = (
+            NormLinear(in_dim, num_classes, rngs=rngs) if distillation and num_classes > 0 else None
+        )
+
+    def reset_classifier(self, num_classes, global_pool=None):
+        self.num_classes = num_classes
+        self.global_pool = global_pool if global_pool is not None else self.global_pool
+        rngs = nnx.Rngs(0)
+        self.head = (
+            NormLinear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
+        )
+        if self.head_dist is not None:
+            self.head_dist = (
+                NormLinear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
+            )
 
     def forward_features(self, x):
-        for layer in self.stem:
-            x = layer(x)
+        x = self.stem2(gelu(self.stem1(x)))
         for stage in self.stages:
-            for blk in stage:
-                x = blk(x)
+            x = stage(x)
         return x
+
+    def forward_head(self, x):
+        x = self.head_drop(global_pool_nhwc(x, self.global_pool))
+        if self.head is None:
+            return x
+        if self.head_dist is None:
+            return self.head(x)
+        return (self.head(x) + self.head_dist(x)) / 2
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
 
 
-class RepViTDown(nnx.Module):
-    """stride-2 transition: dw 3x3 s2 + 1x1 to out, plus residual pool+conv."""
-
-    def __init__(self, in_chs, out_chs, *, rngs):
-        self.dw = nnx.Conv(
-            in_chs,
-            in_chs,
-            (3, 3),
-            strides=(2, 2),
-            use_bias=False,
-            feature_group_count=in_chs,
-            rngs=rngs,
-        )
-        self.bn_dw = BatchNorm(in_chs, rngs=rngs)
-        self.pw = nnx.Conv(in_chs, out_chs, (1, 1), rngs=rngs)
-        self.bn1 = BatchNorm(out_chs, rngs=rngs)
-        self.res_pw = nnx.Conv(in_chs, out_chs, (1, 1), strides=(2, 2), use_bias=False, rngs=rngs)
-        self.res_bn = BatchNorm(out_chs, rngs=rngs)
-
-    def __call__(self, x):
-        y = self.bn1(self.pw(self.bn_dw(self.dw(x))))
-        return y + self.res_bn(self.res_pw(x))
-
-
 _CFGS = {
-    "repvit_m0_9": ((48, 96, 192, 384), (2, 2, 14, 2), 2),
-    "repvit_m1_1": ((56, 112, 224, 448), (2, 2, 14, 2), 2),
-    "repvit_m1_5": ((64, 128, 256, 512), (2, 2, 14, 2), 2),
+    "repvit_m0_9": ((48, 96, 192, 384), (2, 2, 14, 2), False),
+    "repvit_m1_0": ((56, 112, 224, 448), (2, 2, 14, 2), False),
+    "repvit_m1_1": ((64, 128, 256, 512), (2, 2, 12, 2), False),
+    "repvit_m1_5": ((64, 128, 256, 512), (4, 4, 24, 4), False),
+    "repvit_m2_3": ((80, 160, 320, 640), (6, 6, 34, 2), False),
+    "repvit_m1": ((48, 96, 192, 384), (2, 2, 14, 2), True),
+    "repvit_m2": ((64, 128, 256, 512), (2, 2, 12, 2), True),
+    "repvit_m3": ((64, 128, 256, 512), (4, 4, 18, 2), True),
 }
 
 
 def _make(name):
-    channels, depths, se_from = _CFGS[name]
+    embed_dim, depth, legacy = _CFGS[name]
 
     def entry(**kwargs):
-        model = RepViT(channels, depths, se_from, **kwargs)
-        model.default_cfg = _cfg()
+        model = RepVit(embed_dim, depth, legacy=legacy, **kwargs)
+        model.default_cfg = _cfg(crop_pct=0.95, interpolation="bicubic")
         return model
 
     entry.__name__ = name

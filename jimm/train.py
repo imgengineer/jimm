@@ -33,6 +33,7 @@ import argparse
 import ast
 import collections
 import functools
+import gc
 import math
 import os
 import time
@@ -1179,6 +1180,13 @@ def main(argv=None):
                             flush=True,
                         )
                     compiled_first_step = True
+                    # Objects alive now (modules, compiled steps, data pipeline) last the
+                    # whole run. Freezing them stops the cyclic GC, which allocations in
+                    # every step dispatch trigger, from rescanning them: with Tokamax
+                    # imported before the first compile, RepViT-M0.9 steps took 19.8 ms
+                    # instead of 13.0 ms.
+                    gc.collect()
+                    gc.freeze()
                     t_steady_start = time.perf_counter()
                 else:
                     steady_steps += 1

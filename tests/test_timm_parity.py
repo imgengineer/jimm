@@ -482,6 +482,9 @@ TIMM_PARAM_COUNTS = {
     "tinynet_c": 2_457_234,
     "tinynet_d": 2_338_446,
     "tinynet_e": 2_042_972,
+    "tnt_b_patch16_224": 65_428_680,
+    "tnt_s_legacy_patch16_224": 23_755_336,
+    "tnt_s_patch16_224": 23_768_584,
     "tresnet_l": 55_989_256,
     "tresnet_m": 31_389_032,
     "tresnet_v2_l": 46_174_824,
@@ -659,6 +662,7 @@ def _strided_paddings(jaxpr):
         "cpubone_nano",
         "csatv2",
         "mobilenetv5_base",
+        "tnt_s_patch16_224",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

@@ -57,6 +57,15 @@ TIMM_PARAM_COUNTS = {
     "convnextv2_pico": 9_066_280,
     "convnextv2_small": 50_318_440,
     "convnextv2_tiny": 28_635_496,
+    "cpubone_b0_bfrobust": 10_365_560,
+    "cpubone_b1_bfrobust": 12_439_352,
+    "cpubone_b1_dwnorm": 12_434_232,
+    "cpubone_b2_bfrobust": 23_872_028,
+    "cpubone_b2pt5_dwnorm": 30_431_968,
+    "cpubone_b3": 40_742_344,
+    "cpubone_nano": 6_519_700,
+    "cpubone_s0": 8_732_766,
+    "cpubone_t0": 7_542_100,
     "cs3darknet_focus_l": 21_151_720,
     "cs3darknet_focus_m": 9_304_360,
     "cs3darknet_focus_s": 3_274_728,
@@ -620,6 +629,7 @@ def _strided_paddings(jaxpr):
         "vitamin_small_224",
         "fastvit_t8",
         "fastvit_mci0",
+        "cpubone_nano",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

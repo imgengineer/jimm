@@ -15,6 +15,7 @@
 
 ### October 4, 2026
 
+- Complete timm's MaxViT/CoAtNet family: rmlp and TensorFlow-ported MaxViT, CoAtNet (rw, rmlp, BatchNorm and TF-style), CoAtNeXt, MaxxViT and MaxxViT-V2, with learned, TF-style and MLP relative position biases.
 - Register timm's remaining CaiT variants and timm's name for the 1024-wide ConvMixer, replacing jimm-only names.
 - Port timm's TNT (tnt_s, tnt_s_legacy, tnt_b) and CrossViT (all eleven variants, including the dagger stems).
 - Complete timm's ResNet family: deep and tiered stems (c/d/s/t variants), average-pool shortcuts, ECA and SE attention, anti-aliased (average and blur pool) downsampling, ResNet-RS, wide ResNets, GroupNorm ResNet-50, and the remaining SE-ResNet/ResNeXt variants.
@@ -55,7 +56,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 738
+print(len(jimm.list_models()))  # 786
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -76,7 +77,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `samvit_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -478,6 +479,8 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `vit_small_r26_s32_224` | 1,929 img/s | 1,452 img/s | 1.33× |
 | `resnetv2_50d` | 3,339 img/s | 2,525 img/s | 1.32× |
 | `resnetv2_50x1_bit` | 1,788 img/s | 1,429 img/s | 1.25× |
+| `maxvit_tiny_tf_224` | 1,516 img/s | 899 img/s | 1.69× |
+| `coatnet_0_224` | 1,538 img/s | 1,209 img/s | 1.27× |
 
 ### Attention
 

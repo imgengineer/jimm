@@ -6,7 +6,7 @@ to a generic ResNet or ViT. Add new entries with architecture-level tests.
 """
 
 from ..registry import _cfg, is_model, model_entrypoint, register_model
-from . import convnext, resnet, swin_transformer, vision_transformer
+from . import convnext, swin_transformer, vision_transformer
 
 
 def _make(name, ctor, args, fixed, input_size):
@@ -36,13 +36,6 @@ _SPECS = [
         (3, 224, 224),
     ),
     (
-        ("resnet26",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (2, 2, 2, 2)),
-        {"se": False, "groups": 1, "base_width": 64},
-        (3, 224, 224),
-    ),
-    (
         ("vit_base_patch16_384", "deit_base_patch16_384"),
         vision_transformer.VisionTransformer,
         (),
@@ -67,81 +60,11 @@ _SPECS = [
         (3, 384, 384),
     ),
     (
-        ("seresnet101",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": True, "groups": 1, "base_width": 64},
-        (3, 224, 224),
-    ),
-    (
-        ("seresnet152",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 8, 36, 3)),
-        {"se": True, "groups": 1, "base_width": 64},
-        (3, 224, 224),
-    ),
-    (
-        ("seresnext101_32x4d",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": True, "groups": 32, "base_width": 4},
-        (3, 224, 224),
-    ),
-    (
         ("vit_tiny_patch16_384",),
         vision_transformer.VisionTransformer,
         (),
         {"img_size": 384, "patch_size": 16, "embed_dim": 192, "depth": 12, "num_heads": 3},
         (3, 384, 384),
-    ),
-    (
-        ("resnet200",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 24, 36, 3)),
-        {"se": False, "groups": 1, "base_width": 64},
-        (3, 224, 224),
-    ),
-    (
-        ("resnext101_32x16d",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": False, "groups": 32, "base_width": 16},
-        (3, 224, 224),
-    ),
-    (
-        ("resnext101_32x32d",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": False, "groups": 32, "base_width": 32},
-        (3, 224, 224),
-    ),
-    (
-        ("resnext101_32x4d",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": False, "groups": 32, "base_width": 4},
-        (3, 224, 224),
-    ),
-    (
-        ("resnext101_64x4d",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": False, "groups": 64, "base_width": 4},
-        (3, 224, 224),
-    ),
-    (
-        ("seresnext101_32x8d",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": True, "groups": 32, "base_width": 8},
-        (3, 224, 224),
-    ),
-    (
-        ("seresnext101_64x4d",),
-        resnet.ResNet,
-        (resnet.Bottleneck, (3, 4, 23, 3)),
-        {"se": True, "groups": 64, "base_width": 4},
-        (3, 224, 224),
     ),
     (
         ("swin_base_patch4_window12_384",),

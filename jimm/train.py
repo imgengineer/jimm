@@ -19,7 +19,7 @@ Examples:
   python -m jimm.train --model resnet50 --data-dir /path/to/imagenet --epochs 90 --resume
 
   # FSDP mode (ZeRO-3: shards weights and optimizer states across devices to save memory):
-  python -m jimm.train --model eva_large_patch16_224 --data-dir /path/to/imagenet --fsdp
+  python -m jimm.train --model eva02_large_patch14_224 --data-dir /path/to/imagenet --fsdp
 
   # Multi-node training (e.g. Node 0 of 2 nodes, 8 GPUs each):
   python -m jimm.train --model convnext_tiny --data-dir /path/to/imagenet \\

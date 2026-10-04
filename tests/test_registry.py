@@ -63,7 +63,7 @@ def test_list_models_and_modules():
         "mobilevitv2_050",
         "vit_so400m_patch14_siglip_gap_896",
         "eca_vovnet39b",
-        "regnety_1280",
+        "efficientvit_m0",
         "deit_base_distilled_patch16_224",
         "convnext_atto_rms",
     ],

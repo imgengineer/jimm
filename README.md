@@ -15,6 +15,7 @@
 
 ### October 4, 2026
 
+- Complete timm's RegNet family: every RegNetX/RegNetY width (through the SEER `regnety_2560`), the torchvision-rounded `_tv` variants, GroupNorm RegNetY, pre-activation RegNetV and inverted-bottleneck RegNetZ.
 - Port timm's ByobNet and ByoaNet modules: GENet, RepVGG, MobileOne, RegNetZ (including EvoNorm), the ts/q ResNets with SE/ECA/global-context/BAT attention, OpenAI CLIP ResNets, BoTNet, HaloNet and LambdaNet.
 - Port timm's EVA module: EVA/EVA-02 (including the CLIP towers), the axial and mixed RoPE ViTs, DINOv3, LingBot and Perception Encoder (core, language and spatial) towers.
 - Complete timm's MaxViT/CoAtNet family: rmlp and TensorFlow-ported MaxViT, CoAtNet (rw, rmlp, BatchNorm and TF-style), CoAtNeXt, MaxxViT and MaxxViT-V2, with learned, TF-style and MLP relative position biases.
@@ -58,7 +59,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 905
+print(len(jimm.list_models()))  # 931
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -79,7 +80,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `samvit_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3 and Perception Encoder), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet (X/Y/V/Z), NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3 and Perception Encoder), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -493,6 +494,10 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `gcresnext26ts` (256×256) | 3,418 img/s | 2,570 img/s | 1.33× |
 | `halonet26t` (256×256) | 3,302 img/s | 2,368 img/s | 1.39× |
 | `botnet26t_256` (256×256) | 3,405 img/s | 2,461 img/s | 1.38× |
+| `regnety_040` | 2,986 img/s | 2,029 img/s | 1.47× |
+| `regnetv_040` | 2,885 img/s | 1,952 img/s | 1.48× |
+| `regnety_040_sgn` | 2,795 img/s | 704 img/s | 3.97× |
+| `regnetz_040` | 1,467 img/s | 773 img/s | 1.90× |
 
 ### Attention
 

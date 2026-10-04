@@ -6,7 +6,7 @@ to a generic ResNet or ViT. Add new entries with architecture-level tests.
 """
 
 from ..registry import _cfg, is_model, model_entrypoint, register_model
-from . import convnext, swin_transformer, vision_transformer
+from . import swin_transformer, vision_transformer
 
 
 def _make(name, ctor, args, fixed, input_size):
@@ -49,9 +49,6 @@ _SPECS = [
         {"img_size": 384, "patch_size": 16, "embed_dim": 1024, "depth": 24, "num_heads": 16},
         (3, 384, 384),
     ),
-    (("convnext_femto",), convnext.ConvNeXt, ((2, 2, 6, 2), (48, 96, 192, 384)), {}, (3, 224, 224)),
-    (("convnext_nano",), convnext.ConvNeXt, ((2, 2, 8, 2), (80, 160, 320, 640)), {}, (3, 224, 224)),
-    (("convnext_pico",), convnext.ConvNeXt, ((2, 2, 6, 2), (64, 128, 256, 512)), {}, (3, 224, 224)),
     (
         ("vit_small_patch16_384",),
         vision_transformer.VisionTransformer,

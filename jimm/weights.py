@@ -106,6 +106,12 @@ def load_state_dict(
             if isinstance(node, nnx.Variable):
                 target = node.get_value()
                 value = jnp.asarray(converted_v, dtype=getattr(target, "dtype", None))
+                if (
+                    value.ndim == 4
+                    and value.shape[:2] == (1, 1)
+                    and getattr(target, "ndim", 0) == 2
+                ):
+                    value = value[0, 0]  # a 1x1 conv kernel loaded into a Linear (SE, LeViT conv)
                 if not hasattr(target, "shape") or target.shape == value.shape:
                     updates.append((k, node, value))
                 else:

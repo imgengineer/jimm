@@ -15,6 +15,8 @@
 
 ### October 4, 2026
 
+- Complete timm's ConvNeXt family in one configurable model: overlapping stems (`_ols`), RMSNorm and SimpleNorm variants, the norm-first head (`convnext_tiny_hnf`), the CLIP MLP head (`convnext_large_mlp`), `convnext_xlarge`/`convnext_xxlarge`, and ConvNeXt-V2 under the same `convnext` module.
+- Complete timm's LeViT family: `levit_128`, `levit_384`, the SiLU stride-8 stem, wide and deep variants, and the `levit_conv_*` names. The weight loader now loads 1×1 convolution kernels into linear layers.
 - Complete timm's RegNet family: every RegNetX/RegNetY width (through the SEER `regnety_2560`), the torchvision-rounded `_tv` variants, GroupNorm RegNetY, pre-activation RegNetV and inverted-bottleneck RegNetZ.
 - Port timm's ByobNet and ByoaNet modules: GENet, RepVGG, MobileOne, RegNetZ (including EvoNorm), the ts/q ResNets with SE/ECA/global-context/BAT attention, OpenAI CLIP ResNets, BoTNet, HaloNet and LambdaNet.
 - Port timm's EVA module: EVA/EVA-02 (including the CLIP towers), the axial and mixed RoPE ViTs, DINOv3, LingBot and Perception Encoder (core, language and spatial) towers.
@@ -59,7 +61,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 931
+print(len(jimm.list_models()))  # 962
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -392,6 +394,7 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `resnet50` | 2,804 img/s | 2,595 img/s | 1.08× |
 | `convnext_tiny` | 2,920 img/s | 2,044 img/s | 1.43× |
 | `convnextv2_tiny` | 2,518 img/s | 835 img/s | 3.02× |
+| `convnext_nano_ols` | 4,484 img/s | 2,850 img/s | 1.57× |
 | `efficientnet_b0` | 6,151 img/s | 2,856 img/s | 2.15× |
 | `densenet121` | 2,256 img/s | 1,989 img/s | 1.13× |
 | `vit_small_patch16_224` | 4,019 img/s | 3,280 img/s | 1.23× |
@@ -399,6 +402,7 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `hrnet_w18_small` | 4,713 img/s | 3,824 img/s | 1.23× |
 | `hrnet_w18` | 914 img/s | 944 img/s | 0.97× |
 | `levit_128s` | 9,968 img/s | 7,954 img/s | 1.25× |
+| `levit_384` | 3,916 img/s | 3,550 img/s | 1.10× |
 | `efficientvit_b1` | 6,116 img/s | 3,969 img/s | 1.54× |
 | `visformer_small` | 3,185 img/s | 2,401 img/s | 1.33× |
 | `coatnet_0_rw_224` | 2,718 img/s | 1,475 img/s | 1.84× |

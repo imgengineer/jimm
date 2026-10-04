@@ -210,6 +210,7 @@ class Levit(nnx.Module):
         drop_rate=0.0,
         drop_path_rate=0.0,
         distillation=True,
+        stem_type="s16",
         *,
         rngs,
     ):
@@ -220,15 +221,16 @@ class Levit(nnx.Module):
         self.distilled_training = False
         self.deterministic = False
         e = embed_dim[0]
+        # timm Stem16 (four stride-2 convs) or Stem8 (three); no activation after the last.
+        n = 4 if stem_type == "s16" else 3
+        chs = [in_chans] + [e // 2 ** (n - 1 - i) for i in range(n)]
         self.stem = nnx.List(
             [
-                ConvNormAct(in_chans, e // 8, 3, 2, act=act, rngs=rngs),
-                ConvNormAct(e // 8, e // 4, 3, 2, act=act, rngs=rngs),
-                ConvNormAct(e // 4, e // 2, 3, 2, act=act, rngs=rngs),
-                ConvNormAct(e // 2, e, 3, 2, rngs=rngs),
+                ConvNormAct(chs[i], chs[i + 1], 3, 2, act=act if i < n - 1 else None, rngs=rngs)
+                for i in range(n)
             ]
         )
-        resolution = (img_size // 16, img_size // 16)
+        resolution = (img_size // 2**n, img_size // 2**n)
         stages, in_dim = [], e
         for i, (dim, d, heads) in enumerate(zip(embed_dim, depth, num_heads)):
             stage = LevitStage(
@@ -316,14 +318,39 @@ class Levit(nnx.Module):
 # timm configurations: embed widths, key width, heads, and depth per stage.
 _CFGS = {
     "levit_128s": dict(embed_dim=(128, 256, 384), key_dim=16, num_heads=(4, 6, 8), depth=(2, 3, 4)),
+    "levit_128": dict(embed_dim=(128, 256, 384), key_dim=16, num_heads=(4, 8, 12), depth=(4, 4, 4)),
     "levit_192": dict(embed_dim=(192, 288, 384), key_dim=32, num_heads=(3, 5, 6), depth=(4, 4, 4)),
     "levit_256": dict(embed_dim=(256, 384, 512), key_dim=32, num_heads=(4, 6, 8), depth=(4, 4, 4)),
-}
+    "levit_384": dict(embed_dim=(384, 512, 768), key_dim=32, num_heads=(6, 9, 12), depth=(4, 4, 4)),
+    "levit_384_s8": dict(
+        embed_dim=(384, 512, 768), key_dim=32, num_heads=(6, 9, 12), depth=(4, 4, 4),
+        act=nnx.silu, stem_type="s8",
+    ),
+    "levit_512_s8": dict(
+        embed_dim=(512, 640, 896), key_dim=64, num_heads=(8, 10, 14), depth=(4, 4, 4),
+        act=nnx.silu, stem_type="s8",
+    ),
+    "levit_512": dict(
+        embed_dim=(512, 768, 1024), key_dim=64, num_heads=(8, 12, 16), depth=(4, 4, 4),
+        act=nnx.silu,
+    ),
+    "levit_256d": dict(
+        embed_dim=(256, 384, 512), key_dim=32, num_heads=(4, 6, 8), depth=(4, 8, 6), act=nnx.silu
+    ),
+    "levit_512d": dict(
+        embed_dim=(512, 640, 768), key_dim=64, num_heads=(8, 10, 12), depth=(4, 8, 6), act=nnx.silu
+    ),
+}  # fmt: skip
 
 
-def _make(name):
+# timm builds these experimental variants without the distillation head.
+_UNDISTILLED = {"levit_512_s8", "levit_512", "levit_256d", "levit_512d"}
+
+
+def _make(name, cfg):
     def entry(**kwargs):
-        model = Levit(**_CFGS[name], **kwargs)
+        kwargs.setdefault("distillation", cfg not in _UNDISTILLED)
+        model = Levit(**_CFGS[cfg], **kwargs)
         model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
         return model
 
@@ -331,5 +358,8 @@ def _make(name):
     return entry
 
 
+# timm's ``levit_conv_*`` models compute the same function with 1x1 convolutions; in NHWC
+# they are the linear models (the loader reshapes 1x1 conv kernels into linear ones).
 for _name in _CFGS:
-    register_model(_make(_name))
+    register_model(_make(_name, _name))
+    register_model(_make(_name.replace("levit_", "levit_conv_"), _name))

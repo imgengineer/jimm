@@ -36,6 +36,20 @@ def test_strict_loading_requires_all_parameters_and_batch_statistics():
     np.testing.assert_array_equal(model.fc.kernel[...], 2.0)
 
 
+def test_pointwise_conv_kernels_load_into_linear_layers():
+    """timm keeps SE and LeViT-conv projections as 1x1 convolutions; jimm uses Linear."""
+
+    class Model(nnx.Module):
+        def __init__(self):
+            self.fc = nnx.Linear(3, 2, rngs=nnx.Rngs(0))
+
+    model = Model()
+    weight = np.arange(6, dtype=np.float32).reshape(2, 3, 1, 1)
+    loaded, missing = load_state_dict(model, {"fc.weight": weight}, strict=False)
+    assert loaded == ["fc.weight"] and missing == []
+    np.testing.assert_array_equal(model.fc.kernel[...], weight[:, :, 0, 0].T)
+
+
 def test_convert_key():
     assert _convert_key("layer1.0.conv1.weight") == ["stages", "0", "0", "conv1", "kernel"]
     assert _convert_key("layer2.0.downsample.0.weight") == [

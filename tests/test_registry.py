@@ -27,7 +27,7 @@ def test_list_models_and_modules():
     assert "resnet" in modules
     assert "swin_transformer" in modules
     assert "efficientnet" in modules
-    assert "convnextv2" in modules
+    assert "convnext" in modules and "convnextv2" not in modules
     assert "variants" not in modules
 
     # Wildcard and pattern filters
@@ -65,7 +65,7 @@ def test_list_models_and_modules():
         "eca_vovnet39b",
         "efficientvit_m0",
         "deit_base_distilled_patch16_224",
-        "convnext_atto_rms",
+        "convnext_xxlarge_mlp",
     ],
 )
 def test_unimplemented_variants_are_not_substituted(name):

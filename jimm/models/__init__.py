@@ -22,7 +22,6 @@ from . import (  # noqa: F401  (imports trigger registration)
     mlp_mixer,
     poolformer,
     convmixer,
-    convnextv2,
     inception_v3,
     ghostnet,
     cspnet,

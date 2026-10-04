@@ -92,16 +92,6 @@ class FeatureExtractor(nnx.Module):
                 for blk in stage:
                     curr = blk(curr)
                 feats.append(curr)
-        # ConvNeXt-style architectures (stem + stages + downsamples)
-        elif hasattr(m, "stem") and hasattr(m, "stages") and hasattr(m, "downsamples"):
-            curr = m.stem_norm(m.stem(x)) if hasattr(m, "stem_norm") else m.stem(x)
-            feats.append(curr)
-            for i, stage in enumerate(m.stages):
-                if i > 0 and i - 1 < len(m.downsamples):
-                    curr = m.downsamples[i - 1](curr)
-                for blk in stage:
-                    curr = blk(curr)
-                feats.append(curr)
         # Transformer-style architectures (patch_embed + blocks)
         elif hasattr(m, "patch_embed") and hasattr(m, "blocks"):
             batch_size = x.shape[0]

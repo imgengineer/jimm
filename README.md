@@ -17,6 +17,7 @@
 
 - Register timm's remaining CaiT variants and timm's name for the 1024-wide ConvMixer, replacing jimm-only names.
 - Port timm's TNT (tnt_s, tnt_s_legacy, tnt_b) and CrossViT (all eleven variants, including the dagger stems).
+- Port timm's Segment Anything ViT encoders (samvit_base/large/huge_patch16 and samvit_base_patch16_224).
 
 ### October 3, 2026
 
@@ -51,7 +52,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 648
+print(len(jimm.list_models()))  # 651
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -70,9 +71,9 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Hierarchical transformers | `swin_tiny_patch4_window7_224`, `hiera_tiny_224`, `sam2_hiera_tiny`, `pvt_v2_b0`, `twins_svt_small`, `davit_tiny` |
 | Hybrid and mobile transformers | `maxvit_tiny_rw_224`, `coatnet_0_rw_224`, `mobilevit_xxs`, `efficientvit_b0`, `fastvit_t8`, `repvit_m0_9`, `tiny_vit_5m_224` |
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
-| Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `vit_sam_base_patch16_224`, `vitamin_small_224` |
+| Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `samvit_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet, NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -467,6 +468,7 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `naflexvit_base_patch16_gap` | 1,221 img/s | 1,165 img/s | 1.05× |
 | `tnt_s_patch16_224` | 1,701 img/s | 1,125 img/s | 1.51× |
 | `crossvit_15_240` (240×240) | 2,695 img/s | 1,949 img/s | 1.38× |
+| `samvit_base_patch16_224` | 1,298 img/s | 759 img/s | 1.71× |
 
 ### Attention
 

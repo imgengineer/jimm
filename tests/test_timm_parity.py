@@ -425,6 +425,10 @@ TIMM_PARAM_COUNTS = {
     "sam2_hiera_large": 213_304_600,
     "sam2_hiera_small": 34_717_864,
     "sam2_hiera_tiny": 27_620_008,
+    "samvit_base_patch16": 89_927_912,
+    "samvit_base_patch16_224": 86_457_064,
+    "samvit_huge_patch16": 637_283_048,
+    "samvit_large_patch16": 308_535_272,
     "sedarknet21": 20_950_432,
     "selecsls42": 30_354_952,
     "selecsls42b": 32_458_248,
@@ -675,6 +679,7 @@ def _strided_paddings(jaxpr):
         "mobilenetv5_base",
         "tnt_s_patch16_224",
         "crossvit_9_dagger_240",
+        "samvit_base_patch16_224",
     ],
 )
 def test_strided_ops_pad_symmetrically_like_pytorch(name):

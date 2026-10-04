@@ -68,7 +68,7 @@ def test_list_models_and_modules():
         "ghostnetv2_100",
         "eca_vovnet39b",
         "efficientvit_m0",
-        "mobilenetv4_conv_small",
+        "efficientnet_b1_pruned",
         "convnext_xxlarge_mlp",
     ],
 )
@@ -127,7 +127,8 @@ def test_create_model():
 
 def test_default_cfg_resolves_without_instantiation():
     # Entrypoints that set default_cfg on the instance are read from an abstract model.
-    assert get_default_cfg("efficientnet_b3")["input_size"] == (3, 300, 300)
+    assert get_default_cfg("efficientnet_b3")["input_size"] == (3, 288, 288)  # timm ra2_in1k
+    assert get_default_cfg("tf_efficientnet_b3")["input_size"] == (3, 300, 300)
     assert get_default_cfg("vit_base_patch16_384")["input_size"] == (3, 384, 384)
     assert get_default_cfg("inception_v3")["input_size"] == (3, 299, 299)
     cfg = get_default_cfg("resnet18")

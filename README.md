@@ -15,6 +15,7 @@
 
 ### October 4, 2026
 
+- Port timm's EfficientNet builder: every `efficientnet`, `mobilenetv3` and `hardcorenas` name is rebuilt from its recorded block configuration, including EfficientNet-V2, EfficientNet-X/H, CondConv, TF-padded `tf_*` ports, MixNet, MNASNet, FBNet, LCNet, MobileNet V1/V2/V3 and MobileNetV4 (universal inverted residual and multi-query attention blocks), with GroupNorm, LayerNorm, EvoNorm and anti-aliased variants. The `_pruned` EfficientNets are not included.
 - Complete timm's NFNet module: NF-RegNet B0–B5, NF-ResNet-26/50/101 and their SE and ECA variants, and `test_nfnet`.
 - Complete timm's MLP-Mixer module (gMLP, gMixer, `resmlp_big_24_224` and every Mixer size), Swin V2 CR (384×384, `_ns` and window-scaled variants), the Swin V2 window-transfer fine-tunes (`window12to16`, `window12to24`) and the Swin-S3 models.
 - Port timm's VisionTransformer as one configurable model and register every timm `vision_transformer` and `deit` name: AugReg, CLIP/OpenCLIP/MetaCLIP/DFN, SigLIP/SigLIP 2 (MAP heads), DINOv2 (with registers), AIMv2, BEiT3, InternViT, TIPSv2, ViT-22B-style parallel-scaling and parallel blocks, residual-post-norm, differential attention, register/GAP variants and the distilled DeiT models.
@@ -77,7 +78,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | --- | --- |
 | Residual and attention CNNs | `resnet18`, `resnet50`, `resnext50_32x4d`, `seresnet50`, `resnetv2_50`, `res2net50_26w_4s`, `resnest50d`, `skresnet50`, `tresnet_m` |
 | Modern convolutional models | `convnext_tiny`, `convnextv2_tiny`, `regnety_008`, `rdnet_tiny`, `inception_next_tiny` |
-| Mobile and efficient CNNs | `efficientnet_b0`, `mobilenetv2_100`, `mobilenetv3_large_100`, `mobilenetv5_300m`, `mnasnet_100`, `fasternet_t0`, `starnet_s050` |
+| Mobile and efficient CNNs | `efficientnet_b0`, `tf_efficientnetv2_s`, `mobilenetv2_100`, `mobilenetv3_large_100`, `mobilenetv4_conv_medium`, `lcnet_100`, `mobilenetv5_300m`, `mnasnet_100`, `fasternet_t0`, `starnet_s050` |
 | Classic CNNs and feature backbones | `densenet121`, `vgg16_bn`, `darknet53`, `cspdarknet53`, `hrnet_w18`, `xception`, `dla34`, `dpn68` |
 | Vision transformers | `vit_tiny_patch16_224`, `vit_base_patch16_clip_224`, `vit_small_patch14_reg4_dinov2`, `vit_so400m_patch14_siglip_224`, `deit_tiny_distilled_patch16_224`, `deit3_small_patch16_224`, `beit_base_patch16_224`, `eva02_small_patch14_224` |
 | Hierarchical transformers | `swin_tiny_patch4_window7_224`, `hiera_tiny_224`, `sam2_hiera_tiny`, `pvt_v2_b0`, `twins_svt_small`, `davit_tiny` |
@@ -85,7 +86,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `samvit_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet (X/Y/V/Z), NFNet (including NF-ResNet and NF-RegNet), RDNet, EfficientNet, ViT (including CLIP, SigLIP, DINOv2, AIMv2 and BEiT3 towers)/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3 and Perception Encoder), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer/gMLP/ResMLP, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet (X/Y/V/Z), NFNet (including NF-ResNet and NF-RegNet), RDNet, EfficientNet (including EfficientNet-V2, MixNet, MNASNet, FBNet and LCNet), ViT (including CLIP, SigLIP, DINOv2, AIMv2 and BEiT3 towers)/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3 and Perception Encoder), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNet V1–V4, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer/gMLP/ResMLP, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -398,7 +399,12 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `convnext_tiny` | 2,920 img/s | 2,044 img/s | 1.43× |
 | `convnextv2_tiny` | 2,518 img/s | 835 img/s | 3.02× |
 | `convnext_nano_ols` | 4,484 img/s | 2,850 img/s | 1.57× |
-| `efficientnet_b0` | 6,151 img/s | 2,856 img/s | 2.15× |
+| `efficientnet_b0` | 6,100 img/s | 3,889 img/s | 1.57× |
+| `tf_efficientnetv2_s` | 2,609 img/s | 2,075 img/s | 1.26× |
+| `mobilenetv3_large_100` | 9,361 img/s | 6,876 img/s | 1.36× |
+| `mobilenetv4_hybrid_medium` | 4,292 img/s | 3,660 img/s | 1.17× |
+| `mixnet_m` | 2,557 img/s | 1,999 img/s | 1.28× |
+| `lcnet_100` | 16,490 img/s | 12,680 img/s | 1.30× |
 | `densenet121` | 2,256 img/s | 1,989 img/s | 1.13× |
 | `vit_small_patch16_224` | 4,019 img/s | 3,280 img/s | 1.23× |
 | `vit_base_patch16_224` | 1,420 img/s | 1,233 img/s | 1.15× |

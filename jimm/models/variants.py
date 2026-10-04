@@ -6,7 +6,7 @@ to a generic ResNet or ViT. Add new entries with architecture-level tests.
 """
 
 from ..registry import _cfg, is_model, model_entrypoint, register_model
-from . import swin_transformer, vision_transformer
+from . import swin_transformer
 
 
 def _make(name, ctor, args, fixed, input_size):
@@ -21,48 +21,6 @@ def _make(name, ctor, args, fixed, input_size):
 
 
 _SPECS = [
-    (
-        ("vit_huge_patch14_224",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 224, "patch_size": 14, "embed_dim": 1280, "depth": 32, "num_heads": 16},
-        (3, 224, 224),
-    ),
-    (
-        ("vit_large_patch14_224",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 224, "patch_size": 14, "embed_dim": 1024, "depth": 24, "num_heads": 16},
-        (3, 224, 224),
-    ),
-    (
-        ("vit_base_patch16_384", "deit_base_patch16_384"),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 384, "patch_size": 16, "embed_dim": 768, "depth": 12, "num_heads": 12},
-        (3, 384, 384),
-    ),
-    (
-        ("vit_large_patch16_384",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 384, "patch_size": 16, "embed_dim": 1024, "depth": 24, "num_heads": 16},
-        (3, 384, 384),
-    ),
-    (
-        ("vit_small_patch16_384",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 384, "patch_size": 16, "embed_dim": 384, "depth": 12, "num_heads": 6},
-        (3, 384, 384),
-    ),
-    (
-        ("vit_tiny_patch16_384",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 384, "patch_size": 16, "embed_dim": 192, "depth": 12, "num_heads": 3},
-        (3, 384, 384),
-    ),
     (
         ("swin_base_patch4_window12_384",),
         swin_transformer.SwinTransformer,
@@ -95,41 +53,6 @@ _SPECS = [
         (),
         {"img_size": 224, "embed_dim": 192, "depths": (2, 2, 18, 2), "num_heads": (6, 12, 24, 48)},
         (3, 224, 224),
-    ),
-    (
-        ("vit_base_patch32_224",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 224, "patch_size": 32, "embed_dim": 768, "depth": 12, "num_heads": 12},
-        (3, 224, 224),
-    ),
-    (
-        ("vit_base_patch32_384",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 384, "patch_size": 32, "embed_dim": 768, "depth": 12, "num_heads": 12},
-        (3, 384, 384),
-    ),
-    (
-        ("vit_base_patch8_224",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 224, "patch_size": 8, "embed_dim": 768, "depth": 12, "num_heads": 12},
-        (3, 224, 224),
-    ),
-    (
-        ("vit_large_patch32_224",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 224, "patch_size": 32, "embed_dim": 1024, "depth": 24, "num_heads": 16},
-        (3, 224, 224),
-    ),
-    (
-        ("vit_large_patch32_384",),
-        vision_transformer.VisionTransformer,
-        (),
-        {"img_size": 384, "patch_size": 32, "embed_dim": 1024, "depth": 24, "num_heads": 16},
-        (3, 384, 384),
     ),
 ]
 

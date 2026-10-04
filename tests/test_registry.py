@@ -28,6 +28,10 @@ def test_list_models_and_modules():
     assert "swin_transformer" in modules
     assert "efficientnet" in modules
     assert "convnext" in modules and "convnextv2" not in modules
+    # Names timm builds from a shared model are listed under timm's module.
+    assert "deit_tiny_distilled_patch16_224" in list_models(module="deit")
+    assert "botnet26t_256" in list_models(module="byoanet")
+    assert "deit_tiny_patch16_224" not in list_models(module="vision_transformer")
     assert "variants" not in modules
 
     # Wildcard and pattern filters
@@ -61,10 +65,10 @@ def test_list_models_and_modules():
     "name",
     [
         "mobilevitv2_050",
-        "vit_so400m_patch14_siglip_gap_896",
+        "gmlp_s16_224",
         "eca_vovnet39b",
         "efficientvit_m0",
-        "deit_base_distilled_patch16_224",
+        "mobilenetv4_conv_small",
         "convnext_xxlarge_mlp",
     ],
 )

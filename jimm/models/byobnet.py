@@ -755,9 +755,12 @@ def _make(name):
     return entry
 
 
-def register_all(names):
+def register_all(names, module=__name__):
+    """Registers ``names``; ``module`` sets the timm module they are listed under."""
     for name in names:
-        register_model(_make(name))
+        entry = _make(name)
+        entry.__module__ = module
+        register_model(entry)
 
 
 _BYOANET = {

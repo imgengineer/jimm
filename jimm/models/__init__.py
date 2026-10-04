@@ -11,6 +11,7 @@ from . import (  # noqa: F401  (imports trigger registration)
     regnet,
     convnext,
     vision_transformer,
+    deit,
     beit,
     swin_transformer,
     swin_transformer_v2,

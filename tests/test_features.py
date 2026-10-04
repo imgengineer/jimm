@@ -63,9 +63,10 @@ def test_features_only_vit():
     )
     x = jnp.ones((2, 224, 224, 3), jnp.float32)
     feats = m(x)
+    # Patch tokens as NHWC grids (timm's features_only), without the class token.
     assert len(feats) == 2
-    assert feats[0].shape == (2, 197, 768)
-    assert feats[1].shape == (2, 197, 768)
+    assert feats[0].shape == (2, 14, 14, 768)
+    assert feats[1].shape == (2, 14, 14, 768)
 
 
 def test_features_out_of_range_raises():

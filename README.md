@@ -15,6 +15,7 @@
 
 ### October 4, 2026
 
+- Port timm's VisionTransformer as one configurable model and register every timm `vision_transformer` and `deit` name: AugReg, CLIP/OpenCLIP/MetaCLIP/DFN, SigLIP/SigLIP 2 (MAP heads), DINOv2 (with registers), AIMv2, BEiT3, InternViT, TIPSv2, ViT-22B-style parallel-scaling and parallel blocks, residual-post-norm, differential attention, register/GAP variants and the distilled DeiT models.
 - Complete timm's ConvNeXt family in one configurable model: overlapping stems (`_ols`), RMSNorm and SimpleNorm variants, the norm-first head (`convnext_tiny_hnf`), the CLIP MLP head (`convnext_large_mlp`), `convnext_xlarge`/`convnext_xxlarge`, and ConvNeXt-V2 under the same `convnext` module.
 - Complete timm's LeViT family: `levit_128`, `levit_384`, the SiLU stride-8 stem, wide and deep variants, and the `levit_conv_*` names. The weight loader now loads 1×1 convolution kernels into linear layers.
 - Complete timm's RegNet family: every RegNetX/RegNetY width (through the SEER `regnety_2560`), the torchvision-rounded `_tv` variants, GroupNorm RegNetY, pre-activation RegNetV and inverted-bottleneck RegNetZ.
@@ -61,7 +62,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 962
+print(len(jimm.list_models()))  # 1113
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -76,13 +77,13 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Modern convolutional models | `convnext_tiny`, `convnextv2_tiny`, `regnety_008`, `rdnet_tiny`, `inception_next_tiny` |
 | Mobile and efficient CNNs | `efficientnet_b0`, `mobilenetv2_100`, `mobilenetv3_large_100`, `mobilenetv5_300m`, `mnasnet_100`, `fasternet_t0`, `starnet_s050` |
 | Classic CNNs and feature backbones | `densenet121`, `vgg16_bn`, `darknet53`, `cspdarknet53`, `hrnet_w18`, `xception`, `dla34`, `dpn68` |
-| Vision transformers | `vit_tiny_patch16_224`, `deit_tiny_patch16_224`, `deit3_small_patch16_224`, `beit_base_patch16_224`, `eva02_small_patch14_224` |
+| Vision transformers | `vit_tiny_patch16_224`, `vit_base_patch16_clip_224`, `vit_small_patch14_reg4_dinov2`, `vit_so400m_patch14_siglip_224`, `deit_tiny_distilled_patch16_224`, `deit3_small_patch16_224`, `beit_base_patch16_224`, `eva02_small_patch14_224` |
 | Hierarchical transformers | `swin_tiny_patch4_window7_224`, `hiera_tiny_224`, `sam2_hiera_tiny`, `pvt_v2_b0`, `twins_svt_small`, `davit_tiny` |
 | Hybrid and mobile transformers | `maxvit_tiny_rw_224`, `coatnet_0_rw_224`, `mobilevit_xxs`, `efficientvit_b0`, `fastvit_t8`, `repvit_m0_9`, `tiny_vit_5m_224` |
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `samvit_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet (X/Y/V/Z), NFNet, RDNet, EfficientNet, ViT/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3 and Perception Encoder), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet (X/Y/V/Z), NFNet, RDNet, EfficientNet, ViT (including CLIP, SigLIP, DINOv2, AIMv2 and BEiT3 towers)/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3 and Perception Encoder), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNetV2/V3, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -399,6 +400,8 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `densenet121` | 2,256 img/s | 1,989 img/s | 1.13× |
 | `vit_small_patch16_224` | 4,019 img/s | 3,280 img/s | 1.23× |
 | `vit_base_patch16_224` | 1,420 img/s | 1,233 img/s | 1.15× |
+| `deit_base_distilled_patch16_224` | 1,394 img/s | 1,235 img/s | 1.13× |
+| `vit_base_patch16_clip_224` | 1,419 img/s | 1,235 img/s | 1.15× |
 | `hrnet_w18_small` | 4,713 img/s | 3,824 img/s | 1.23× |
 | `hrnet_w18` | 914 img/s | 944 img/s | 0.97× |
 | `levit_128s` | 9,968 img/s | 7,954 img/s | 1.25× |

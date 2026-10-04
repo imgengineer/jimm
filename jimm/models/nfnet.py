@@ -74,8 +74,8 @@ class ScaledStdConv(nnx.Module):
 
 
 class SEModule(nnx.Module):
-    def __init__(self, chs, rd_ratio=0.5, *, rngs):
-        rd = make_divisible(chs * rd_ratio, 8, round_limit=0.0)
+    def __init__(self, chs, rd_ratio=0.5, rd_divisor=8, *, rngs):
+        rd = make_divisible(chs * rd_ratio, rd_divisor, round_limit=0.0)
         self.fc1 = nnx.Linear(chs, rd, rngs=rngs)
         self.fc2 = nnx.Linear(rd, chs, rngs=rngs)
 
@@ -119,13 +119,16 @@ class NormFreeBlock(nnx.Module):
         attn_kwargs=None,
         attn_gain=2.0,
         skipinit=False,
+        reg=False,
+        extra_conv=True,
         act=None,
         conv=None,
         drop_path=0.0,
         *,
         rngs,
     ):
-        mid = make_divisible(out_chs * bottle_ratio, ch_div)
+        # RegNet-style blocks size the bottleneck from the input and attend before conv3.
+        mid = make_divisible((in_chs if reg else out_chs) * bottle_ratio, ch_div)
         groups = 1 if not group_size else mid // group_size
         if group_size and group_size % ch_div == 0:
             mid = group_size * groups
@@ -136,14 +139,17 @@ class NormFreeBlock(nnx.Module):
         )
         self.conv1 = conv(in_chs, mid, 1, rngs=rngs)
         self.conv2 = conv(mid, mid, 3, stride, groups, rngs=rngs)
-        self.conv2b = conv(mid, mid, 3, 1, groups, rngs=rngs)
+        self.conv2b = conv(mid, mid, 3, 1, groups, rngs=rngs) if extra_conv else None
         self.conv3 = conv(mid, out_chs, 1, gain_init=1.0 if skipinit else 0.0, rngs=rngs)
+        attn_chs = mid if reg else out_chs
         if attn == "se":
-            self.attn_last = SEModule(out_chs, **(attn_kwargs or {}), rngs=rngs)
+            attn_layer = SEModule(attn_chs, **(attn_kwargs or {}), rngs=rngs)
         elif attn == "eca":
-            self.attn_last = EcaModule(out_chs, rngs=rngs)
+            attn_layer = EcaModule(attn_chs, rngs=rngs)
         else:
-            self.attn_last = None
+            attn_layer = None
+        self.attn = attn_layer if reg else None
+        self.attn_last = None if reg else attn_layer
         self.skipinit_gain = nnx.Param(jnp.zeros(())) if skipinit else None
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
@@ -166,7 +172,10 @@ class NormFreeBlock(nnx.Module):
             shortcut = self.downsample(pooled)
         out = self.conv1(out)
         out = self.conv2(self.act(out))
-        out = self.conv2b(self.act(out))
+        if self.conv2b is not None:
+            out = self.conv2b(self.act(out))
+        if self.attn is not None:
+            out = self.attn_gain * self.attn(out)
         out = self.conv3(self.act(out))
         if self.attn_last is not None:
             out = self.attn_gain * self.attn_last(out)
@@ -191,6 +200,11 @@ class NormFreeNet(ClassifierMixin, nnx.Module):
         attn_kwargs=None,
         dm=False,
         std_conv_eps=1e-5,
+        stem_type="deep_quad",
+        extra_conv=True,
+        reg=False,
+        width_factor=1.0,
+        num_features=None,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
@@ -224,13 +238,21 @@ class NormFreeNet(ClassifierMixin, nnx.Module):
                 rngs=rngs,
             )
 
-        stem = [stem_chs // 8, stem_chs // 4, stem_chs // 2, stem_chs]
+        stem_chs = make_divisible((stem_chs or channels[0]) * width_factor, 8)
+        if stem_type == "deep_quad":
+            stem = [stem_chs // 8, stem_chs // 4, stem_chs // 2, stem_chs]
+            strides = (2, 1, 1, 2)
+            kernels = (3, 3, 3, 3)
+        else:  # timm "3x3" or "7x7_pool": one stride-2 conv (then a 3x3 max pool)
+            stem, strides, kernels = [stem_chs], (2,), (7 if "7x7" in stem_type else 3,)
         self.stem = nnx.List(
             [
-                conv(c_in, c_out, 3, s, rngs=rngs)
-                for c_in, c_out, s in zip([in_chans, *stem[:-1]], stem, (2, 1, 1, 2))
+                conv(c_in, c_out, k, s, rngs=rngs)
+                for c_in, c_out, k, s in zip([in_chans, *stem[:-1]], stem, kernels, strides)
             ]
         )
+        self.stem_pool = "pool" in stem_type
+        stem_stride = 4 if stem_type == "deep_quad" or self.stem_pool else 2
         # timm calculate_drop_path_rates(stagewise=True): linear over all blocks, split by stage.
         total = sum(depths)
         rates = [drop_path_rate * i / max(total - 1, 1) for i in range(total)]
@@ -238,19 +260,22 @@ class NormFreeNet(ClassifierMixin, nnx.Module):
         for i, depth in enumerate(depths):
             blocks = []
             for j in range(depth):
-                out = make_divisible(channels[i], 8)
+                out = make_divisible(channels[i] * width_factor, 8)
+                stride = (1 if i == 0 and stem_stride > 2 else 2) if j == 0 else 1
                 blocks.append(
                     NormFreeBlock(
                         prev,
                         out,
-                        (1 if i == 0 else 2) if j == 0 else 1,
+                        stride,
                         alpha,
                         1.0 / expected_var**0.5,
-                        bottle_ratio,
+                        1.0 if reg and i == 0 and j == 0 else bottle_ratio,
                         group_size,
                         attn=attn,
                         attn_kwargs=attn_kwargs,
                         skipinit=dm,
+                        reg=reg,
+                        extra_conv=extra_conv,
                         act=self.act,
                         conv=conv,
                         drop_path=rates[k],
@@ -263,8 +288,13 @@ class NormFreeNet(ClassifierMixin, nnx.Module):
                 prev, k = out, k + 1
             stages.append(nnx.List(blocks))
         self.stages = nnx.List(stages)
-        self.num_features = make_divisible(channels[-1] * feat_mult, 8)
-        self.final_conv = conv(prev, self.num_features, 1, rngs=rngs)
+        if num_features is None:
+            num_features = int(channels[-1] * feat_mult)
+        if num_features:
+            self.num_features = make_divisible(width_factor * num_features, 8)
+            self.final_conv = conv(prev, self.num_features, 1, rngs=rngs)
+        else:
+            self.num_features, self.final_conv = prev, None
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = (
             nnx.Linear(
@@ -279,10 +309,14 @@ class NormFreeNet(ClassifierMixin, nnx.Module):
             x = conv(x)
             if i < len(self.stem) - 1:
                 x = self.act(x)
+        if self.stem_pool:
+            x = nnx.max_pool(x, (3, 3), strides=(2, 2), padding=((1, 1), (1, 1)))
         for stage in self.stages:
             for blk in stage:
                 x = blk(x)
-        return self.act(self.final_conv(x))
+        if self.final_conv is not None:
+            x = self.final_conv(x)
+        return self.act(x)
 
     def forward_head(self, x):
         x = self.head_drop(global_pool_nhwc(x, self.global_pool))
@@ -318,17 +352,67 @@ _CFGS = {
 }
 
 
+_NFRES = dict(
+    channels=(256, 512, 1024, 2048), stem_type="7x7_pool", stem_chs=64, bottle_ratio=0.25,
+    group_size=None, act_layer="relu", attn=None, extra_conv=False, num_features=0,
+)  # fmt: skip
+_SE16 = dict(attn="se", attn_kwargs=dict(rd_ratio=1 / 16))
+
+
+def _nfreg(depths, channels=(48, 104, 208, 440)):
+    return dict(
+        depths=depths, channels=channels, stem_type="3x3", stem_chs=None, group_size=8,
+        width_factor=0.75, bottle_ratio=2.25, num_features=1280 * channels[-1] // 440, reg=True,
+        attn_kwargs=dict(rd_ratio=0.5), extra_conv=False, act_layer="silu",
+    )  # fmt: skip
+
+
+# name: (constructor args, image size, crop, test size) — NF-ResNets and NF-RegNets.
+_NF_CFGS = {
+    "nf_regnet_b0": (_nfreg((1, 3, 6, 6)), 192, 0.9, 256),
+    "nf_regnet_b1": (_nfreg((2, 4, 7, 7)), 256, 0.9, 288),
+    "nf_regnet_b2": (_nfreg((2, 4, 8, 8), (56, 112, 232, 488)), 240, 0.9, 272),
+    "nf_regnet_b3": (_nfreg((2, 5, 9, 9), (56, 128, 248, 528)), 288, 0.9, 320),
+    "nf_regnet_b4": (_nfreg((2, 6, 11, 11), (64, 144, 288, 616)), 320, 0.9, 384),
+    "nf_regnet_b5": (_nfreg((3, 7, 14, 14), (80, 168, 336, 704)), 384, 0.9, 456),
+    "nf_resnet26": (dict(depths=(2, 2, 2, 2), **_NFRES), 224, 0.9, None),
+    "nf_resnet50": (dict(depths=(3, 4, 6, 3), **_NFRES), 256, 0.94, 288),
+    "nf_resnet101": (dict(depths=(3, 4, 23, 3), **_NFRES), 224, 0.9, None),
+    "nf_seresnet26": (dict(depths=(2, 2, 2, 2), **{**_NFRES, **_SE16}), 224, 0.9, None),
+    "nf_seresnet50": (dict(depths=(3, 4, 6, 3), **{**_NFRES, **_SE16}), 224, 0.9, None),
+    "nf_seresnet101": (dict(depths=(3, 4, 23, 3), **{**_NFRES, **_SE16}), 224, 0.9, None),
+    "nf_ecaresnet26": (dict(depths=(2, 2, 2, 2), **{**_NFRES, "attn": "eca"}), 224, 0.9, None),
+    "nf_ecaresnet50": (dict(depths=(3, 4, 6, 3), **{**_NFRES, "attn": "eca"}), 224, 0.9, None),
+    "nf_ecaresnet101": (dict(depths=(3, 4, 23, 3), **{**_NFRES, "attn": "eca"}), 224, 0.9, None),
+    "test_nfnet": (
+        dict(
+            depths=(1, 1, 1, 1), channels=(32, 64, 96, 128), feat_mult=1.5, group_size=8,
+            bottle_ratio=0.25, attn_kwargs=dict(rd_ratio=0.25, rd_divisor=8), act_layer="silu",
+        ),
+        160, 0.95, None,
+    ),
+}  # fmt: skip
+
+
 def _make(name):
-    cfg, size, crop = _CFGS[name]
+    if name in _NF_CFGS:
+        cfg, size, crop, test = _NF_CFGS[name]
+    else:
+        (cfg, size, crop), test = _CFGS[name], None
+    ev = {"test_input_size": (3, test, test)} if test else {}
+    if name == "test_nfnet":
+        ev.update(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 
     def entry(**kwargs):
         model = NormFreeNet(**{**cfg, **kwargs})
-        model.default_cfg = _cfg(input_size=(3, size, size), crop_pct=crop, interpolation="bicubic")
+        model.default_cfg = _cfg(
+            input_size=(3, size, size), crop_pct=crop, interpolation="bicubic", **ev
+        )
         return model
 
     entry.__name__ = name
     return entry
 
 
-for _name in _CFGS:
+for _name in (*_CFGS, *_NF_CFGS):
     register_model(_make(_name))

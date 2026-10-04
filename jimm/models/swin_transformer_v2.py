@@ -296,6 +296,7 @@ class SwinTransformerV2(ClassifierMixin, nnx.Module):
         return self.forward_head(self.forward_features(x))
 
 
+_PT12 = (12, 12, 12, 6)
 _CFGS = {
     "swinv2_tiny_window8_256": (256, 8, 96, (2, 2, 6, 2), (3, 6, 12, 24)),
     "swinv2_tiny_window16_256": (256, 16, 96, (2, 2, 6, 2), (3, 6, 12, 24)),
@@ -305,11 +306,18 @@ _CFGS = {
     "swinv2_base_window16_256": (256, 16, 128, (2, 2, 18, 2), (4, 8, 16, 32)),
     "swinv2_base_window12_192": (192, 12, 128, (2, 2, 18, 2), (4, 8, 16, 32)),
     "swinv2_large_window12_192": (192, 12, 192, (2, 2, 18, 2), (6, 12, 24, 48)),
+    # Fine-tuned from the window-12 models at 192x192: the relative-position tables keep the
+    # pretrained window's log-coordinate scaling.
+    "swinv2_base_window12to16_192to256": (256, 16, 128, (2, 2, 18, 2), (4, 8, 16, 32), _PT12),
+    "swinv2_base_window12to24_192to384": (384, 24, 128, (2, 2, 18, 2), (4, 8, 16, 32), _PT12),
+    "swinv2_large_window12to16_192to256": (256, 16, 192, (2, 2, 18, 2), (6, 12, 24, 48), _PT12),
+    "swinv2_large_window12to24_192to384": (384, 24, 192, (2, 2, 18, 2), (6, 12, 24, 48), _PT12),
 }
 
 
 def _make(name):
-    img_size, window_size, embed_dim, depths, num_heads = _CFGS[name]
+    img_size, window_size, embed_dim, depths, num_heads, *pretrained = _CFGS[name]
+    extra = {"pretrained_window_sizes": pretrained[0]} if pretrained else {}
 
     def entry(**kwargs):
         model = SwinTransformerV2(
@@ -318,10 +326,11 @@ def _make(name):
             depths=depths,
             num_heads=num_heads,
             window_size=window_size,
-            **kwargs,
+            **{**extra, **kwargs},
         )
+        crop = 1.0 if img_size == 384 else 0.9
         model.default_cfg = _cfg(
-            input_size=(3, img_size, img_size), crop_pct=0.9, interpolation="bicubic"
+            input_size=(3, img_size, img_size), crop_pct=crop, interpolation="bicubic"
         )
         return model
 

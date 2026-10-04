@@ -65,7 +65,7 @@ def test_list_models_and_modules():
     "name",
     [
         "mobilevitv2_050",
-        "gmlp_s16_224",
+        "ghostnetv2_100",
         "eca_vovnet39b",
         "efficientvit_m0",
         "mobilenetv4_conv_small",

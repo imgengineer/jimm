@@ -229,7 +229,7 @@ class SwinTransformer(ClassifierMixin, nnx.Module):
                     (res // 2**i, res // 2**i),
                     depths[i],
                     num_heads[i],
-                    window_size,
+                    window_size if isinstance(window_size, int) else window_size[i],
                     mlp_ratio,
                     drop_rate,
                     dpr[sum(depths[:i]) : sum(depths[: i + 1])],
@@ -258,7 +258,7 @@ class SwinTransformer(ClassifierMixin, nnx.Module):
 
 def _swin(embed_dim, depths, num_heads, **kwargs):
     model = SwinTransformer(embed_dim=embed_dim, depths=depths, num_heads=num_heads, **kwargs)
-    model.default_cfg = _cfg()
+    model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
     return model
 
 
@@ -275,3 +275,41 @@ def swin_small_patch4_window7_224(**kwargs):
 @register_model
 def swin_base_patch4_window7_224(**kwargs):
     return _swin(128, (2, 2, 18, 2), (4, 8, 16, 32), **kwargs)
+
+
+# Swin-S3 (AutoFormerV2 search space): per-stage window sizes.
+@register_model
+def swin_s3_tiny_224(**kwargs):
+    return _swin(96, (2, 2, 6, 2), (3, 6, 12, 24), **{"window_size": (7, 7, 14, 7), **kwargs})
+
+
+@register_model
+def swin_s3_small_224(**kwargs):
+    return _swin(96, (2, 2, 18, 2), (3, 6, 12, 24), **{"window_size": (14, 14, 14, 7), **kwargs})
+
+
+@register_model
+def swin_s3_base_224(**kwargs):
+    return _swin(96, (2, 2, 30, 2), (3, 6, 12, 24), **{"window_size": (7, 7, 14, 7), **kwargs})
+
+
+@register_model
+def swin_large_patch4_window7_224(**kwargs):
+    return _swin(192, (2, 2, 18, 2), (6, 12, 24, 48), **kwargs)
+
+
+def _swin384(embed_dim, depths, num_heads, **kwargs):
+    kwargs = {"img_size": 384, "window_size": 12, **kwargs}
+    model = SwinTransformer(embed_dim=embed_dim, depths=depths, num_heads=num_heads, **kwargs)
+    model.default_cfg = _cfg(input_size=(3, 384, 384), crop_pct=1.0, interpolation="bicubic")
+    return model
+
+
+@register_model
+def swin_base_patch4_window12_384(**kwargs):
+    return _swin384(128, (2, 2, 18, 2), (4, 8, 16, 32), **kwargs)
+
+
+@register_model
+def swin_large_patch4_window12_384(**kwargs):
+    return _swin384(192, (2, 2, 18, 2), (6, 12, 24, 48), **kwargs)

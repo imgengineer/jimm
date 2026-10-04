@@ -224,7 +224,7 @@ class SwinTransformerV2Cr(ClassifierMixin, nnx.Module):
         embed_dim: int = 96,
         depths=(2, 2, 6, 2),
         num_heads=(3, 6, 12, 24),
-        window_size: int = 7,
+        window_size: int | None = None,
         mlp_ratio: float = 4.0,
         init_values: float | None = 0.0,
         drop_rate: float = 0.0,
@@ -246,6 +246,7 @@ class SwinTransformerV2Cr(ClassifierMixin, nnx.Module):
         )
         self.patch_norm = _layer_norm(embed_dim, rngs=rngs)
         res = img_size // patch_size
+        window_size = window_size or res // 8  # timm's default window_ratio of 8
         dpr = [drop_path_rate * i / max(sum(depths) - 1, 1) for i in range(sum(depths))]
         self.stages = nnx.List(
             [
@@ -290,26 +291,45 @@ class SwinTransformerV2Cr(ClassifierMixin, nnx.Module):
         return self.forward_head(self.forward_features(x))
 
 
+_T, _S, _B = (
+    (96, (2, 2, 6, 2), (3, 6, 12, 24)),
+    (96, (2, 2, 18, 2), (3, 6, 12, 24)),
+    (128, (2, 2, 18, 2), (4, 8, 16, 32)),
+)
+_L = (192, (2, 2, 18, 2), (6, 12, 24, 48))
+_H224, _H384 = (352, (2, 2, 18, 2), (8, 16, 32, 64)), (352, (2, 2, 18, 2), (11, 22, 44, 88))
+_G = (512, (2, 2, 42, 2), (16, 32, 64, 128))
+_NS, _EXTRA = {"extra_norm_stage": True}, {"extra_norm_period": 6}
+# name: ((embed_dim, depths, num_heads), image size, overrides) — timm registrations; the
+# window is 1/32 of the image size.
 _CFGS = {
-    "swinv2_cr_tiny_224": dict(embed_dim=96, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24)),
-    "swinv2_cr_small_224": dict(embed_dim=96, depths=(2, 2, 18, 2), num_heads=(3, 6, 12, 24)),
-    "swinv2_cr_base_224": dict(embed_dim=128, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32)),
-    "swinv2_cr_large_224": dict(embed_dim=192, depths=(2, 2, 18, 2), num_heads=(6, 12, 24, 48)),
-    "swinv2_cr_huge_224": dict(
-        embed_dim=352, depths=(2, 2, 18, 2), num_heads=(8, 16, 32, 64), extra_norm_period=6
-    ),
-    "swinv2_cr_giant_224": dict(
-        embed_dim=512, depths=(2, 2, 42, 2), num_heads=(16, 32, 64, 128), extra_norm_period=6
-    ),
+    "swinv2_cr_tiny_384": (_T, 384, {}),
+    "swinv2_cr_tiny_224": (_T, 224, {}),
+    "swinv2_cr_tiny_ns_224": (_T, 224, _NS),
+    "swinv2_cr_small_384": (_S, 384, {}),
+    "swinv2_cr_small_224": (_S, 224, {}),
+    "swinv2_cr_small_ns_224": (_S, 224, _NS),
+    "swinv2_cr_small_ns_256": (_S, 256, _NS),
+    "swinv2_cr_base_384": (_B, 384, {}),
+    "swinv2_cr_base_224": (_B, 224, {}),
+    "swinv2_cr_base_ns_224": (_B, 224, _NS),
+    "swinv2_cr_large_384": (_L, 384, {}),
+    "swinv2_cr_large_224": (_L, 224, {}),
+    "swinv2_cr_huge_384": (_H384, 384, _EXTRA),
+    "swinv2_cr_huge_224": (_H224, 224, _EXTRA),
+    "swinv2_cr_giant_384": (_G, 384, _EXTRA),
+    "swinv2_cr_giant_224": (_G, 224, _EXTRA),
 }
 
 
 def _make(name):
-    cfg = _CFGS[name]
+    (dim, depths, heads), size, overrides = _CFGS[name]
+    cfg = dict(img_size=size, embed_dim=dim, depths=depths, num_heads=heads, **overrides)
+    ev = {"crop_pct": 0.9} if size == 224 else {"input_size": (3, size, size), "crop_pct": 1.0}
 
     def entry(**kwargs):
         model = SwinTransformerV2Cr(**dict(cfg, **kwargs))
-        model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
+        model.default_cfg = _cfg(interpolation="bicubic", **ev)
         return model
 
     entry.__name__ = name

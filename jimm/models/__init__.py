@@ -99,7 +99,6 @@ from . import (  # noqa: F401  (imports trigger registration)
     efficientvim,
     qwen3_vit,
     deepseek_vit,
-    variants,
 )
 from .resnet import ResNet
 from .vision_transformer import VisionTransformer

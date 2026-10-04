@@ -18,6 +18,7 @@
 - Register timm's remaining CaiT variants and timm's name for the 1024-wide ConvMixer, replacing jimm-only names.
 - Port timm's TNT (tnt_s, tnt_s_legacy, tnt_b) and CrossViT (all eleven variants, including the dagger stems).
 - Complete timm's ResNet family: deep and tiered stems (c/d/s/t variants), average-pool shortcuts, ECA and SE attention, anti-aliased (average and blur pool) downsampling, ResNet-RS, wide ResNets, GroupNorm ResNet-50, and the remaining SE-ResNet/ResNeXt variants.
+- Complete timm's ResNet V2 family: pre-activation basic and bottleneck blocks, deep/tiered stems with average-pool shortcuts, GroupNorm, EvoNorm-S0 and Filter Response Norm variants, and the BiT models (weight-standardized convolutions, width multipliers).
 - Port timm's hybrid ViTs (BiT ResNetV2 R26/R50 and ResNet-D trunks, and MobileCLIP's vit_base_mci_224).
 - Port timm's Segment Anything ViT encoders (samvit_base/large/huge_patch16 and samvit_base_patch16_224).
 
@@ -54,7 +55,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 721
+print(len(jimm.list_models()))  # 738
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
@@ -475,6 +476,8 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `resnetaa50d` | 2,591 img/s | 2,133 img/s | 1.21× |
 | `vit_base_r50_s16_224` | 752 img/s | 616 img/s | 1.22× |
 | `vit_small_r26_s32_224` | 1,929 img/s | 1,452 img/s | 1.33× |
+| `resnetv2_50d` | 3,339 img/s | 2,525 img/s | 1.32× |
+| `resnetv2_50x1_bit` | 1,788 img/s | 1,429 img/s | 1.25× |
 
 ### Attention
 

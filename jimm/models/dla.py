@@ -10,7 +10,7 @@ import math
 import jax.numpy as jnp
 from flax import nnx
 
-from ..layers import ClassifierMixin
+from ..layers import BatchNorm, ClassifierMixin
 from ..registry import _cfg, register_model
 from ._conv import ConvNormAct
 
@@ -37,6 +37,51 @@ class DlaBottleneck(nnx.Module):
     def __call__(self, x, shortcut=None):
         shortcut = x if shortcut is None else shortcut
         return nnx.relu(self.conv3(self.conv2(self.conv1(x))) + shortcut)
+
+
+class DlaBottle2neck(nnx.Module):
+    """Res2Net bottleneck for DLA: the 3x3 conv runs hierarchically over ``scale`` channel
+    groups (the first group alone in strided blocks, which pool the untouched last group)."""
+
+    expansion = 2
+
+    def __init__(self, in_chs, out_chs, stride=1, cardinality=8, base_width=4, scale=4, *, rngs):
+        self.is_first, self.scale = stride > 1, scale
+        mid = int(math.floor(out_chs * (base_width / 64)) * cardinality) // self.expansion
+        self.stride = stride
+        self.conv1 = ConvNormAct(in_chs, mid * scale, act=nnx.relu, rngs=rngs)
+        self.convs = nnx.List(
+            [
+                nnx.Conv(
+                    mid,
+                    mid,
+                    (3, 3),
+                    strides=stride,
+                    padding=1,
+                    feature_group_count=cardinality,
+                    use_bias=False,
+                    rngs=rngs,
+                )  # fmt: skip
+                for _ in range(max(1, scale - 1))
+            ]
+        )
+        self.bns = nnx.List([BatchNorm(mid, rngs=rngs) for _ in range(max(1, scale - 1))])
+        self.conv3 = ConvNormAct(mid * scale, out_chs, rngs=rngs)
+
+    def __call__(self, x, shortcut=None):
+        shortcut = x if shortcut is None else shortcut
+        chunks = jnp.split(self.conv1(x), self.scale, axis=-1)
+        out, prev = [], None
+        for conv, bn, c in zip(self.convs, self.bns, chunks):
+            prev = nnx.relu(bn(conv(c if (prev is None or self.is_first) else prev + c)))
+            out.append(prev)
+        if self.scale > 1:
+            last = chunks[-1]
+            if self.is_first:
+                s = self.stride
+                last = nnx.avg_pool(last, (3, 3), strides=(s, s), padding=((1, 1), (1, 1)))
+            out.append(last)
+        return nnx.relu(self.conv3(jnp.concatenate(out, axis=-1)) + shortcut)
 
 
 class DlaRoot(nnx.Module):
@@ -188,6 +233,18 @@ _CFGS = {
         dict(cardinality=64, base_width=4, shortcut_root=True),
     ),
     "dla169": ((1, 1, 2, 3, 5, 1), _LARGE, DlaBottleneck, dict(shortcut_root=True)),
+    "dla60_res2net": (
+        (1, 1, 1, 2, 3, 1),
+        _LARGE,
+        DlaBottle2neck,
+        dict(cardinality=1, base_width=28),
+    ),
+    "dla60_res2next": (
+        (1, 1, 1, 2, 3, 1),
+        _LARGE,
+        DlaBottle2neck,
+        dict(cardinality=8, base_width=4),
+    ),
 }
 
 

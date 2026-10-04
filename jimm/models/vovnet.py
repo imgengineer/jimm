@@ -14,6 +14,8 @@ from flax import nnx
 from ..layers import BatchNorm, ClassifierMixin, DropPath
 from ..registry import _cfg, register_model
 from ._conv import ConvNormAct
+from ._efficientnet import EvoNorm2dS0
+from .nfnet import EcaModule
 
 
 def _max_pool_ceil(x, kernel=3, stride=2):
@@ -27,7 +29,24 @@ def _max_pool_ceil(x, kernel=3, stride=2):
     return nnx.max_pool(x, (kernel, kernel), strides=(stride, stride), padding=pads)
 
 
-def _conv(in_chs, out_chs, kernel=1, stride=1, *, rngs):
+class EvoConvNormAct(nnx.Module):
+    """Conv followed by timm's ``evonorms0`` norm-act (EvoNorm-S0, 32 groups)."""
+
+    def __init__(self, in_chs, out_chs, kernel, stride, *, rngs):
+        p = kernel // 2
+        self.conv = nnx.Conv(
+            in_chs, out_chs, (kernel, kernel), strides=stride, padding=((p, p), (p, p)),
+            use_bias=False, rngs=rngs,
+        )  # fmt: skip
+        self.norm = EvoNorm2dS0(out_chs, out_chs // 32)
+
+    def __call__(self, x):
+        return self.norm(self.conv(x))
+
+
+def _conv(in_chs, out_chs, kernel=1, stride=1, norm="bn", *, rngs):
+    if norm == "evos":
+        return EvoConvNormAct(in_chs, out_chs, kernel, stride, rngs=rngs)
     return ConvNormAct(in_chs, out_chs, kernel, stride, act=nnx.relu, rngs=rngs)
 
 
@@ -69,26 +88,32 @@ class OsaBlock(nnx.Module):
         layers,
         residual=False,
         depthwise=False,
-        attn=False,
+        attn=None,
         drop_path=0.0,
+        norm="bn",
         *,
         rngs,
     ):
         self.residual = residual
         self.conv_reduction = (
-            _conv(in_chs, mid_chs, rngs=rngs) if depthwise and in_chs != mid_chs else None
+            _conv(in_chs, mid_chs, norm=norm, rngs=rngs)
+            if depthwise and in_chs != mid_chs
+            else None
         )
         convs, chs = [], in_chs
         for _ in range(layers):
             convs.append(
                 SeparableConvNormAct(mid_chs, mid_chs, rngs=rngs)
                 if depthwise
-                else _conv(chs, mid_chs, 3, rngs=rngs)
+                else _conv(chs, mid_chs, 3, norm=norm, rngs=rngs)
             )
             chs = mid_chs
         self.conv_mid = nnx.List(convs)
-        self.conv_concat = _conv(in_chs + layers * mid_chs, out_chs, rngs=rngs)
-        self.attn = EffectiveSE(out_chs, rngs=rngs) if attn else None
+        self.conv_concat = _conv(in_chs + layers * mid_chs, out_chs, norm=norm, rngs=rngs)
+        if attn == "eca":
+            self.attn = EcaModule(out_chs, rngs=rngs)
+        else:
+            self.attn = EffectiveSE(out_chs, rngs=rngs) if attn else None
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
@@ -118,6 +143,7 @@ class OsaStage(nnx.Module):
         depthwise,
         attn,
         drop_path_rates,
+        norm="bn",
         *,
         rngs,
     ):
@@ -131,8 +157,9 @@ class OsaStage(nnx.Module):
                     layers,
                     residual=residual and i > 0,
                     depthwise=depthwise,
-                    attn=attn and i == blocks - 1,
+                    attn=attn if i == blocks - 1 else None,
                     drop_path=drop_path_rates[i],
+                    norm=norm,
                     rngs=rngs,
                 )
                 for i in range(blocks)
@@ -158,6 +185,7 @@ class VovNet(ClassifierMixin, nnx.Module):
         residual,
         depthwise,
         attn,
+        norm="bn",
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
@@ -171,11 +199,11 @@ class VovNet(ClassifierMixin, nnx.Module):
         def conv3x3(in_chs, out_chs, stride):
             if depthwise:
                 return SeparableConvNormAct(in_chs, out_chs, stride, rngs=rngs)
-            return _conv(in_chs, out_chs, 3, stride, rngs=rngs)
+            return _conv(in_chs, out_chs, 3, stride, norm, rngs=rngs)
 
         self.stem = nnx.List(
             [
-                _conv(in_chans, stem_chs[0], 3, 2, rngs=rngs),
+                _conv(in_chans, stem_chs[0], 3, 2, norm, rngs=rngs),
                 conv3x3(stem_chs[0], stem_chs[1], 1),
                 conv3x3(stem_chs[1], stem_chs[2], 2),
             ]
@@ -199,6 +227,7 @@ class VovNet(ClassifierMixin, nnx.Module):
                     depthwise=depthwise,
                     attn=attn,
                     drop_path_rates=rates[start : start + block_per_stage[i]],
+                    norm=norm,
                     rngs=rngs,
                 )
             )
@@ -220,9 +249,9 @@ class VovNet(ClassifierMixin, nnx.Module):
 
 _WIDE = dict(stage_conv_chs=(128, 160, 192, 224), stage_out_chs=(256, 512, 768, 1024))
 _SLIM = dict(stage_conv_chs=(64, 80, 96, 112), stage_out_chs=(112, 256, 384, 512))
-_V1 = dict(residual=False, depthwise=False, attn=False)
-_V2 = dict(residual=True, depthwise=False, attn=True)
-_V2_DW = dict(residual=True, depthwise=True, attn=True)
+_V1 = dict(residual=False, depthwise=False, attn=None)
+_V2 = dict(residual=True, depthwise=False, attn="ese")
+_V2_DW = dict(residual=True, depthwise=True, attn="ese")
 _CFGS = {
     "vovnet39a": dict(**_WIDE, **_V1, layer_per_block=5, block_per_stage=(1, 1, 2, 2)),
     "vovnet57a": dict(**_WIDE, **_V1, layer_per_block=5, block_per_stage=(1, 1, 4, 3)),
@@ -238,6 +267,12 @@ _CFGS = {
     "ese_vovnet39b": dict(**_WIDE, **_V2, layer_per_block=5, block_per_stage=(1, 1, 2, 2)),
     "ese_vovnet57b": dict(**_WIDE, **_V2, layer_per_block=5, block_per_stage=(1, 1, 4, 3)),
     "ese_vovnet99b": dict(**_WIDE, **_V2, layer_per_block=5, block_per_stage=(1, 3, 9, 3)),
+    "eca_vovnet39b": dict(
+        **_WIDE, **{**_V2, "attn": "eca"}, layer_per_block=5, block_per_stage=(1, 1, 2, 2)
+    ),
+    "ese_vovnet39b_evos": dict(
+        **_WIDE, **_V2, layer_per_block=5, block_per_stage=(1, 1, 2, 2), norm="evos"
+    ),
 }
 
 

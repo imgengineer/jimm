@@ -66,7 +66,7 @@ def test_list_models_and_modules():
     [
         "mobilevitv2_050",
         "ghostnetv2_100",
-        "eca_vovnet39b",
+        "legacy_xception",
         "efficientvit_m0",
         "efficientnet_b1_pruned",
         "convnext_xxlarge_mlp",

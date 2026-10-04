@@ -15,6 +15,7 @@
 
 ### October 4, 2026
 
+- Complete timm's Res2Net (Res2NeXt, 6s/8s/48w and `d` variants), ResNeSt (radix 1/4 and grouped split attention), DenseNet-161/264d and the blur-pooled DenseNet, DLA Res2Net/Res2NeXt, and the ECA and EvoNorm VoVNets. Res2Net bottlenecks now treat projecting stride-1 blocks as stage-first blocks, as timm does.
 - Port timm's EfficientNet builder: every `efficientnet`, `mobilenetv3` and `hardcorenas` name is rebuilt from its recorded block configuration, including EfficientNet-V2, EfficientNet-X/H, CondConv, TF-padded `tf_*` ports, MixNet, MNASNet, FBNet, LCNet, MobileNet V1/V2/V3 and MobileNetV4 (universal inverted residual and multi-query attention blocks), with GroupNorm, LayerNorm, EvoNorm and anti-aliased variants. The `_pruned` EfficientNets are not included.
 - Complete timm's NFNet module: NF-RegNet B0–B5, NF-ResNet-26/50/101 and their SE and ECA variants, and `test_nfnet`.
 - Complete timm's MLP-Mixer module (gMLP, gMixer, `resmlp_big_24_224` and every Mixer size), Swin V2 CR (384×384, `_ns` and window-scaled variants), the Swin V2 window-transfer fine-tunes (`window12to16`, `window12to24`) and the Swin-S3 models.

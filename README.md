@@ -15,6 +15,7 @@
 
 ### October 4, 2026
 
+- Complete timm's BEiT (BEiT v2, `beit_large_patch16_512`), Hiera (`abswin` models with windowed absolute position embeddings and layer scale), HRNet (W18-small-v2, W30/W40/W44/W64 and the SSLD models) and PVTv2 (`pvt_v2_b2_li` with linear spatial-reduction attention). PVTv2's MLP now applies GELU only after the depthwise conv, and its attention and patch-embedding norms use timm's epsilon.
 - Complete timm's Res2Net (Res2NeXt, 6s/8s/48w and `d` variants), ResNeSt (radix 1/4 and grouped split attention), DenseNet-161/264d and the blur-pooled DenseNet, DLA Res2Net/Res2NeXt, and the ECA and EvoNorm VoVNets. Res2Net bottlenecks now treat projecting stride-1 blocks as stage-first blocks, as timm does.
 - Port timm's EfficientNet builder: every `efficientnet`, `mobilenetv3` and `hardcorenas` name is rebuilt from its recorded block configuration, including EfficientNet-V2, EfficientNet-X/H, CondConv, TF-padded `tf_*` ports, MixNet, MNASNet, FBNet, LCNet, MobileNet V1/V2/V3 and MobileNetV4 (universal inverted residual and multi-query attention blocks), with GroupNorm, LayerNorm, EvoNorm and anti-aliased variants. The `_pruned` EfficientNets are not included.
 - Complete timm's NFNet module: NF-RegNet B0–B5, NF-ResNet-26/50/101 and their SE and ECA variants, and `test_nfnet`.
@@ -66,7 +67,7 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 1155
+print(len(jimm.list_models()))  # 1307
 print(len(jimm.list_modules()))  # 101
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))

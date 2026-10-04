@@ -189,7 +189,7 @@ class Beit(ClassifierMixin, nnx.Module):
         return self.forward_head(self.forward_features(x))
 
 
-def _beit(img_size, embed_dim, depth, num_heads, init_values, **kwargs):
+def _beit(img_size, embed_dim, depth, num_heads, init_values, eval_cfg=None, **kwargs):
     model = Beit(
         img_size=img_size,
         embed_dim=embed_dim,
@@ -198,12 +198,9 @@ def _beit(img_size, embed_dim, depth, num_heads, init_values, **kwargs):
         init_values=init_values,
         **kwargs,
     )
+    ev = dict(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), crop_pct=0.9 if img_size == 224 else 1.0)
     model.default_cfg = _cfg(
-        input_size=(3, img_size, img_size),
-        crop_pct=0.9 if img_size == 224 else 1.0,
-        interpolation="bicubic",
-        mean=(0.5, 0.5, 0.5),
-        std=(0.5, 0.5, 0.5),
+        input_size=(3, img_size, img_size), interpolation="bicubic", **{**ev, **(eval_cfg or {})}
     )
     return model
 
@@ -226,3 +223,22 @@ def beit_large_patch16_224(**kwargs):
 @register_model
 def beit_large_patch16_384(**kwargs):
     return _beit(384, 1024, 24, 16, 1e-5, **kwargs)
+
+
+@register_model
+def beit_large_patch16_512(**kwargs):
+    return _beit(512, 1024, 24, 16, 1e-5, **kwargs)
+
+
+# BEiT v2: same architecture, ImageNet normalization.
+_V2 = dict(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+
+
+@register_model
+def beitv2_base_patch16_224(**kwargs):
+    return _beit(224, 768, 12, 12, 1e-5, eval_cfg=_V2, **kwargs)
+
+
+@register_model
+def beitv2_large_patch16_224(**kwargs):
+    return _beit(224, 1024, 24, 16, 1e-5, eval_cfg={**_V2, "crop_pct": 0.95}, **kwargs)

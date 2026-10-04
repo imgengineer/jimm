@@ -9,11 +9,14 @@ previous block's stage, so stage-transition blocks keep the earlier type.
 
 import math
 
+import jax
+import jax.numpy as jnp
 from flax import nnx
 
 from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp, global_pool_nhwc
 from ..registry import _cfg, register_model
+from .vision_transformer import LayerScale
 
 
 def _trunc_normal(std):
@@ -99,18 +102,21 @@ class HieraBlock(nnx.Module):
         window_size=0,
         use_mask_unit_attn=False,
         layer_id=0,
+        init_values=None,
+        use_expand_proj=True,
         *,
         rngs,
     ):
         # timm fix_init_weight: output projections shrink with depth.
         out_std = 0.02 / math.sqrt(2.0 * (layer_id + 1))
         self.q_stride = q_stride
+        self.do_expand = dim != dim_out
         self.norm1 = nnx.LayerNorm(dim, epsilon=1e-6, rngs=rngs)
         self.proj = (
             nnx.Linear(
                 dim, dim_out, kernel_init=_trunc_normal(0.02), bias_init=_bias_init, rngs=rngs
             )
-            if dim != dim_out
+            if dim != dim_out and use_expand_proj
             else None
         )
         self.attn = MaskUnitAttention(
@@ -132,16 +138,25 @@ class HieraBlock(nnx.Module):
             bias_init=_bias_init,
             rngs=rngs,
         )
+        self.ls1 = LayerScale(dim_out, init_values) if init_values is not None else None
+        self.ls2 = LayerScale(dim_out, init_values) if init_values is not None else None
         self.drop_path = DropPath(drop_path, rngs=rngs)
 
     def __call__(self, x):
         x_norm = self.norm1(x)
-        if self.proj is not None:
-            # Expand channels, then max-pool the shortcut like the queries.
-            x = self.proj(x_norm)
-            x = x.reshape(x.shape[0], self.q_stride, -1, x.shape[-1]).max(axis=1)
-        x = x + self.drop_path(self.attn(x_norm))
-        return x + self.drop_path(self.mlp(self.norm2(x)))
+        if self.do_expand:
+            if self.proj is not None:
+                # Expand channels, then max-pool the shortcut like the queries.
+                x = self.proj(x_norm)
+                x = x.reshape(x.shape[0], self.q_stride, -1, x.shape[-1]).max(axis=1)
+            else:
+                # timm use_expand_proj=False: concatenate max- and mean-pooled shortcuts.
+                x = x.reshape(x.shape[0], self.q_stride, -1, x.shape[-1])
+                x = jnp.concatenate([x.max(axis=1), x.mean(axis=1)], axis=-1)
+        y = self.attn(x_norm)
+        x = x + self.drop_path(y if self.ls1 is None else self.ls1(y))
+        y = self.mlp(self.norm2(x))
+        return x + self.drop_path(y if self.ls2 is None else self.ls2(y))
 
 
 class Hiera(ClassifierMixin, nnx.Module):
@@ -161,11 +176,16 @@ class Hiera(ClassifierMixin, nnx.Module):
         mlp_ratio=4.0,
         drop_rate=0.0,
         drop_path_rate=0.0,
+        abs_win_pos_embed=False,
+        global_pos_size=(14, 14),
+        init_values=None,
+        use_expand_proj=True,
         *,
         rngs,
     ):
         self.num_classes, self.global_pool = num_classes, global_pool
         self.tokens_shape = (img_size // 4, img_size // 4)
+        self.mask_unit_size = tuple(mask_unit_size)
         self.num_unrolls = len(stages) - 1
         self.patch_embed = nnx.Conv(
             in_chans,
@@ -176,9 +196,17 @@ class Hiera(ClassifierMixin, nnx.Module):
             kernel_init=_trunc_normal(0.02),
             rngs=rngs,
         )
-        self.pos_embed = nnx.Param(
-            _trunc_normal(0.02)(rngs.params(), (1, math.prod(self.tokens_shape), embed_dim))
-        )
+        init = _trunc_normal(0.02)
+        if abs_win_pos_embed:
+            # timm abs_win_pos_embed: a global table resized to the token grid plus a
+            # per-mask-unit table tiled over it (both NHWC here).
+            self.pos_embed = nnx.Param(init(rngs.params(), (1, *global_pos_size, embed_dim)))
+            self.pos_embed_win = nnx.Param(init(rngs.params(), (1, *mask_unit_size, embed_dim)))
+        else:
+            self.pos_embed = nnx.Param(
+                init(rngs.params(), (1, math.prod(self.tokens_shape), embed_dim))
+            )
+            self.pos_embed_win = None
         stage_ends = [sum(stages[: i + 1]) - 1 for i in range(len(stages))]
         q_pool_blocks = [end + 1 for end in stage_ends[:q_pool]]
         flat_q_stride, flat_mu_size = math.prod(q_stride), math.prod(mask_unit_size)
@@ -203,6 +231,8 @@ class Hiera(ClassifierMixin, nnx.Module):
                     window_size=flat_mu_size,
                     use_mask_unit_attn=use_mask_unit_attn,
                     layer_id=i,
+                    init_values=init_values,
+                    use_expand_proj=use_expand_proj,
                     rngs=rngs,
                 )
             )
@@ -218,9 +248,21 @@ class Hiera(ClassifierMixin, nnx.Module):
             else None
         )
 
+    def _pos(self):
+        if self.pos_embed_win is None:
+            return self.pos_embed[...]
+        H, W = self.tokens_shape
+        mh, mw = self.mask_unit_size
+        win = jnp.tile(self.pos_embed_win[...], (1, H // mh, W // mw, 1))
+        C = win.shape[-1]
+        # torch F.interpolate(bicubic, antialias=True) is the Keys (a=-0.5) kernel, as here.
+        glob = jax.image.resize(self.pos_embed[...], (1, H, W, C), "bicubic", antialias=True)
+        return (glob + win).reshape(1, H * W, C)
+
     def forward_features(self, x):
         B = x.shape[0]
-        x = self.patch_embed(x).reshape(B, -1, self.pos_embed.shape[-1]) + self.pos_embed[...]
+        x = self.patch_embed(x)
+        x = x.reshape(B, -1, x.shape[-1]) + self._pos()
         x = _unroll(x, self.tokens_shape, self.num_unrolls)
         for blk in self.blocks:
             x = blk(x)
@@ -244,6 +286,24 @@ _CFGS = {
     "hiera_base_plus_224": dict(embed_dim=112, num_heads=2, stages=(2, 3, 16, 3)),
     "hiera_large_224": dict(embed_dim=144, num_heads=2, stages=(2, 6, 36, 4)),
     "hiera_huge_224": dict(embed_dim=256, num_heads=4, stages=(2, 6, 36, 4)),
+    "hiera_small_abswin_256": dict(
+        embed_dim=96,
+        num_heads=1,
+        stages=(1, 2, 11, 2),
+        abs_win_pos_embed=True,
+        global_pos_size=(16, 16),
+        init_values=1e-5,
+        use_expand_proj=False,
+        img_size=256,
+    ),
+    "hiera_base_abswin_256": dict(
+        embed_dim=96,
+        num_heads=1,
+        stages=(2, 3, 16, 3),
+        abs_win_pos_embed=True,
+        init_values=1e-5,
+        img_size=256,
+    ),
 }
 
 
@@ -252,7 +312,9 @@ def _make(name):
 
     def entry(**kwargs):
         model = Hiera(**dict(cfg, **kwargs))
-        model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
+        size = cfg.get("img_size", 224)
+        crop = 0.9 if size == 224 else 0.95
+        model.default_cfg = _cfg(input_size=(3, size, size), crop_pct=crop, interpolation="bicubic")
         return model
 
     entry.__name__ = name

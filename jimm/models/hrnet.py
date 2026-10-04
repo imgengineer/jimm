@@ -146,6 +146,7 @@ class HRNet(ClassifierMixin, nnx.Module):
         stage1,
         stages,
         stem_width=64,
+        head_conv_bias=True,
         num_classes=1000,
         in_chans=3,
         global_pool="avg",
@@ -190,7 +191,7 @@ class HRNet(ClassifierMixin, nnx.Module):
                     3,
                     2,
                     act=nnx.relu,
-                    use_bias=True,
+                    use_bias=head_conv_bias,
                     rngs=rngs,
                 )
                 for i in range(len(head_chs) - 1)
@@ -198,7 +199,7 @@ class HRNet(ClassifierMixin, nnx.Module):
         )
         self.num_features = 2048
         self.final_layer = ConvNormAct(
-            head_chs[-1] * 4, self.num_features, 1, act=nnx.relu, use_bias=True, rngs=rngs
+            head_chs[-1] * 4, self.num_features, 1, act=nnx.relu, use_bias=head_conv_bias, rngs=rngs
         )
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.fc = nnx.Linear(self.num_features, num_classes, rngs=rngs) if num_classes > 0 else None
@@ -226,33 +227,112 @@ class HRNet(ClassifierMixin, nnx.Module):
         return self.forward_head(self.forward_features(x))
 
 
-# timm configurations: stage1 (blocks, channels); stages 2-4 (modules, blocks, channels).
+# timm configurations: stage1 (blocks, channels); stages 2-4 (modules, blocks, channels);
+# extra arguments (the _ssld models drop the head conv biases); eval config overrides.
 _CFGS = {
-    "hrnet_w18_small": (
-        (1, 32),
-        ((1, (2, 2), (16, 32)), (1, (2, 2, 2), (16, 32, 64)), (1, (2,) * 4, (16, 32, 64, 128))),
-    ),
     "hrnet_w18": (
         (4, 64),
-        ((1, (4, 4), (18, 36)), (4, (4, 4, 4), (18, 36, 72)), (3, (4,) * 4, (18, 36, 72, 144))),
+        ((1, (4, 4), (18, 36)), (4, (4, 4, 4), (18, 36, 72)), (3, (4, 4, 4, 4), (18, 36, 72, 144))),
+        {},
+        {"crop_pct": 0.95},
+    ),
+    "hrnet_w18_small": (
+        (1, 32),
+        ((1, (2, 2), (16, 32)), (1, (2, 2, 2), (16, 32, 64)), (1, (2, 2, 2, 2), (16, 32, 64, 128))),
+        {},
+        {"interpolation": "bicubic"},
+    ),
+    "hrnet_w18_small_v2": (
+        (2, 64),
+        ((1, (2, 2), (18, 36)), (3, (2, 2, 2), (18, 36, 72)), (2, (2, 2, 2, 2), (18, 36, 72, 144))),
+        {},
+        {"interpolation": "bicubic"},
+    ),
+    "hrnet_w18_ssld": (
+        (4, 64),
+        ((1, (4, 4), (18, 36)), (4, (4, 4, 4), (18, 36, 72)), (3, (4, 4, 4, 4), (18, 36, 72, 144))),
+        {"head_conv_bias": False},
+        {"crop_pct": 0.95, "test_input_size": (3, 288, 288)},
+    ),
+    "hrnet_w30": (
+        (4, 64),
+        (
+            (1, (4, 4), (30, 60)),
+            (4, (4, 4, 4), (30, 60, 120)),
+            (3, (4, 4, 4, 4), (30, 60, 120, 240)),
+        ),
+        {},
+        {},
     ),
     "hrnet_w32": (
         (4, 64),
-        ((1, (4, 4), (32, 64)), (4, (4, 4, 4), (32, 64, 128)), (3, (4,) * 4, (32, 64, 128, 256))),
+        (
+            (1, (4, 4), (32, 64)),
+            (4, (4, 4, 4), (32, 64, 128)),
+            (3, (4, 4, 4, 4), (32, 64, 128, 256)),
+        ),
+        {},
+        {},
+    ),
+    "hrnet_w40": (
+        (4, 64),
+        (
+            (1, (4, 4), (40, 80)),
+            (4, (4, 4, 4), (40, 80, 160)),
+            (3, (4, 4, 4, 4), (40, 80, 160, 320)),
+        ),
+        {},
+        {},
+    ),
+    "hrnet_w44": (
+        (4, 64),
+        (
+            (1, (4, 4), (44, 88)),
+            (4, (4, 4, 4), (44, 88, 176)),
+            (3, (4, 4, 4, 4), (44, 88, 176, 352)),
+        ),
+        {},
+        {},
     ),
     "hrnet_w48": (
         (4, 64),
-        ((1, (4, 4), (48, 96)), (4, (4, 4, 4), (48, 96, 192)), (3, (4,) * 4, (48, 96, 192, 384))),
+        (
+            (1, (4, 4), (48, 96)),
+            (4, (4, 4, 4), (48, 96, 192)),
+            (3, (4, 4, 4, 4), (48, 96, 192, 384)),
+        ),
+        {},
+        {},
+    ),
+    "hrnet_w48_ssld": (
+        (4, 64),
+        (
+            (1, (4, 4), (48, 96)),
+            (4, (4, 4, 4), (48, 96, 192)),
+            (3, (4, 4, 4, 4), (48, 96, 192, 384)),
+        ),
+        {"head_conv_bias": False},
+        {"crop_pct": 0.95, "test_input_size": (3, 288, 288)},
+    ),
+    "hrnet_w64": (
+        (4, 64),
+        (
+            (1, (4, 4), (64, 128)),
+            (4, (4, 4, 4), (64, 128, 256)),
+            (3, (4, 4, 4, 4), (64, 128, 256, 512)),
+        ),
+        {},
+        {},
     ),
 }
 
 
 def _make(name):
-    stage1, stages = _CFGS[name]
+    stage1, stages, extra, ev = _CFGS[name]
 
     def entry(**kwargs):
-        model = HRNet(stage1, stages, **kwargs)
-        model.default_cfg = _cfg()
+        model = HRNet(stage1, stages, **{**extra, **kwargs})
+        model.default_cfg = _cfg(**ev)
         return model
 
     entry.__name__ = name

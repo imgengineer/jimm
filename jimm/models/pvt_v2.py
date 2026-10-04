@@ -1,5 +1,6 @@
 """PVT v2 in flax nnx, NHWC. Mirrors timm.models.pvt_v2 (overlap patch embed + linear SRA)."""
 
+import jax.numpy as jnp
 from flax import nnx
 
 from ..attention import dot_product_attention
@@ -7,10 +8,25 @@ from ..layers import ClassifierMixin, DropPath, gelu
 from ..registry import _cfg, register_model
 
 
-class LinearAttention(nnx.Module):
-    """Spatial-reduction attention with strided conv reduction (PVT v2)."""
+def _adaptive_avg_pool(x, out):
+    """PyTorch ``AdaptiveAvgPool2d(out)`` on NHWC maps (bins floor(i*n/out)..ceil((i+1)*n/out))."""
+    B, H, W, C = x.shape
 
-    def __init__(self, dim, num_heads, sr_ratio, qkv_bias=True, *, rngs):
+    def bins(n):
+        return [(i * n // out, -(-(i + 1) * n // out)) for i in range(out)]
+
+    rows = [jnp.mean(x[:, a:b], axis=1) for a, b in bins(H)]
+    x = jnp.stack(rows, axis=1)
+    cols = [jnp.mean(x[:, :, a:b], axis=2) for a, b in bins(W)]
+    return jnp.stack(cols, axis=2)
+
+
+class LinearAttention(nnx.Module):
+    """Spatial-reduction attention (PVT v2): keys and values come from a strided-conv
+    reduction, or with ``linear_attn`` from a 7x7 adaptive average pool, a 1x1 conv,
+    LayerNorm and GELU."""
+
+    def __init__(self, dim, num_heads, sr_ratio, qkv_bias=True, linear_attn=False, *, rngs):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
@@ -18,11 +34,16 @@ class LinearAttention(nnx.Module):
         self.q = nnx.Linear(dim, dim, use_bias=qkv_bias, rngs=rngs)
         self.kv = nnx.Linear(dim, dim * 2, use_bias=qkv_bias, rngs=rngs)
         self.proj = nnx.Linear(dim, dim, rngs=rngs)
-        if sr_ratio > 1:
+        self.linear_attn = linear_attn
+        if linear_attn:
+            self.sr = nnx.Conv(dim, dim, (1, 1), rngs=rngs)
+            self.norm = nnx.LayerNorm(dim, epsilon=1e-5, rngs=rngs)
+        elif sr_ratio > 1:
             self.sr = nnx.Conv(
-                dim, dim, (sr_ratio, sr_ratio), strides=(sr_ratio, sr_ratio), rngs=rngs
-            )
-            self.norm = nnx.LayerNorm(dim, rngs=rngs)
+                dim, dim, (sr_ratio, sr_ratio), strides=(sr_ratio, sr_ratio), padding="VALID",
+                rngs=rngs,
+            )  # fmt: skip
+            self.norm = nnx.LayerNorm(dim, epsilon=1e-5, rngs=rngs)
         else:
             self.sr = None
             self.norm = None
@@ -30,7 +51,10 @@ class LinearAttention(nnx.Module):
     def __call__(self, x, H, W):
         B, N, C = x.shape
         q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
-        if self.sr is not None and self.norm is not None:
+        if self.linear_attn:
+            t = self.sr(_adaptive_avg_pool(x.reshape(B, H, W, C), 7))
+            t = gelu(self.norm(t.reshape(B, -1, C)))
+        elif self.sr is not None and self.norm is not None:
             t = self.sr(x.reshape(B, H, W, C))
             t = self.norm(t.reshape(B, -1, C))
         else:
@@ -42,9 +66,11 @@ class LinearAttention(nnx.Module):
 
 
 class PVTMlp(nnx.Module):
-    """MLP with 3x3 depthwise conv between fc1 and fc2 (PVT v2)."""
+    """MLP with a 3x3 depthwise conv and GELU between fc1 and fc2 (PVT v2); the linear
+    variant adds a ReLU before the depthwise conv."""
 
-    def __init__(self, dim, hidden_dim, *, rngs):
+    def __init__(self, dim, hidden_dim, extra_relu=False, *, rngs):
+        self.extra_relu = extra_relu
         self.fc1 = nnx.Linear(dim, hidden_dim, rngs=rngs)
         self.dw = nnx.Conv(
             hidden_dim, hidden_dim, (3, 3), feature_group_count=hidden_dim, rngs=rngs
@@ -53,20 +79,24 @@ class PVTMlp(nnx.Module):
 
     def __call__(self, x, H, W):
         B = x.shape[0]
-        x = gelu(self.fc1(x))
+        x = self.fc1(x)
+        if self.extra_relu:
+            x = nnx.relu(x)
         x = self.dw(x.reshape(B, H, W, -1)).reshape(B, H * W, -1)
         x = gelu(x)
         return self.fc2(x)
 
 
 class PVTBlock(nnx.Module):
-    def __init__(self, dim, num_heads, sr_ratio, mlp_ratio=4.0, drop_path=0.0, *, rngs):
+    def __init__(
+        self, dim, num_heads, sr_ratio, mlp_ratio=4.0, drop_path=0.0, linear_attn=False, *, rngs
+    ):
         self.norm1 = nnx.LayerNorm(dim, rngs=rngs)
-        self.attn = LinearAttention(dim, num_heads, sr_ratio, rngs=rngs)
+        self.attn = LinearAttention(dim, num_heads, sr_ratio, linear_attn=linear_attn, rngs=rngs)
         self.drop_path = DropPath(drop_path, rngs=rngs)
         self.norm2 = nnx.LayerNorm(dim, rngs=rngs)
         hidden_dim = int(dim * mlp_ratio)
-        self.mlp = PVTMlp(dim, hidden_dim, rngs=rngs)
+        self.mlp = PVTMlp(dim, hidden_dim, linear_attn, rngs=rngs)
 
     def __call__(self, x, H, W):
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
@@ -78,7 +108,7 @@ class OverlapPatchEmbed(nnx.Module):
         self.proj = nnx.Conv(
             in_chs, dim, (patch, patch), strides=(stride, stride), padding=patch // 2, rngs=rngs
         )
-        self.norm = nnx.LayerNorm(dim, rngs=rngs)
+        self.norm = nnx.LayerNorm(dim, epsilon=1e-5, rngs=rngs)
 
     def __call__(self, x):
         x = self.proj(x)
@@ -100,6 +130,7 @@ class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
         num_heads=(1, 2, 5, 8),
         sr_ratios=(8, 4, 2, 1),
         mlp_ratios=(8, 8, 4, 4),
+        linear=False,
         drop_rate=0.0,
         drop_path_rate=0.0,
         *,
@@ -124,7 +155,13 @@ class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
             for j in range(depths[i]):
                 blocks.append(
                     PVTBlock(
-                        embed_dims[i], num_heads[i], sr_ratios[i], mlp_ratios[i], dpr[k], rngs=rngs
+                        embed_dims[i],
+                        num_heads[i],
+                        sr_ratios[i],
+                        mlp_ratios[i],
+                        dpr[k],
+                        linear_attn=linear,
+                        rngs=rngs,
                     )
                 )
                 k += 1
@@ -155,6 +192,7 @@ _CFGS = {  # embed_dims, depths, num_heads, mlp_ratios
     "pvt_v2_b3": ((64, 128, 320, 512), (3, 4, 18, 3), (1, 2, 5, 8), (8, 8, 4, 4)),
     "pvt_v2_b4": ((64, 128, 320, 512), (3, 8, 27, 3), (1, 2, 5, 8), (8, 8, 4, 4)),
     "pvt_v2_b5": ((64, 128, 320, 512), (3, 6, 40, 3), (1, 2, 5, 8), (4, 4, 4, 4)),
+    "pvt_v2_b2_li": ((64, 128, 320, 512), (3, 4, 6, 3), (1, 2, 5, 8), (8, 8, 4, 4)),
 }
 
 
@@ -163,9 +201,10 @@ def _make(name):
 
     def entry(**kwargs):
         model = PyramidVisionTransformerV2(
-            embed_dims=embed_dims, depths=depths, num_heads=heads, mlp_ratios=mlps, **kwargs
-        )
-        model.default_cfg = _cfg()
+            embed_dims=embed_dims, depths=depths, num_heads=heads, mlp_ratios=mlps,
+            **{"linear": name.endswith("_li"), **kwargs},
+        )  # fmt: skip
+        model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
         return model
 
     entry.__name__ = name

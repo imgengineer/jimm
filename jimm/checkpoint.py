@@ -290,6 +290,10 @@ class CheckpointManager:
     def all_steps(self) -> list[int]:
         return self._manager.all_steps()
 
+    def metrics(self, step: int) -> dict[str, Any] | None:
+        """Return the metrics recorded with ``step`` (e.g. ``{"val_acc": ...}``)."""
+        return self._manager.metrics(int(step))
+
     def wait_until_finished(self) -> None:
         self._manager.wait_until_finished()
 

@@ -18,6 +18,7 @@
 - Close the remaining gap to timm 1.0.30: the registry now contains every timm 1.0.30 model name (1351) plus 9 additional jimm-only names. Model module grouping and the default `input_size`, `crop_pct`, `interpolation`, `mean` and `std` metadata now match timm for all 1351 shared names. New families are MobileViTv2 (seven widths), GhostNetV2/V3, the PP-LCNetV2 small/base/large models, MambaOut's re-trained `_rw` variants, EfficientViT-MSRA (M0–M5), EfficientViT-MIT B3 and L1–L3, PNASNet-5-Large, the legacy Cadene SE-ResNet/SE-ResNeXt/SENet-154/Xception registrations, Sapiens2 (B/L/H/g/5B), and the pruned EfficientNet-B1/B2/B3, EfficientNet-ES/EL and ECA-ResNet-50d/101d models. Parameter counts match timm for every new entry.
 - Update the locked environment to JAX 0.12.0.1, Flax 0.12.12, Grain 0.2.19, NumPy 2.5.4, Optax 0.2.9, Orbax Checkpoint 0.12.10, Tokamax 0.0.17, Triton 3.9.0, and pytest 9.2.0.
 - Install CPU JAX on macOS and `jax[cuda13]` on Linux, so the project keeps NVIDIA GPU support as its default while remaining installable on Apple silicon.
+- Add the timm-style top-level scripts `train.py`, `validate.py`, `inference.py`, `benchmark.py`, `avg_checkpoints.py`, `clean_checkpoint.py`, `bulk_runner.py` and `distributed_train.sh`, with shared argument/data/metric helpers in `jimm/scripts_common.py`.
 
 ### October 4, 2026
 
@@ -264,6 +265,47 @@ Training loaders repeat across epochs and drop incomplete batches by default. Ev
 
 ## Training, Validation, and Inference
 
+### Scripts
+
+The repository provides timm-style top-level entry points:
+
+| Script | Purpose |
+| --- | --- |
+| [train.py](train.py) | Training CLI; equivalent to `python -m jimm.train` |
+| [validate.py](validate.py) | Top-1/top-5 validation on an ImageFolder split |
+| [inference.py](inference.py) | Top-k predictions written to CSV and/or JSON |
+| [benchmark.py](benchmark.py) | Inference and compiled train-step throughput in samples/s |
+| [avg_checkpoints.py](avg_checkpoints.py) | Average weights across a run's `CheckpointManager` steps |
+| [clean_checkpoint.py](clean_checkpoint.py) | Strip optimizer state into a model-only checkpoint |
+| [bulk_runner.py](bulk_runner.py) | Run a script once per model and collect CSV results |
+| [distributed_train.sh](distributed_train.sh) | Launch one host of a multi-host JAX run |
+
+```bash
+# Validation of a trained checkpoint
+uv run python validate.py --data-dir /path/to/dataset --split val \
+    --model convnext_tiny --num-classes 1000 --checkpoint ./output/convnext_demo -b 256 --amp
+
+# Top-5 predictions for every validation image
+uv run python inference.py --data-dir /path/to/dataset --split val \
+    --model convnext_tiny --num-classes 1000 --checkpoint ./output/convnext_demo \
+    --topk 5 --results-dir ./results --results-file predictions --results-format csv json
+
+# Inference and train-step throughput
+uv run python benchmark.py --model convnext_tiny -b 128 --img-size 224 --bench both --amp
+
+# Weight averaging and model-only checkpoint export
+uv run python avg_checkpoints.py --input ./output/convnext_demo --model convnext_tiny \
+    --output ./output/convnext_demo-avg -n 5
+uv run python clean_checkpoint.py --checkpoint ./output/convnext_demo/10 \
+    --model convnext_tiny --output ./output/convnext_demo-clean
+
+# Sweep a wildcard over any script that prints a --result summary
+uv run python bulk_runner.py --model-list 'resnet*' --results-file bench.csv \
+    benchmark.py --amp -b 64
+```
+
+`--checkpoint` accepts either an Orbax checkpoint directory (including a `CheckpointManager` step) or a local `.npz` file. `--pretrained` is accepted for timm CLI compatibility but raises an error because jimm registers no downloadable weights. `avg_checkpoints.py` ranks steps by `--metric-key` when the training run saved validation metrics, and falls back to the latest steps otherwise. ONNX export and timm/Hugging Face checkpoint conversion scripts are not provided because jimm checkpoints and models are native JAX/Flax.
+
 ### Training and validation
 
 The CLI follows the argument groups and common option names in [timm's `train.py`](https://github.com/huggingface/pytorch-image-models/blob/main/train.py). It uses JAX/Flax NNX training, Grain data loading, AdamW, and a cosine learning-rate schedule. The default `train/` and `val/` ImageFolder splits can be changed with `--train-split` and `--val-split`.
@@ -383,7 +425,7 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-`tests/test_models.py` instantiates every registered model and runs a forward and backward pass for one model of each family; it takes about half an hour on CPU. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
+`tests/test_models.py` instantiates every registered model and runs a forward and backward pass for one model of each family; it takes about half an hour on CPU. `tests/test_scripts.py` smoke-tests the top-level scripts against a tiny synthetic ImageFolder. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
 
 ```bash
 uv run pytest tests/test_attention.py -q
@@ -550,6 +592,14 @@ jimm/
   train.py          Optimizer, train/eval steps, and training CLI
   checkpoint.py     Orbax model and optimizer checkpointing
   weights.py        Array state-dict conversion and NPZ loading
+train.py            timm-style training entry point
+validate.py         Standalone validation script
+inference.py        Top-k inference script
+benchmark.py        Throughput benchmark script
+avg_checkpoints.py  Checkpoint weight averaging
+clean_checkpoint.py Model-only checkpoint export
+bulk_runner.py      Per-model script launcher
+distributed_train.sh Multi-host JAX launcher
 tests/              Regression and model tests
 scripts/            Forward/backpropagation checks and attention benchmark
 pyproject.toml      Project metadata and dependency requirements

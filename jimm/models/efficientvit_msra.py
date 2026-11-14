@@ -403,7 +403,7 @@ def _make(name):
             kernels=kernels,
             **kwargs,
         )
-        model.default_cfg = _cfg(crop_pct=1.0, interpolation="bicubic")
+        model.default_cfg = _cfg(crop_pct=0.875, interpolation="bicubic")
         return model
 
     entry.__name__ = name

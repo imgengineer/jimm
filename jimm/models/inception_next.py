@@ -170,7 +170,8 @@ def _make(name):
 
     def entry(**kwargs):
         model = InceptionNeXt(dims, depths, mixer=mixer, **kwargs)
-        model.default_cfg = _cfg(interpolation="bicubic")
+        crop = 0.95 if name == "inception_next_base" else 0.875
+        model.default_cfg = _cfg(crop_pct=crop, interpolation="bicubic")
         return model
 
     entry.__name__ = name

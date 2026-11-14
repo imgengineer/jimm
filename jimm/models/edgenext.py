@@ -361,7 +361,8 @@ def _make(name):
 
     def entry(**kwargs):
         model = EdgeNeXt(**{**cfg, **kwargs})
-        model.default_cfg = _cfg(input_size=(3, 256, 256), crop_pct=0.9, interpolation="bicubic")
+        crop = 0.95 if name in ("edgenext_base", "edgenext_small") else 0.9
+        model.default_cfg = _cfg(input_size=(3, 256, 256), crop_pct=crop, interpolation="bicubic")
         return model
 
     entry.__name__ = name

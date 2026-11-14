@@ -130,7 +130,7 @@ def _make(name):
 
     def entry(**kwargs):
         model = SelecSls(features, head, **kwargs)
-        model.default_cfg = _cfg()
+        model.default_cfg = _cfg(interpolation="bicubic")
         return model
 
     entry.__name__ = name

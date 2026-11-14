@@ -4,7 +4,6 @@ import jax.numpy as jnp
 from flax import nnx
 
 from ..layers import ClassifierMixin, DropPath, gelu, global_pool_nhwc
-from ..registry import _cfg, register_model
 
 _init = nnx.initializers.truncated_normal(0.02)
 
@@ -109,34 +108,3 @@ class PoolFormer(ClassifierMixin, nnx.Module):
 
     def __call__(self, x):
         return self.forward_head(self.forward_features(x))
-
-
-def _poolformer(layers, dims, **kwargs):
-    model = PoolFormer(layers, dims, **kwargs)
-    model.default_cfg = _cfg(crop_pct=0.9, interpolation="bicubic")
-    return model
-
-
-@register_model
-def poolformer_s12(**kwargs):
-    return _poolformer([2, 2, 6, 2], [64, 128, 320, 512], **kwargs)
-
-
-@register_model
-def poolformer_s24(**kwargs):
-    return _poolformer([4, 4, 12, 4], [64, 128, 320, 512], **kwargs)
-
-
-@register_model
-def poolformer_s36(**kwargs):
-    return _poolformer([6, 6, 18, 6], [64, 128, 320, 512], layer_scale_init=1e-6, **kwargs)
-
-
-@register_model
-def poolformer_m36(**kwargs):
-    return _poolformer([6, 6, 18, 6], [96, 192, 384, 768], layer_scale_init=1e-6, **kwargs)
-
-
-@register_model
-def poolformer_m48(**kwargs):
-    return _poolformer([8, 8, 24, 8], [96, 192, 384, 768], layer_scale_init=1e-6, **kwargs)

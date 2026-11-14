@@ -137,7 +137,8 @@ def _make(name):
 
     def entry(**kwargs):
         model = RexNet(width_mult, ch_div=ch_div, **kwargs)
-        model.default_cfg = _cfg(interpolation="bicubic")
+        crop = 0.95 if name in ("rexnetr_200", "rexnetr_300") else 0.875
+        model.default_cfg = _cfg(crop_pct=crop, interpolation="bicubic")
         return model
 
     entry.__name__ = name

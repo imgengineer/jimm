@@ -14,6 +14,7 @@ def _pruned_efficientnet(variant, input_size, crop_pct, **kwargs):
     model.default_cfg = _cfg(
         input_size=input_size,
         crop_pct=crop_pct,
+        interpolation="bicubic",
         mean=(0.5, 0.5, 0.5),
         std=(0.5, 0.5, 0.5),
     )

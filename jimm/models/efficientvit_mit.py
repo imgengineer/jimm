@@ -332,7 +332,7 @@ def _make(name):
 
     def entry(**kwargs):
         model = EfficientVit(widths, depths, head_dim, head_widths, **kwargs)
-        model.default_cfg = _cfg(crop_pct=0.95)
+        model.default_cfg = _cfg(crop_pct=0.95, interpolation="bicubic")
         return model
 
     entry.__name__ = name

@@ -501,3 +501,20 @@ def ecaresnet101d_pruned(**kwargs):
     model = PrunedECAResNet("ecaresnet101d_pruned", **kwargs)
     model.default_cfg = _cfg(interpolation="bicubic")
     return model
+
+
+@register_model
+def senet154(**kwargs):
+    model = ResNet(
+        Bottleneck,
+        (3, 8, 36, 3),
+        se=True,
+        groups=64,
+        base_width=4,
+        deep_stem=True,
+        reduce_first=2,
+        down_kernel=3,
+        **kwargs,
+    )
+    model.default_cfg = _cfg(interpolation="bicubic")
+    return model

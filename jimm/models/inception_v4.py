@@ -189,5 +189,10 @@ class InceptionV4(ClassifierMixin, nnx.Module):
 @register_model
 def inception_v4(**kwargs):
     model = InceptionV4(**kwargs)
-    model.default_cfg = _cfg(input_size=(3, 299, 299))
+    model.default_cfg = _cfg(
+        input_size=(3, 299, 299),
+        interpolation="bicubic",
+        mean=(0.5, 0.5, 0.5),
+        std=(0.5, 0.5, 0.5),
+    )
     return model

@@ -216,7 +216,7 @@ def _make(name, num_heads):
         model = ConVit(
             embed_dim=48, num_heads=num_heads, local_up_to_layer=10, locality_strength=1.0, **kwargs
         )
-        model.default_cfg = _cfg(fixed_input_size=True)
+        model.default_cfg = _cfg(fixed_input_size=True, interpolation="bicubic")
         return model
 
     entry.__name__ = name

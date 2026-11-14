@@ -1,5 +1,5 @@
 """MetaFormer baselines (CAFormer, ConvFormer, PoolFormerV2) in flax nnx, NHWC.
-Mirrors timm.models.metaformer; PoolFormer v1 lives in ``poolformer.py``.
+Mirrors timm.models.metaformer; PoolFormer v1 is implemented in ``poolformer.py`` and registered here.
 
 Every block is ``res_scale * x + token_mixer(norm(x))`` followed by
 ``res_scale * x + mlp(norm(x))``, with bias-free norms and StarReLU MLPs. The
@@ -17,6 +17,7 @@ from flax import nnx
 from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, global_pool_nhwc
 from ..registry import _cfg, register_model
+from .poolformer import PoolFormer
 
 _init = nnx.initializers.truncated_normal(0.02)
 
@@ -272,3 +273,44 @@ def _make(name):
 
 for _name in _CFGS:
     register_model(_make(_name))
+
+
+# timm registers the PoolFormer v1 models in this module.
+
+
+def _poolformer(name, layers, dims, **kwargs):
+    model = PoolFormer(layers, dims, **kwargs)
+    crop = 0.95 if name in ("poolformer_m36", "poolformer_m48") else 0.9
+    model.default_cfg = _cfg(crop_pct=crop, interpolation="bicubic")
+    return model
+
+
+@register_model
+def poolformer_s12(**kwargs):
+    return _poolformer("poolformer_s12", [2, 2, 6, 2], [64, 128, 320, 512], **kwargs)
+
+
+@register_model
+def poolformer_s24(**kwargs):
+    return _poolformer("poolformer_s24", [4, 4, 12, 4], [64, 128, 320, 512], **kwargs)
+
+
+@register_model
+def poolformer_s36(**kwargs):
+    return _poolformer(
+        "poolformer_s36", [6, 6, 18, 6], [64, 128, 320, 512], layer_scale_init=1e-6, **kwargs
+    )
+
+
+@register_model
+def poolformer_m36(**kwargs):
+    return _poolformer(
+        "poolformer_m36", [6, 6, 18, 6], [96, 192, 384, 768], layer_scale_init=1e-6, **kwargs
+    )
+
+
+@register_model
+def poolformer_m48(**kwargs):
+    return _poolformer(
+        "poolformer_m48", [8, 8, 24, 8], [96, 192, 384, 768], layer_scale_init=1e-6, **kwargs
+    )

@@ -15,7 +15,7 @@
 
 ### November 14, 2026
 
-- Close the remaining gap to timm 1.0.30: the registry now contains every timm 1.0.30 model name (1351) plus 9 additional jimm-only names. New families are MobileViTv2 (seven widths), GhostNetV2/V3, the PP-LCNetV2 small/base/large models, MambaOut's re-trained `_rw` variants, EfficientViT-MSRA (M0–M5), EfficientViT-MIT B3 and L1–L3, PNASNet-5-Large, the legacy Cadene SE-ResNet/SE-ResNeXt/SENet-154/Xception registrations, Sapiens2 (B/L/H/g/5B), and the pruned EfficientNet-B1/B2/B3, EfficientNet-ES/EL and ECA-ResNet-50d/101d models. Parameter counts match timm for every new entry.
+- Close the remaining gap to timm 1.0.30: the registry now contains every timm 1.0.30 model name (1351) plus 9 additional jimm-only names. Model module grouping and the default `input_size`, `crop_pct`, `interpolation`, `mean` and `std` metadata now match timm for all 1351 shared names. New families are MobileViTv2 (seven widths), GhostNetV2/V3, the PP-LCNetV2 small/base/large models, MambaOut's re-trained `_rw` variants, EfficientViT-MSRA (M0–M5), EfficientViT-MIT B3 and L1–L3, PNASNet-5-Large, the legacy Cadene SE-ResNet/SE-ResNeXt/SENet-154/Xception registrations, Sapiens2 (B/L/H/g/5B), and the pruned EfficientNet-B1/B2/B3, EfficientNet-ES/EL and ECA-ResNet-50d/101d models. Parameter counts match timm for every new entry.
 - Update the locked environment to JAX 0.12.0.1, Flax 0.12.12, Grain 0.2.19, NumPy 2.5.4, Optax 0.2.9, Orbax Checkpoint 0.12.10, Tokamax 0.0.17, Triton 3.9.0, and pytest 9.2.0.
 - Install CPU JAX on macOS and `jax[cuda13]` on Linux, so the project keeps NVIDIA GPU support as its default while remaining installable on Apple silicon.
 
@@ -74,7 +74,7 @@ Use the registry to discover the exact supported names:
 import jimm
 
 print(len(jimm.list_models()))  # 1360
-print(len(jimm.list_modules()))  # 100
+print(len(jimm.list_modules()))  # 99
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
 print(jimm.get_default_cfg("qwen3_vit_88m"))

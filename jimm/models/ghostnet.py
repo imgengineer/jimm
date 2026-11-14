@@ -300,7 +300,7 @@ class GhostNet(ClassifierMixin, nnx.Module):
 
 def _ghostnet(width_mult, version="v1", **kwargs):
     model = GhostNet(width_mult, version=version, **kwargs)
-    model.default_cfg = _cfg()
+    model.default_cfg = _cfg(interpolation="bicubic")
     return model
 
 

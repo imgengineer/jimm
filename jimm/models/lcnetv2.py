@@ -190,7 +190,7 @@ class LCNetV2(ClassifierMixin, nnx.Module):
 
 def _lcnetv2(scale, depths, **kwargs):
     model = LCNetV2(scale, depths, **kwargs)
-    model.default_cfg = _cfg()
+    model.default_cfg = _cfg(interpolation="bicubic")
     return model
 
 

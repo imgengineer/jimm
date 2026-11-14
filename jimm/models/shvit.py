@@ -214,7 +214,8 @@ def _make(name):
 
     def entry(**kwargs):
         model = SHViT(embed_dim, partial_dim, depth=depth, types=_TYPES, **kwargs)
-        model.default_cfg = _cfg(interpolation="bicubic")
+        size = 256 if name == "shvit_s4" else 224
+        model.default_cfg = _cfg(input_size=(3, size, size), interpolation="bicubic")
         return model
 
     entry.__name__ = name

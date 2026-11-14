@@ -244,7 +244,11 @@ def _make(name):
     def entry(**kwargs):
         kwargs.setdefault("drop_path_rate", drop_path_rate)
         model = TinyVit(embed_dims, (2, 2, 6, 2), num_heads, window_sizes, **kwargs)
-        model.default_cfg = _cfg(input_size=(3, size, size), crop_pct=0.95 if size == 224 else 1.0)
+        model.default_cfg = _cfg(
+            input_size=(3, size, size),
+            crop_pct=0.95 if size == 224 else 1.0,
+            interpolation="bicubic",
+        )
         return model
 
     entry.__name__ = name

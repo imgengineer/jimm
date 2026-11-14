@@ -60,19 +60,19 @@ class ConvMixer(ClassifierMixin, nnx.Module):
 @register_model
 def convmixer_768_32(**kwargs):
     model = ConvMixer(768, 32, patch_size=7, kernel=7, act=nnx.relu, **kwargs)
-    model.default_cfg = _cfg()
+    model.default_cfg = _cfg(crop_pct=0.96, interpolation="bicubic")
     return model
 
 
 @register_model
 def convmixer_1024_20_ks9_p14(**kwargs):
     model = ConvMixer(1024, 20, patch_size=14, kernel=9, **kwargs)
-    model.default_cfg = _cfg()
+    model.default_cfg = _cfg(crop_pct=0.96, interpolation="bicubic")
     return model
 
 
 @register_model
 def convmixer_1536_20(**kwargs):
     model = ConvMixer(1536, 20, patch_size=7, kernel=9, **kwargs)
-    model.default_cfg = _cfg()
+    model.default_cfg = _cfg(crop_pct=0.96, interpolation="bicubic")
     return model

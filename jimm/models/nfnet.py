@@ -344,11 +344,11 @@ _CFGS = {
         f"dm_nfnet_{f}": (dict(depths=d, dm=True), _F_SIZES[f], crop)
         for (f, d), crop in zip(_DEPTHS.items(), (0.9, 0.91, 0.92, 0.94, 0.951, 0.954, 0.956))
     },
-    "nfnet_l0": (dict(depths=_DEPTHS["f0"], **_L, attn_kwargs=dict(rd_ratio=0.25)), 224, 1.0),
-    "eca_nfnet_l0": (dict(depths=_DEPTHS["f0"], **_L, attn="eca"), 224, 1.0),
-    "eca_nfnet_l1": (dict(depths=_DEPTHS["f1"], **{**_L, "feat_mult": 2.0}, attn="eca"), 256, 1.0),
-    "eca_nfnet_l2": (dict(depths=_DEPTHS["f2"], **{**_L, "feat_mult": 2.0}, attn="eca"), 320, 1.0),
-    "eca_nfnet_l3": (dict(depths=_DEPTHS["f3"], **{**_L, "feat_mult": 2.0}, attn="eca"), 352, 1.0),
+    "nfnet_l0": (dict(depths=_DEPTHS["f0"], **_L, attn_kwargs=dict(rd_ratio=0.25)), 224, 0.9),
+    "eca_nfnet_l0": (dict(depths=_DEPTHS["f0"], **_L, attn="eca"), 224, 0.9),
+    "eca_nfnet_l1": (dict(depths=_DEPTHS["f1"], **{**_L, "feat_mult": 2.0}, attn="eca"), 256, 0.9),
+    "eca_nfnet_l2": (dict(depths=_DEPTHS["f2"], **{**_L, "feat_mult": 2.0}, attn="eca"), 320, 0.9),
+    "eca_nfnet_l3": (dict(depths=_DEPTHS["f3"], **{**_L, "feat_mult": 2.0}, attn="eca"), 352, 0.9),
 }
 
 

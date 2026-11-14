@@ -281,7 +281,16 @@ def _make(name):
 
     def entry(**kwargs):
         model = VovNet(**cfg, **kwargs)
-        model.default_cfg = _cfg(interpolation="bicubic")
+        if name == "ese_vovnet57b":
+            model.default_cfg = _cfg(
+                input_size=(3, 256, 256),
+                crop_pct=0.95,
+                interpolation="bicubic",
+                mean=(0.5, 0.5, 0.5),
+                std=(0.5, 0.5, 0.5),
+            )
+        else:
+            model.default_cfg = _cfg(interpolation="bicubic")
         return model
 
     entry.__name__ = name

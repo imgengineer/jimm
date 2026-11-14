@@ -13,6 +13,12 @@
 
 ## What's New
 
+### November 14, 2026
+
+- Close the remaining gap to timm 1.0.30: the registry now contains every timm 1.0.30 model name (1351) plus 9 additional jimm-only names. New families are MobileViTv2 (seven widths), GhostNetV2/V3, the PP-LCNetV2 small/base/large models, MambaOut's re-trained `_rw` variants, EfficientViT-MSRA (M0–M5), EfficientViT-MIT B3 and L1–L3, PNASNet-5-Large, the legacy Cadene SE-ResNet/SE-ResNeXt/SENet-154/Xception registrations, Sapiens2 (B/L/H/g/5B), and the pruned EfficientNet-B1/B2/B3, EfficientNet-ES/EL and ECA-ResNet-50d/101d models. Parameter counts match timm for every new entry.
+- Update the locked environment to JAX 0.12.0.1, Flax 0.12.12, Grain 0.2.19, NumPy 2.5.4, Optax 0.2.9, Orbax Checkpoint 0.12.10, Tokamax 0.0.17, Triton 3.9.0, and pytest 9.2.0.
+- Install CPU JAX on macOS and `jax[cuda13]` on Linux, so the project keeps NVIDIA GPU support as its default while remaining installable on Apple silicon.
+
 ### October 4, 2026
 
 - Complete timm's BEiT (BEiT v2, `beit_large_patch16_512`), Hiera (`abswin` models with windowed absolute position embeddings and layer scale), HRNet (W18-small-v2, W30/W40/W44/W64 and the SSLD models) and PVTv2 (`pvt_v2_b2_li` with linear spatial-reduction attention). PVTv2's MLP now applies GELU only after the depthwise conv, and its attention and patch-embedding norms use timm's epsilon.
@@ -67,8 +73,8 @@ Use the registry to discover the exact supported names:
 ```python
 import jimm
 
-print(len(jimm.list_models()))  # 1307
-print(len(jimm.list_modules()))  # 101
+print(len(jimm.list_models()))  # 1360
+print(len(jimm.list_modules()))  # 100
 print(jimm.list_models("resnet*"))
 print(jimm.list_models(module="qwen3_vit"))
 print(jimm.get_default_cfg("qwen3_vit_88m"))
@@ -88,7 +94,7 @@ Representative architectures are listed below. Each name is a registered entry; 
 | Token and spatial mixers | `mixer_b16_224`, `resmlp_12_224`, `poolformer_s12`, `convmixer_768_32`, `caformer_s18`, `mambaout_tiny` |
 | Additional vision towers | `gemma4_vit_167m`, `gemma4_vit_167m_enc`, `samvit_base_patch16_224`, `vitamin_small_224` |
 
-The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.29 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet (X/Y/V/Z), NFNet (including NF-ResNet and NF-RegNet), RDNet, EfficientNet (including EfficientNet-V2, MixNet, MNASNet, FBNet and LCNet), ViT (including CLIP, SigLIP, DINOv2, AIMv2 and BEiT3 towers)/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut, RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3 and Perception Encoder), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNet V1–V4, MNASNet, GhostNet, RepGhostNet, HardCoReNAS, MLP-Mixer/gMLP/ResMLP, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT, and Visformer families. Every registered name that timm 1.0.29 also defines is listed there. The remaining entries have no timm 1.0.29 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
+The architectures listed in [tests/test_timm_parity.py](tests/test_timm_parity.py) reproduce their timm 1.0.30 counterparts: parameter counts match, and outputs match with identical weights. They include the ResNet, ResNeXt, SE-ResNet, SENet-154, SK-ResNet, TResNet, ConvNeXt, RegNet (X/Y/V/Z), NFNet (including NF-ResNet and NF-RegNet), RDNet, EfficientNet (including EfficientNet-V2, MixNet, MNASNet, FBNet, LCNet, the pruned variants and PP-LCNetV2), ViT (including CLIP, SigLIP, DINOv2, AIMv2 and BEiT3 towers)/DeiT/DeiT-III, BEiT, CaiT, PiT, ConViT, Twins, NesT, Swin/Swin V2, DaViT, FocalNet, GCViT, MViTv2, Hiera/SAM2 Hiera, InceptionNeXt, MambaOut (including the `_rw` variants), RepViT, StarNet, ReXNet, FasterNet, SwiftFormer, PoolFormer/PoolFormerV2, CAFormer, ConvFormer, ResNeSt, DenseNet, CSPNet/DarkNet, CoaT, Next-ViT, VOLO, ViT-RelPos, ViTamin, FastViT, CPUBone, CSATv2, MobileNetV5, NASNet, PNASNet, Gemma 4 ViT, NaFlexViT, TNT, CrossViT, SAM ViT, hybrid ViT, MaxxViT, EVA (including EVA-02, RoPE ViT, DINOv3, Perception Encoder and Sapiens2), ByobNet/ByoaNet, VoVNet, HGNet, DLA, DPN, Xception, SelecSLS, HRNet, MobileNet V1–V4, MNASNet, GhostNet/GhostNetV2/V3, RepGhostNet, HardCoReNAS, MLP-Mixer/gMLP/ResMLP, Sequencer2D, PVTv2, VGG, LeViT, SHViT, EfficientFormer/EfficientFormer-V2, MobileViT/MobileViTv2, TinyViT, EdgeNeXt, XCiT, MaxViT, CoAtNet, EfficientViT-MIT, EfficientViT-MSRA, and Visformer families. Every registered name that timm 1.0.30 also defines is listed there. The remaining entries have no timm 1.0.30 model of the same name; some approximate related timm architectures and can differ from them in structure, width, and cost.
 
 ### Additions from timm 1.0.30
 
@@ -101,6 +107,7 @@ The following families retain the upstream configurations and parameter counts. 
 | [EfficientViM](https://github.com/huggingface/pytorch-image-models/blob/v1.0.30/timm/models/efficientvim.py) | 8: `efficientvim_m1`–M4, each with a `_dist` variant | HSM-SSD hidden-state mixing and learned fusion of four classification heads |
 | [Qwen3 ViT](https://github.com/huggingface/pytorch-image-models/blob/v1.0.30/timm/models/qwen3_vit.py) | 9: `qwen3_vit_88m`, 306M, 416M; each with `_merge` and `_enc` variants | Learned positions, axial RoPE, and a native 2×2 spatial merger |
 | [DeepSeek ViT](https://github.com/huggingface/pytorch-image-models/blob/v1.0.30/timm/models/deepseek_vit.py) | 3: `deepseek_vit_412m`, `deepseek_vit_412m_align`, `deepseek_vit_412m_enc` | FP32 RMSNorm, SwiGLU, axial RoPE, and a channel-major 3×3 aligner |
+| [Sapiens2](https://github.com/huggingface/pytorch-image-models/blob/v1.0.30/timm/models/eva.py) | 5: `vit_base`, `vit_large`, `vit_huge`, `vit_giant` and `vit_5b`, all `patch16_sapiens2` | RMSNorm, grouped-query attention in the middle blocks, DINOv3 RoPE, SwiGLU, registers, and attention-only layer scale |
 
 ### Weights
 
@@ -125,7 +132,7 @@ Images have shape **`(batch, height, width, channels)`**. `default_cfg["input_si
 
 ### Installation
 
-The project requires **Python 3.12 or newer**. Its dependency set includes `jax[cuda13]` for NVIDIA GPU execution. With [uv](https://docs.astral.sh/uv/) installed:
+The project requires **Python 3.12 or newer**. On Linux its dependency set includes `jax[cuda13]` for NVIDIA GPU execution; on macOS it installs CPU JAX. With [uv](https://docs.astral.sh/uv/) installed:
 
 ```bash
 git clone https://github.com/imgengineer/jimm.git

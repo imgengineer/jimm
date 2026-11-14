@@ -1,10 +1,13 @@
-"""EfficientViT (MIT) in flax nnx, NHWC. Mirrors timm.models.efficientvit_mit (B series).
+"""EfficientViT (MIT) in flax nnx, NHWC. Mirrors timm.models.efficientvit_mit.
 
-Hard-swish MBConv stages lead into stages that alternate multi-scale ReLU linear
-attention (LiteMLA, computed in float32) with MBConv blocks. The head applies a
-1x1 convolution, pooling, and a LayerNorm MLP before the classifier.
+The B series leads hard-swish MBConv stages into stages that alternate
+multi-scale ReLU linear attention (LiteMLA, computed in float32) with MBConv
+blocks. The L series uses fused MBConv stages, GELU-tanh activations, and an
+additional attention stage. Both heads apply a 1x1 convolution, pooling, and a
+LayerNorm MLP before the classifier.
 """
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 
@@ -25,14 +28,21 @@ class DSConv(nnx.Module):
         return x + self.point_conv(self.depth_conv(x))
 
 
+def gelu_tanh(x):
+    """timm's GELUTanh (the tanh approximation of GELU)."""
+    return jax.nn.gelu(x, approximate=True)
+
+
 class MBConv(nnx.Module):
     """Inverted bottleneck; attention stages use biases and a single BatchNorm."""
 
-    def __init__(self, in_chs, out_chs, stride, expand, act, fewer_norm, residual, *, rngs):
+    def __init__(
+        self, in_chs, out_chs, stride, expand, act, fewer_norm, residual, eps=1e-5, *, rngs
+    ):
         mid = round(in_chs * expand)
         self.residual = residual
         self.inverted_conv = ConvNormAct(
-            in_chs, mid, 1, norm=not fewer_norm, act=act, use_bias=fewer_norm, rngs=rngs
+            in_chs, mid, 1, norm=not fewer_norm, act=act, use_bias=fewer_norm, eps=eps, rngs=rngs
         )
         self.depth_conv = ConvNormAct(
             mid,
@@ -43,19 +53,52 @@ class MBConv(nnx.Module):
             norm=not fewer_norm,
             act=act,
             use_bias=fewer_norm,
+            eps=eps,
             rngs=rngs,
         )
-        self.point_conv = ConvNormAct(mid, out_chs, 1, rngs=rngs)
+        self.point_conv = ConvNormAct(mid, out_chs, 1, eps=eps, rngs=rngs)
 
     def __call__(self, x):
         y = self.point_conv(self.depth_conv(self.inverted_conv(x)))
         return x + y if self.residual else y
 
 
+class ConvBlock(nnx.Module):
+    """Two stacked kxk convolutions (EfficientViT-Large stem block)."""
+
+    def __init__(self, in_chs, out_chs, stride, act, residual, eps=1e-5, *, rngs):
+        mid = round(in_chs * 1.0)
+        self.residual = residual
+        self.conv1 = ConvNormAct(in_chs, mid, 3, stride, act=act, eps=eps, rngs=rngs)
+        self.conv2 = ConvNormAct(mid, out_chs, 3, eps=eps, rngs=rngs)
+
+    def __call__(self, x):
+        y = self.conv2(self.conv1(x))
+        return x + y if self.residual else y
+
+
+class FusedMBConv(nnx.Module):
+    """Spatial kxk expansion followed by a 1x1 projection (fused MBConv)."""
+
+    def __init__(
+        self, in_chs, out_chs, stride, expand, act, fewer_norm, residual, eps=1e-5, *, rngs
+    ):
+        mid = round(in_chs * expand)
+        self.residual = residual
+        self.spatial_conv = ConvNormAct(
+            in_chs, mid, 3, stride, act=act, use_bias=fewer_norm, eps=eps, rngs=rngs
+        )
+        self.point_conv = ConvNormAct(mid, out_chs, 1, eps=eps, rngs=rngs)
+
+    def __call__(self, x):
+        y = self.point_conv(self.spatial_conv(x))
+        return x + y if self.residual else y
+
+
 class LiteMLA(nnx.Module):
     """Lightweight multi-scale linear attention with a ReLU kernel."""
 
-    def __init__(self, chs, head_dim, scale=5, eps=1e-5, *, rngs):
+    def __init__(self, chs, head_dim, scale=5, eps=1e-5, norm_eps=1e-5, *, rngs):
         heads = chs // head_dim
         total = heads * head_dim
         self.head_dim, self.eps = head_dim, eps
@@ -86,7 +129,7 @@ class LiteMLA(nnx.Module):
                 )
             ]
         )
-        self.proj = ConvNormAct(2 * total, chs, 1, rngs=rngs)
+        self.proj = ConvNormAct(2 * total, chs, 1, eps=norm_eps, rngs=rngs)
 
     def __call__(self, x):
         batch, rows, cols, _ = x.shape
@@ -103,9 +146,9 @@ class LiteMLA(nnx.Module):
 
 
 class EfficientVitBlock(nnx.Module):
-    def __init__(self, chs, head_dim, expand, act, *, rngs):
-        self.context = LiteMLA(chs, head_dim, rngs=rngs)
-        self.local = MBConv(chs, chs, 1, expand, act, True, True, rngs=rngs)
+    def __init__(self, chs, head_dim, expand, act, eps=1e-5, *, rngs):
+        self.context = LiteMLA(chs, head_dim, norm_eps=eps, rngs=rngs)
+        self.local = MBConv(chs, chs, 1, expand, act, True, True, eps=eps, rngs=rngs)
 
     def __call__(self, x):
         return self.local(x + self.context(x))
@@ -177,11 +220,110 @@ class EfficientVit(ClassifierMixin, nnx.Module):
         return self.forward_head(self.forward_features(x))
 
 
+class EfficientVitLarge(ClassifierMixin, nnx.Module):
+    """EfficientViT-Large: GELU-tanh, fused MBConv stages, and a fourth attention stage."""
+
+    def __init__(
+        self,
+        widths,
+        depths,
+        head_dim,
+        head_widths,
+        num_classes=1000,
+        in_chans=3,
+        global_pool="avg",
+        drop_rate=0.0,
+        norm_eps=1e-7,
+        *,
+        rngs,
+    ):
+        self.num_classes, self.global_pool = num_classes, global_pool
+        act, eps = gelu_tanh, norm_eps
+        self.stem_conv = ConvNormAct(in_chans, widths[0], 3, 2, act=act, eps=eps, rngs=rngs)
+        self.stem_blocks = nnx.List(
+            [
+                ConvBlock(widths[0], widths[0], 1, act, True, eps=eps, rngs=rngs)
+                for _ in range(depths[0])
+            ]
+        )
+        stages, in_chs = [], widths[0]
+        for i, (width, depth) in enumerate(zip(widths[1:], depths[1:])):
+            vit_stage = i >= 3
+            fewer_norm = i >= 2
+            blocks = []
+            if fewer_norm:
+                blocks.append(
+                    MBConv(
+                        in_chs,
+                        width,
+                        2,
+                        24 if vit_stage else 16,
+                        act,
+                        True,
+                        False,
+                        eps=eps,
+                        rngs=rngs,
+                    )
+                )
+            else:
+                blocks.append(
+                    FusedMBConv(in_chs, width, 2, 16, act, False, False, eps=eps, rngs=rngs)
+                )
+            if vit_stage:
+                blocks += [
+                    EfficientVitBlock(width, head_dim, 6, act, eps=eps, rngs=rngs)
+                    for _ in range(depth)
+                ]
+            else:
+                for _ in range(depth):
+                    if fewer_norm:
+                        blocks.append(
+                            MBConv(width, width, 1, 4, act, True, True, eps=eps, rngs=rngs)
+                        )
+                    else:
+                        blocks.append(
+                            FusedMBConv(width, width, 1, 4, act, False, True, eps=eps, rngs=rngs)
+                        )
+            stages.append(nnx.List(blocks))
+            in_chs = width
+        self.stages = nnx.List(stages)
+        self.head_in_conv = ConvNormAct(in_chs, head_widths[0], 1, act=act, eps=eps, rngs=rngs)
+        self.head_fc1 = nnx.Linear(head_widths[0], head_widths[1], use_bias=False, rngs=rngs)
+        self.head_norm = nnx.LayerNorm(head_widths[1], epsilon=eps, rngs=rngs)
+        self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
+        self.num_features = head_widths[1]
+        self.fc = nnx.Linear(head_widths[1], num_classes, rngs=rngs) if num_classes > 0 else None
+
+    def forward_features(self, x):
+        x = self.stem_conv(x)
+        for block in self.stem_blocks:
+            x = block(x)
+        for stage in self.stages:
+            for block in stage:
+                x = block(x)
+        return x
+
+    def forward_head(self, x, pre_logits=False):
+        x = global_pool_nhwc(self.head_in_conv(x), self.global_pool)
+        x = self.head_drop(gelu_tanh(self.head_norm(self.head_fc1(x))))
+        return x if pre_logits or self.fc is None else self.fc(x)
+
+    def __call__(self, x):
+        return self.forward_head(self.forward_features(x))
+
+
 # timm configurations: stem and stage widths, depths, attention head width, head widths.
 _CFGS = {
     "efficientvit_b0": ((8, 16, 32, 64, 128), (1, 2, 2, 2, 2), 16, (1024, 1280)),
     "efficientvit_b1": ((16, 32, 64, 128, 256), (1, 2, 3, 3, 4), 16, (1536, 1600)),
     "efficientvit_b2": ((24, 48, 96, 192, 384), (1, 3, 4, 4, 6), 32, (2304, 2560)),
+    "efficientvit_b3": ((32, 64, 128, 256, 512), (1, 4, 6, 6, 9), 32, (2304, 2560)),
+}
+
+_LARGE_CFGS = {
+    "efficientvit_l1": ((32, 64, 128, 256, 512), (1, 1, 1, 6, 6), 32, (3072, 3200)),
+    "efficientvit_l2": ((32, 64, 128, 256, 512), (1, 2, 2, 8, 8), 32, (3072, 3200)),
+    "efficientvit_l3": ((64, 128, 256, 512, 1024), (1, 2, 2, 8, 8), 32, (6144, 6400)),
 }
 
 
@@ -199,3 +341,19 @@ def _make(name):
 
 for _name in _CFGS:
     register_model(_make(_name))
+
+
+def _make_large(name):
+    widths, depths, head_dim, head_widths = _LARGE_CFGS[name]
+
+    def entry(**kwargs):
+        model = EfficientVitLarge(widths, depths, head_dim, head_widths, **kwargs)
+        model.default_cfg = _cfg(crop_pct=1.0, interpolation="bicubic")
+        return model
+
+    entry.__name__ = name
+    return entry
+
+
+for _name in _LARGE_CFGS:
+    register_model(_make_large(_name))

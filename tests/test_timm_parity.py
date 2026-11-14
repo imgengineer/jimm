@@ -1276,6 +1276,73 @@ TIMM_PARAM_COUNTS = {
     "xcit_tiny_24_p16_384": 12_116_896,
     "xcit_tiny_24_p8_224": 12_107_128,
     "xcit_tiny_24_p8_384": 12_107_128,
+    # Pruned models
+    "ecaresnet50d_pruned": 19_939_713,
+    "ecaresnet101d_pruned": 24_876_040,
+    "efficientnet_b1_pruned": 6_331_916,
+    "efficientnet_b2_pruned": 8_309_737,
+    "efficientnet_b3_pruned": 9_855_020,
+    "efficientnet_el_pruned": 10_589_712,
+    "efficientnet_es_pruned": 5_438_392,
+    # EfficientViT (MIT) B3 and L series
+    "efficientvit_b3": 48_646_056,
+    "efficientvit_l1": 52_654_088,
+    "efficientvit_l2": 63_707_016,
+    "efficientvit_l3": 246_037_288,
+    # EfficientViT (MSRA) M series
+    "efficientvit_m0": 2_349_436,
+    "efficientvit_m1": 2_980_560,
+    "efficientvit_m2": 4_187_554,
+    "efficientvit_m3": 6_900_722,
+    "efficientvit_m4": 8_804_228,
+    "efficientvit_m5": 12_473_772,
+    # GhostNetV2/V3
+    "ghostnetv2_100": 6_156_908,
+    "ghostnetv2_130": 8_960_404,
+    "ghostnetv2_160": 12_392_698,
+    "ghostnetv3_050": 3_395_384,
+    "ghostnetv3_100": 8_129_028,
+    "ghostnetv3_130": 12_217_720,
+    "ghostnetv3_160": 17_275_700,
+    # LCNetV2
+    "lcnetv2_small": 4_128_552,
+    "lcnetv2_base": 6_687_208,
+    "lcnetv2_large": 10_542_120,
+    # Legacy Cadene SENet/Xception registrations
+    "legacy_senet154": 115_088_984,
+    "legacy_seresnet18": 11_778_592,
+    "legacy_seresnet34": 21_958_868,
+    "legacy_seresnet50": 28_088_024,
+    "legacy_seresnet101": 49_326_872,
+    "legacy_seresnet152": 66_821_848,
+    "legacy_seresnext26_32x4d": 16_790_280,
+    "legacy_seresnext50_32x4d": 27_559_896,
+    "legacy_seresnext101_32x4d": 48_955_416,
+    "legacy_xception": 22_855_952,
+    "xception": 22_855_952,
+    # MambaOut re-trained recipe variants
+    "mambaout_small_rw": 48_495_560,
+    "mambaout_base_short_rw": 88_827_688,
+    "mambaout_base_tall_rw": 86_481_448,
+    "mambaout_base_wide_rw": 94_448_104,
+    "mambaout_base_plus_rw": 101_656_552,
+    "test_mambaout": 447_560,
+    # MobileViTv2
+    "mobilevitv2_050": 1_370_593,
+    "mobilevitv2_075": 2_866_009,
+    "mobilevitv2_100": 4_901_841,
+    "mobilevitv2_125": 7_478_089,
+    "mobilevitv2_150": 10_594_753,
+    "mobilevitv2_175": 14_251_833,
+    "mobilevitv2_200": 18_449_329,
+    # PNASNet
+    "pnasnet5large": 86_057_668,
+    # Sapiens2
+    "vit_base_patch16_sapiens2": 114_762_472,
+    "vit_large_patch16_sapiens2": 396_475_368,
+    "vit_huge_patch16_sapiens2": 815_564_520,
+    "vit_giant_patch16_sapiens2": 1_457_011_176,
+    "vit_5b_patch16_sapiens2": 5_069_335_976,
 }
 
 

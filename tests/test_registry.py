@@ -64,12 +64,9 @@ def test_list_models_and_modules():
 @pytest.mark.parametrize(
     "name",
     [
-        "mobilevitv2_050",
-        "ghostnetv2_100",
-        "legacy_xception",
-        "efficientvit_m0",
-        "efficientnet_b1_pruned",
         "convnext_xxlarge_mlp",
+        "efficientnet_b0_pruned",
+        "mobilevitv3_100",
     ],
 )
 def test_unimplemented_variants_are_not_substituted(name):

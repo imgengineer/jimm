@@ -484,3 +484,20 @@ def _register(cfgs):
 from ._resnet_cfgs import RESNET_CFGS  # noqa: E402  (timm default configs per variant)
 
 _register(RESNET_CFGS)
+
+
+from ._pruned import PrunedECAResNet  # noqa: E402
+
+
+@register_model
+def ecaresnet50d_pruned(**kwargs):
+    model = PrunedECAResNet("ecaresnet50d_pruned", **kwargs)
+    model.default_cfg = _cfg(interpolation="bicubic")
+    return model
+
+
+@register_model
+def ecaresnet101d_pruned(**kwargs):
+    model = PrunedECAResNet("ecaresnet101d_pruned", **kwargs)
+    model.default_cfg = _cfg(interpolation="bicubic")
+    return model

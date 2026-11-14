@@ -30,6 +30,14 @@ def _ln(dim, eps, *, rngs):
     return nnx.LayerNorm(dim, epsilon=eps, rngs=rngs)
 
 
+def _rms(dim, eps, *, rngs):
+    return nnx.RMSNorm(dim, epsilon=eps, rngs=rngs)
+
+
+def _norm_fn(kind):
+    return _rms if kind == "rmsnorm" else _ln
+
+
 # ----------------------------------------------------------------------------- rotary embeddings
 
 
@@ -129,10 +137,13 @@ def _apply_rope(x, emb, half):
 class EvaAttention(nnx.Module):
     def __init__(
         self, dim, num_heads, qkv_bias, qkv_fused, num_prefix, scale_norm, rotate_half, eps,
-        eva_bias=True, *, rngs,
+        eva_bias=True, num_kv_heads=None, qk_norm=False, norm_fn=_ln, *, rngs,
     ):  # fmt: skip
         self.num_heads, self.num_prefix, self.rotate_half = num_heads, num_prefix, rotate_half
+        self.num_kv_heads = num_kv_heads or num_heads
         self.eva_bias = eva_bias
+        head_dim = dim // num_heads
+        kv_dim = head_dim * self.num_kv_heads
         if qkv_fused:
             # EVA attention: bias-free fused qkv with separate q/v biases (k bias fixed at zero).
             self.qkv = nnx.Linear(
@@ -146,14 +157,16 @@ class EvaAttention(nnx.Module):
             self.qkv = self.q_bias = self.v_bias = None
             k_bias = qkv_bias and not eva_bias
             self.q_proj = nnx.Linear(dim, dim, use_bias=qkv_bias, **_LINEAR, rngs=rngs)
-            self.k_proj = nnx.Linear(dim, dim, use_bias=k_bias, **_LINEAR, rngs=rngs)
-            self.v_proj = nnx.Linear(dim, dim, use_bias=qkv_bias, **_LINEAR, rngs=rngs)
-        self.norm = _ln(dim, eps, rngs=rngs) if scale_norm else None
+            self.k_proj = nnx.Linear(dim, kv_dim, use_bias=k_bias, **_LINEAR, rngs=rngs)
+            self.v_proj = nnx.Linear(dim, kv_dim, use_bias=qkv_bias, **_LINEAR, rngs=rngs)
+        self.q_norm = norm_fn(head_dim, eps, rngs=rngs) if qk_norm else None
+        self.k_norm = norm_fn(head_dim, eps, rngs=rngs) if qk_norm else None
+        self.norm = norm_fn(dim, eps, rngs=rngs) if scale_norm else None
         self.proj = nnx.Linear(dim, dim, **_LINEAR, rngs=rngs)
 
     def __call__(self, x, rope=None):
         B, N, C = x.shape
-        h = self.num_heads
+        h, hd = self.num_heads, C // self.num_heads
         if self.qkv is not None:
             qkv = self.qkv(x)
             if self.q_bias is not None:
@@ -161,16 +174,23 @@ class EvaAttention(nnx.Module):
                     [self.q_bias[...], jnp.zeros_like(self.q_bias[...]), self.v_bias[...]]
                 )
                 qkv = qkv + bias.astype(qkv.dtype)
-            qkv = qkv.reshape(B, N, 3, h, C // h)
+            qkv = qkv.reshape(B, N, 3, h, hd)
             q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         else:
-            q = self.q_proj(x).reshape(B, N, h, -1)
-            k = self.k_proj(x).reshape(B, N, h, -1)
-            v = self.v_proj(x).reshape(B, N, h, -1)
+            q = self.q_proj(x).reshape(B, N, h, hd)
+            k = self.k_proj(x).reshape(B, N, self.num_kv_heads, hd)
+            v = self.v_proj(x).reshape(B, N, self.num_kv_heads, hd)
+        if self.q_norm is not None:
+            q, k = self.q_norm(q), self.k_norm(k)
         if rope is not None:
             p = self.num_prefix
             q = jnp.concatenate([q[:, :p], _apply_rope(q[:, p:], rope, self.rotate_half)], axis=1)
             k = jnp.concatenate([k[:, :p], _apply_rope(k[:, p:], rope, self.rotate_half)], axis=1)
+        groups = h // self.num_kv_heads
+        if groups > 1:
+            # Grouped-query attention: share each K/V head across its query-head group.
+            k = jnp.repeat(k, groups, axis=2)
+            v = jnp.repeat(v, groups, axis=2)
         x = dot_product_attention(q, k, v).reshape(B, N, C)
         if self.norm is not None:
             x = self.norm(x)
@@ -180,9 +200,9 @@ class EvaAttention(nnx.Module):
 class Mlp(nnx.Module):
     """GELU MLP, optionally normalizing the hidden activations (scale_mlp)."""
 
-    def __init__(self, dim, hidden, norm_eps=None, *, rngs):
+    def __init__(self, dim, hidden, norm_eps=None, norm_fn=_ln, *, rngs):
         self.fc1 = nnx.Linear(dim, hidden, **_LINEAR, rngs=rngs)
-        self.norm = _ln(hidden, norm_eps, rngs=rngs) if norm_eps is not None else None
+        self.norm = norm_fn(hidden, norm_eps, rngs=rngs) if norm_eps is not None else None
         self.fc2 = nnx.Linear(hidden, dim, **_LINEAR, rngs=rngs)
 
     def __call__(self, x):
@@ -193,12 +213,12 @@ class Mlp(nnx.Module):
 
 
 class SwiGLU(nnx.Module):
-    def __init__(self, dim, hidden, norm_eps=None, align_to=0, *, rngs):
+    def __init__(self, dim, hidden, norm_eps=None, align_to=0, norm_fn=_ln, *, rngs):
         if align_to:
             hidden = hidden + (-hidden % align_to)
         self.fc1_g = nnx.Linear(dim, hidden, **_LINEAR, rngs=rngs)
         self.fc1_x = nnx.Linear(dim, hidden, **_LINEAR, rngs=rngs)
-        self.norm = _ln(hidden, norm_eps, rngs=rngs) if norm_eps is not None else None
+        self.norm = norm_fn(hidden, norm_eps, rngs=rngs) if norm_eps is not None else None
         self.fc2 = nnx.Linear(hidden, dim, **_LINEAR, rngs=rngs)
 
     def __call__(self, x):
@@ -211,9 +231,9 @@ class SwiGLU(nnx.Module):
 class GluMlp(nnx.Module):
     """fc1 to twice the width, SiLU on the first half gating the second (gate_last=False)."""
 
-    def __init__(self, dim, hidden2, norm_eps=None, *, rngs):
+    def __init__(self, dim, hidden2, norm_eps=None, norm_fn=_ln, *, rngs):
         self.fc1 = nnx.Linear(dim, hidden2, **_LINEAR, rngs=rngs)
-        self.norm = _ln(hidden2 // 2, norm_eps, rngs=rngs) if norm_eps is not None else None
+        self.norm = norm_fn(hidden2 // 2, norm_eps, rngs=rngs) if norm_eps is not None else None
         self.fc2 = nnx.Linear(hidden2 // 2, dim, **_LINEAR, rngs=rngs)
 
     def __call__(self, x):
@@ -224,34 +244,40 @@ class GluMlp(nnx.Module):
         return self.fc2(x)
 
 
-def _mlp(dim, mlp_ratio, swiglu, scale_mlp, align_to, eps, rngs):
+def _mlp(dim, mlp_ratio, swiglu, scale_mlp, align_to, eps, rngs, norm_fn=_ln):
     hidden = int(dim * mlp_ratio)
     norm_eps = eps if scale_mlp else None
     if swiglu:
         if scale_mlp or align_to:
-            return SwiGLU(dim, hidden, norm_eps, align_to, rngs=rngs)
-        return GluMlp(dim, hidden * 2, norm_eps, rngs=rngs)
-    return Mlp(dim, hidden, norm_eps, rngs=rngs)
+            return SwiGLU(dim, hidden, norm_eps, align_to, norm_fn, rngs=rngs)
+        return GluMlp(dim, hidden * 2, norm_eps, norm_fn, rngs=rngs)
+    return Mlp(dim, hidden, norm_eps, norm_fn, rngs=rngs)
 
 
 class EvaBlock(nnx.Module):
-    def __init__(self, dim, num_heads, cfg, num_prefix, eps, dpr, post_norm, *, rngs):
+    def __init__(
+        self, dim, num_heads, cfg, num_prefix, eps, dpr, post_norm, num_kv_heads=None, *,
+        rngs,
+    ):  # fmt: skip
         self.post_norm = post_norm
-        self.norm1 = _ln(dim, eps, rngs=rngs)
+        norm = _norm_fn(cfg["norm_type"])
+        self.norm1 = norm(dim, eps, rngs=rngs)
         self.attn = EvaAttention(
             dim, num_heads, cfg["qkv_bias"], cfg["qkv_fused"], num_prefix,
             cfg["scale_attn_inner"], cfg["rope_rotate_half"], eps,
-            eva_bias=cfg["attn_type"] != "rope", rngs=rngs,
+            eva_bias=cfg["attn_type"] != "rope", num_kv_heads=num_kv_heads,
+            qk_norm=cfg["qk_norm"], norm_fn=norm, rngs=rngs,
         )  # fmt: skip
         iv = None if post_norm else cfg["init_values"]
         self.gamma_1 = nnx.Param(jnp.full((dim,), iv)) if iv is not None else None
         self.drop_path = DropPath(dpr, rngs=rngs)
-        self.norm2 = _ln(dim, eps, rngs=rngs)
+        self.norm2 = norm(dim, eps, rngs=rngs)
         self.mlp = _mlp(
             dim, cfg["mlp_ratio"], cfg["swiglu_mlp"], cfg["scale_mlp"], cfg["swiglu_align_to"],
-            eps, rngs,
+            eps, rngs, norm,
         )  # fmt: skip
-        self.gamma_2 = nnx.Param(jnp.full((dim,), iv)) if iv is not None else None
+        mlp_ls = iv is not None and not cfg["attn_only_layer_scale"]
+        self.gamma_2 = nnx.Param(jnp.full((dim,), iv)) if mlp_ls else None
 
     def __call__(self, x, rope=None):
         if self.post_norm:
@@ -294,6 +320,8 @@ _DEFAULTS = dict(
     rope_rotate_half=False, use_post_norm=False, use_pre_transformer_norm=False,
     use_post_transformer_norm=None, use_fc_norm=None, attn_pool_num_heads=None,
     attn_pool_mlp_ratio=None, dynamic_img_size=False, ref_feat_shape=None,
+    qk_norm=False, num_kv_heads=None, attn_only_layer_scale=False,
+    norm_type="layernorm", rope_rescale_coords=None,
 )  # fmt: skip
 
 
@@ -315,10 +343,16 @@ class Eva(ClassifierMixin, nnx.Module):
         post_norm = cfg["use_post_transformer_norm"]
         post_norm = (not fc_norm) if post_norm is None else post_norm
         p = cfg["patch_size"]
+        self.p = p
+        norm = _norm_fn(cfg["norm_type"])
         self.patch_embed = _PatchEmbed(
             in_chans, dim, p, not cfg["use_pre_transformer_norm"], rngs=rngs
         )
-        grid = (cfg["img_size"] // p,) * 2
+        img_size = cfg["img_size"]
+        if isinstance(img_size, (tuple, list)):
+            grid = (img_size[0] // p, img_size[1] // p)
+        else:
+            grid = (img_size // p,) * 2
         n = grid[0] * grid[1]
         self.cls_token = (
             nnx.Param(_trunc(rngs.params(), (1, 1, dim))) if cfg["class_token"] else None
@@ -330,6 +364,7 @@ class Eva(ClassifierMixin, nnx.Module):
             nnx.Param(_trunc(rngs.params(), (1, npos, dim))) if cfg["use_abs_pos_emb"] else None
         )
         rope = rope_table = None
+        self.rope_dynamic = False
         if cfg["use_rot_pos_emb"]:
             hd = dim // heads
             if cfg["rope_type"] == "mixed":
@@ -338,10 +373,12 @@ class Eva(ClassifierMixin, nnx.Module):
                     rngs=rngs,
                 )  # fmt: skip
             elif cfg["rope_type"] == "dinov3":
-                table = _rope_dinov3_table(
-                    hd, grid, cfg["rope_temperature"], cfg["rope_grid_indexing"]
-                )
-                rope_table = nnx.Variable(jnp.asarray(table))
+                self.rope_dynamic = bool(cfg["dynamic_img_size"])
+                if not self.rope_dynamic:
+                    table = _rope_dinov3_table(
+                        hd, grid, cfg["rope_temperature"], cfg["rope_grid_indexing"]
+                    )
+                    rope_table = nnx.Variable(jnp.asarray(table))
             else:
                 table = _rope_cat_table(
                     hd, grid, cfg["rope_temperature"], cfg["rope_grid_offset"],
@@ -349,17 +386,29 @@ class Eva(ClassifierMixin, nnx.Module):
                 )  # fmt: skip
                 rope_table = nnx.Variable(jnp.asarray(table))
         self.rope, self.rope_table = rope, rope_table
-        self.norm_pre = _ln(dim, eps, rngs=rngs) if cfg["use_pre_transformer_norm"] else None
+        self.rope_temperature = cfg["rope_temperature"]
+        self.rope_grid_indexing = cfg["rope_grid_indexing"]
+        self.head_dim = dim // heads
+        self.norm_pre = norm(dim, eps, rngs=rngs) if cfg["use_pre_transformer_norm"] else None
         dpr = [drop_path_rate * i / max(depth - 1, 1) for i in range(depth)]
+        kv_heads = cfg["num_kv_heads"]
         self.blocks = nnx.List(
             [
                 EvaBlock(
-                    dim, heads, cfg, self.num_prefix, eps, dpr[i], cfg["use_post_norm"], rngs=rngs
+                    dim,
+                    heads,
+                    cfg,
+                    self.num_prefix,
+                    eps,
+                    dpr[i],
+                    cfg["use_post_norm"],
+                    num_kv_heads=(kv_heads[i] if isinstance(kv_heads, (tuple, list)) else kv_heads),
+                    rngs=rngs,
                 )
                 for i in range(depth)
             ]
         )
-        self.norm = _ln(dim, eps, rngs=rngs) if post_norm else None
+        self.norm = norm(dim, eps, rngs=rngs) if post_norm else None
         self.attn_pool = (
             AttentionPoolLatent(
                 dim,
@@ -371,7 +420,7 @@ class Eva(ClassifierMixin, nnx.Module):
             if global_pool == "map"
             else None
         )
-        self.fc_norm = _ln(dim, eps, rngs=rngs) if fc_norm else None
+        self.fc_norm = norm(dim, eps, rngs=rngs) if fc_norm else None
         self.head_drop = nnx.Dropout(drop_rate, rngs=rngs)
         self.head = self._make_head(num_classes, rngs)
 
@@ -387,6 +436,7 @@ class Eva(ClassifierMixin, nnx.Module):
         self.head = self._make_head(num_classes, nnx.Rngs(0))
 
     def forward_features(self, x):
+        x_size = x.shape[1:3]
         x = self.patch_embed(x)
         B, _, C = x.shape
         prefix = []
@@ -406,6 +456,11 @@ class Eva(ClassifierMixin, nnx.Module):
             x = self.norm_pre(x)
         ropes = self.rope() if self.rope is not None else None
         table = self.rope_table[...] if self.rope_table is not None else None
+        if self.rope_dynamic:
+            grid = (x_size[0] // self.p, x_size[1] // self.p)
+            table = _rope_dinov3_table(
+                self.head_dim, grid, self.rope_temperature, self.rope_grid_indexing
+            )
         for i, blk in enumerate(self.blocks):
             x = blk(x, ropes[i] if ropes is not None else table)
         return self.norm(x) if self.norm is not None else x
@@ -460,3 +515,65 @@ def _make(name):
 
 for _name in EVA_CFGS:
     register_model(_make(_name))
+
+
+def _sapiens2_args(embed_dim, depth, num_heads, num_kv_heads, num_full_attn_blocks=8):
+    """Sapiens2's grouped-query attention keeps full heads in the first/last blocks."""
+    kv_heads = tuple(
+        num_heads
+        if (i < num_full_attn_blocks or i >= depth - num_full_attn_blocks)
+        else num_kv_heads
+        for i in range(depth)
+    )
+    return dict(
+        img_size=(1024, 768),
+        patch_size=16,
+        dynamic_img_size=True,
+        embed_dim=embed_dim,
+        depth=depth,
+        num_heads=num_heads,
+        num_kv_heads=kv_heads,
+        attn_type="rope",
+        qkv_fused=False,
+        qkv_bias=True,
+        qk_norm=True,
+        global_pool="token",
+        swiglu_mlp=True,
+        mlp_ratio=4.0,
+        init_values=1.0,
+        attn_only_layer_scale=True,
+        rope_type="dinov3",
+        rope_temperature=100,
+        rope_rotate_half=True,
+        rope_rescale_coords=2.0,
+        use_rot_pos_emb=True,
+        use_abs_pos_emb=False,
+        class_token=True,
+        num_reg_tokens=8,
+        use_fc_norm=False,
+        norm_type="rmsnorm",
+        norm_eps=1e-6,
+    )
+
+
+def _sapiens2(name, **model_args):
+    def entry(**kwargs):
+        model = Eva(**{**_sapiens2_args(**model_args), **kwargs})
+        model.default_cfg = _cfg(
+            input_size=(3, 1024, 768),
+            crop_pct=1.0,
+            crop_mode="squash",
+            interpolation="bilinear",
+            fixed_input_size=False,
+        )
+        return model
+
+    entry.__name__ = name
+    register_model(entry)
+
+
+_sapiens2("vit_base_patch16_sapiens2", embed_dim=768, depth=12, num_heads=12, num_kv_heads=6)
+_sapiens2("vit_large_patch16_sapiens2", embed_dim=1024, depth=24, num_heads=16, num_kv_heads=8)
+_sapiens2("vit_huge_patch16_sapiens2", embed_dim=1280, depth=32, num_heads=16, num_kv_heads=8)
+_sapiens2("vit_giant_patch16_sapiens2", embed_dim=1536, depth=40, num_heads=24, num_kv_heads=12)
+_sapiens2("vit_5b_patch16_sapiens2", embed_dim=2432, depth=56, num_heads=32, num_kv_heads=16)

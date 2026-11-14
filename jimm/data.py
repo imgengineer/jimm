@@ -623,7 +623,14 @@ class Loader:
     """Grain loader with a timm-style ``len`` and explicit worker cleanup."""
 
     def __init__(
-        self, loader, num_records, batch_size, drop_remainder, sampler=None, shard_count=1
+        self,
+        loader,
+        num_records,
+        batch_size,
+        drop_remainder,
+        sampler=None,
+        shard_count=1,
+        dataset=None,
     ):
         self._loader = loader
         self._prefetched_iterator = None
@@ -633,6 +640,9 @@ class Loader:
         self._drop = drop_remainder
         self._sampler = sampler
         self._shard_count = shard_count
+        # Original random-access source (e.g. ImageFolder), for metadata such as
+        # sample paths and class names without scanning the split twice.
+        self.dataset = dataset
 
     @staticmethod
     def _close_iterator(iterator):
@@ -797,6 +807,7 @@ def create_loader(
         std=std,
         normalize=normalize,
     )
+    source_dataset = source
     if pad_remainder:
         source = _PaddedDataSource(source, int(batch_size) * shard_options.shard_count)
     records = len(source)
@@ -863,4 +874,5 @@ def create_loader(
         batch_drop,
         sampler=offset_sampler,
         shard_count=shard_count,
+        dataset=source_dataset,
     )

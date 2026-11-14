@@ -74,15 +74,16 @@ def main(argv=None):
         model = create_model(
             args.model, num_classes=args.num_classes, rngs=nnx.Rngs(0), **args.model_kwargs
         )
-        states = []
+        total = None
         epochs = []
         for step in selected:
             epochs.append(manager.restore(step, model))
-            states.append(nnx.to_pure_dict(nnx.state(model, (nnx.Param, nnx.BatchStat))))
-        averaged = jax.tree.map(
-            lambda *leaves: jnp.mean(jnp.stack([jnp.asarray(x) for x in leaves]), axis=0),
-            *states,
-        )
+            state = nnx.to_pure_dict(nnx.state(model, (nnx.Param, nnx.BatchStat)))
+            if total is None:
+                total = jax.tree.map(lambda x: jnp.asarray(x, jnp.float32), state)
+            else:
+                total = jax.tree.map(lambda acc, x: acc + jnp.asarray(x, jnp.float32), total, state)
+        averaged = jax.tree.map(lambda x: x / len(selected), total)
         nnx.update(model, averaged)
         save_checkpoint(args.output, model, epoch=max(epochs))
     finally:

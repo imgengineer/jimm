@@ -14,9 +14,9 @@ import json
 import os
 
 import jax
+import jax.numpy as jnp
 from flax import nnx
 
-from jimm.data import ImageFolder
 from jimm.scripts_common import (
     add_data_args,
     add_model_args,
@@ -25,6 +25,7 @@ from jimm.scripts_common import (
     build_eval_loader,
     check_device,
     create_eval_model,
+    prefetch_batches,
     print_result,
     resolve_data_config,
     resolve_data_root,
@@ -83,41 +84,45 @@ def main(argv=None):
     model = create_eval_model(args, data_config)
     topk = min(args.topk, data_config["num_classes"])
 
-    dataset = ImageFolder(root)
-    class_names = {index: name for name, index in dataset.class_to_idx.items()}
-    predictions = []
-    offset = 0
     loader = build_eval_loader(args, data_config, root)
+    dataset = loader.dataset
+    if dataset is None:
+        raise RuntimeError("loader did not expose its image folder metadata")
+    class_names = {index: name for name, index in dataset.class_to_idx.items()}
+    batch_scores, batch_indices = [], []
     try:
-        for batch_index, batch in enumerate(loader):
-            logits = _logits(model, batch["image"], args.amp)
+        for batch_index, (images, _) in enumerate(prefetch_batches(loader, args.prefetch)):
+            logits = _logits(model, images, args.amp)
             scores = jax.nn.softmax(logits, axis=-1) if args.output_type == "prob" else logits
-            scores, indices = jax.device_get(jax.lax.top_k(scores, topk))
-            for row in range(indices.shape[0]):
-                sample = offset + row
-                if sample >= len(dataset.samples):
-                    raise RuntimeError("loader yielded more samples than the dataset contains")
-                path = dataset.samples[sample][0]
-                name = str(path) if args.fullname else path.name
-                record = {"filename": name}
-                for rank in range(topk):
-                    suffix = "" if topk == 1 else f"_{rank}"
-                    record[f"pred{suffix}"] = int(indices[row, rank])
-                    record[f"label{suffix}"] = class_names.get(int(indices[row, rank]), "<unknown>")
-                    record[f"{args.output_col or args.output_type}{suffix}"] = float(
-                        scores[row, rank]
-                    )
-                predictions.append(record)
-            offset += indices.shape[0]
+            scores, indices = jax.lax.top_k(scores, topk)
+            batch_scores.append(scores)
+            batch_indices.append(indices)
             if args.log_freq > 0 and (batch_index + 1) % args.log_freq == 0:
                 logger.info("Predict: [%d/%d]", batch_index + 1, len(loader))
     finally:
         loader.close()
 
-    if offset != len(dataset.samples):
+    if not batch_indices:
+        raise RuntimeError("inference loader produced no batches")
+    scores, indices = jax.device_get(
+        (jnp.concatenate(batch_scores), jnp.concatenate(batch_indices))
+    )
+    if indices.shape[0] != len(dataset.samples):
         raise RuntimeError(
-            f"loader produced {offset} predictions for {len(dataset.samples)} samples"
+            f"loader produced {indices.shape[0]} predictions for {len(dataset.samples)} samples"
         )
+
+    predictions = []
+    for row in range(indices.shape[0]):
+        path = dataset.samples[row][0]
+        name = str(path) if args.fullname else path.name
+        record = {"filename": name}
+        for rank in range(topk):
+            suffix = "" if topk == 1 else f"_{rank}"
+            record[f"pred{suffix}"] = int(indices[row, rank])
+            record[f"label{suffix}"] = class_names.get(int(indices[row, rank]), "<unknown>")
+            record[f"{args.output_col or args.output_type}{suffix}"] = float(scores[row, rank])
+        predictions.append(record)
 
     img_size = data_config["img_size"]
     results_file = args.results_file or f"{args.model}-{img_size}"

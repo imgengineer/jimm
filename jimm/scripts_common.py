@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import collections
 import csv
 import json
 import logging
@@ -30,6 +31,7 @@ __all__ = [
     "create_eval_model",
     "evaluate",
     "model_param_count",
+    "prefetch_batches",
     "print_result",
     "resolve_data_config",
     "resolve_data_root",
@@ -124,6 +126,9 @@ def add_runtime_args(parser, log_freq=10, results=True):
         help="cpu/gpu hint; JAX selects the backend, override with JAX_PLATFORMS",
     )
     parser.add_argument("--amp", action="store_true", help="bfloat16 compute")
+    parser.add_argument(
+        "--prefetch", type=int, default=2, help="batches to queue on device ahead of compute"
+    )
     parser.add_argument("--log-freq", type=int, default=log_freq, help="batch logging interval")
     if results:
         parser.add_argument("--results-file", default="", help="results output path")
@@ -227,31 +232,64 @@ def _eval_step(model, images, labels, amp=False):
     return losses.sum(), correct[:, 0].sum(), top5, images.shape[0]
 
 
-def evaluate(model, loader, amp=False, log_freq=10, logger=None):
-    """Run top-1/top-5 evaluation and return loss, accuracy, throughput and sample count."""
-    total_loss = 0.0
-    top1 = 0
-    top5 = 0
+def prefetch_batches(loader, prefetch_size=2):
+    """Queue batches on device ahead of compute so H2D transfers overlap evaluation."""
+    iterator = iter(loader)
+    if prefetch_size <= 0:
+        for batch in iterator:
+            yield jax.device_put(batch["image"]), jax.device_put(batch["label"])
+        return
+    queue = collections.deque()
+
+    def _put(batch):
+        return jax.device_put(batch["image"]), jax.device_put(batch["label"])
+
+    for _ in range(prefetch_size):
+        try:
+            queue.append(_put(next(iterator)))
+        except StopIteration:
+            break
+    while queue:
+        item = queue.popleft()
+        try:
+            queue.append(_put(next(iterator)))
+        except StopIteration:
+            pass
+        yield item
+
+
+def evaluate(model, loader, amp=False, log_freq=10, logger=None, prefetch=2):
+    """Run top-1/top-5 evaluation; device metrics sync only for logs and the return."""
+    total_loss = jnp.zeros((), jnp.float32)
+    top1 = jnp.zeros((), jnp.int32)
+    top5 = jnp.zeros((), jnp.int32)
     samples = 0
     start = time.perf_counter()
-    for batch_index, batch in enumerate(loader):
-        loss_sum, correct1, correct5, count = _eval_step(model, batch["image"], batch["label"], amp)
-        total_loss += float(loss_sum)
-        top1 += int(correct1)
-        top5 += int(correct5)
+    for batch_index, (images, labels) in enumerate(prefetch_batches(loader, prefetch)):
+        loss_sum, correct1, correct5, count = _eval_step(model, images, labels, amp)
+        total_loss = total_loss + loss_sum
+        top1 = top1 + correct1
+        top5 = top5 + correct5
         samples += int(count)
         if logger is not None and log_freq > 0 and (batch_index + 1) % log_freq == 0:
+            done_loss, done_top1 = jax.device_get((total_loss, top1))
             elapsed = max(time.perf_counter() - start, 1e-6)
             logger.info(
-                "Eval: [%d/%d] %.1f samples/s", batch_index + 1, len(loader), samples / elapsed
+                "Eval: [%d/%d] loss %.4f acc %.4f %.1f samples/s",
+                batch_index + 1,
+                len(loader),
+                float(done_loss) / samples,
+                float(done_top1) / samples,
+                samples / elapsed,
             )
     elapsed = max(time.perf_counter() - start, 1e-6)
     if samples == 0:
         raise ValueError("evaluation loader produced no samples")
+    loss, correct1, correct5 = jax.device_get((total_loss, top1, top5))
     return dict(
-        loss=total_loss / samples,
-        top1=top1 / samples,
-        top5=top5 / samples,
+        loss=float(loss) / samples,
+        top1=float(correct1) / samples,
+        top5=float(correct5) / samples,
         samples=samples,
         seconds=elapsed,
         samples_per_sec=samples / elapsed,

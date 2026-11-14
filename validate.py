@@ -44,8 +44,8 @@ def main(argv=None):
     args = _parse_args(argv)
     logger = setup_logging("validate")
     check_device(args.device)
-    if args.batch_size <= 0 or args.workers < 0:
-        raise SystemExit("--batch-size must be positive and --workers non-negative")
+    if args.batch_size <= 0 or args.workers < 0 or args.prefetch < 0:
+        raise SystemExit("--batch-size must be positive and --workers/--prefetch non-negative")
 
     data_config = resolve_data_config(args)
     model = create_eval_model(args, data_config)
@@ -61,7 +61,14 @@ def main(argv=None):
             data_config["interpolation"],
             args.split,
         )
-        metrics = evaluate(model, loader, amp=args.amp, log_freq=args.log_freq, logger=logger)
+        metrics = evaluate(
+            model,
+            loader,
+            amp=args.amp,
+            log_freq=args.log_freq,
+            logger=logger,
+            prefetch=args.prefetch,
+        )
     finally:
         loader.close()
 

@@ -305,7 +305,7 @@ uv run python bulk_runner.py --model-list 'resnet*' --results-file bench.csv \
     benchmark.py --amp -b 64
 ```
 
-`--checkpoint` accepts either an Orbax checkpoint directory (including a `CheckpointManager` step) or a local `.npz` file. `--pretrained` is accepted for timm CLI compatibility but raises an error because jimm registers no downloadable weights. `avg_checkpoints.py` ranks steps by `--metric-key` when the training run saved validation metrics, and falls back to the latest steps otherwise. ONNX export and timm/Hugging Face checkpoint conversion scripts are not provided because jimm checkpoints and models are native JAX/Flax.
+`--checkpoint` accepts either an Orbax checkpoint directory (including a `CheckpointManager` step) or a local `.npz` file. `validate.py` and `inference.py` accept `--prefetch N` (default 2) to queue batches on device and overlap host-to-device copies with compute; `benchmark.py` dispatches its timing iterations asynchronously and synchronizes once. `--pretrained` is accepted for timm CLI compatibility but raises an error because jimm registers no downloadable weights. `avg_checkpoints.py` ranks steps by `--metric-key` when the training run saved validation metrics, and falls back to the latest steps otherwise. ONNX export and timm/Hugging Face checkpoint conversion scripts are not provided because jimm checkpoints and models are native JAX/Flax.
 
 ### Training and validation
 

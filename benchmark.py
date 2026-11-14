@@ -95,13 +95,21 @@ def _samples_per_sec(iterations, batch_size, elapsed):
     return iterations * batch_size / max(elapsed, 1e-9)
 
 
+def _block(result):
+    if result is not None:
+        jax.block_until_ready(result)
+
+
 def _bench_infer(model, images, args):
     model.eval()
+    result = None
     for _ in range(args.num_warm_iter):
-        jax.block_until_ready(_infer(model, images, args.amp))
+        result = _infer(model, images, args.amp)
+    _block(result)
     start = time.perf_counter()
     for _ in range(args.num_bench_iter):
-        jax.block_until_ready(_infer(model, images, args.amp))
+        result = _infer(model, images, args.amp)
+    _block(result)
     elapsed = time.perf_counter() - start
     return _samples_per_sec(args.num_bench_iter, images.shape[0], elapsed)
 
@@ -110,11 +118,14 @@ def _bench_train(model, images, labels, args):
     model.train()
     optimizer = make_optimizer(model, 1e-3, 0.01, 1, 1)
     step = make_cached_train_step(model, optimizer, amp=args.amp)
+    result = None
     for _ in range(args.num_warm_iter):
-        jax.block_until_ready(step(images, labels, 0.0))
+        result = step(images, labels, 0.0)
+    _block(result)
     start = time.perf_counter()
     for _ in range(args.num_bench_iter):
-        jax.block_until_ready(step(images, labels, 0.0))
+        result = step(images, labels, 0.0)
+    _block(result)
     elapsed = time.perf_counter() - start
     return _samples_per_sec(args.num_bench_iter, images.shape[0], elapsed)
 

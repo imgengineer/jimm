@@ -18,7 +18,9 @@
 - Add an optional JAX persistent compilation cache (`--compilation-cache DIR`, or `JAX_COMPILATION_CACHE_DIR`) to the training, validation, inference and benchmark entry points.
 - Rotate Orbax checkpoints with background deletion so retention cleanup no longer blocks the save path; async checkpointing remains the default.
 - Order checkpoint overwrites against that background deletion. Re-saving an existing step (`save(force=True)`, used when a run resumes past its last checkpoint or two runs share an output directory) now waits for the queued removal of the old step, which previously could fail the save or delete the checkpoint it had just written while Orbax still listed the step. `CheckpointManager.close()` also waits for pending deletions and reports deletion failures instead of leaving them on Orbax's daemon thread.
-- Parametrize the per-model instantiation test: it is now one case per registered model instead of a single loop, so `pytest -n 8` spreads the ~1400 abstract constructions over the workers (39 s instead of a 354 s single-core test) and a failure names the offending model.
+- Parametrize the per-model instantiation test: it is now one case per registered model instead of a single loop, so `pytest -n 8` spreads the ~1400 abstract constructions over the workers (39 s instead of a 354 s single-core test) and a failure names the offending model. The testing docs now record the measured scaling: eight workers saturate a 14-core CPU, so more workers, thread-count limits and a shared compilation cache all fail to shorten the suite.
+- Test that a crash only pauses training instead of changing it: `tests/test_train.py` restarts a run from the epoch-1 checkpoint and asserts that the next epoch's parameters and AdamW moments match the uninterrupted run bitwise, which covers optimizer state, the model's drop-path RNG streams, and the data-stream offset replayed by `set_start_step`.
+- Let `load_checkpoint` read `CheckpointManager` step directories, which the evaluation scripts already document as accepted `--checkpoint` values: manager steps keep their metadata at the manager root, so the previous behaviour was a bare `FileNotFoundError` about a missing `_METADATA` file. Passing the manager root now raises a `ValueError` naming the step directory to use instead, and `tests/test_scripts.py` runs `validate.py --checkpoint <manager>/<step>` end to end. `CheckpointManager.save` also documents that Orbax serializes writes — only the commit stage is asynchronous — so there is no growing queue of pending saves to throttle.
 
 ### November 14, 2026
 
@@ -432,7 +434,7 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-Each worker builds real models, so size `-n` by cores *and* memory; eight workers take about 20 minutes on a 14-core CPU, while a serial run takes hours. `tests/test_models.py` instantiates every registered model (one parametrized case per model name, so the check spreads across workers) and runs a forward and backward pass for one model of each family. `tests/test_scripts.py` smoke-tests the top-level scripts against a tiny synthetic ImageFolder. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
+Each worker builds real models, so size `-n` by cores *and* memory; on a 14-core CPU eight workers need about 25 minutes, while a serial run takes hours. Eight workers already saturate such a machine: the suite spends roughly eight CPU-seconds per wall-clock second, raising `-n` to 12 shortens the heaviest subset (`-k architecture_family_forward_and_backward`, 6.5 minutes at `-n 8`) by only 3%, and `OMP_NUM_THREADS=1` changes nothing. A shared JAX compilation cache does not help either: JAX caches only programs that take more than a second to compile, and the per-test programs stay below that. `tests/test_models.py` instantiates every registered model (one parametrized case per model name, so the check spreads across workers) and runs a forward and backward pass for one model of each family; those per-family passes are the long poles, since each compiles separate training, gradient, evaluation and feature programs. `tests/test_scripts.py` smoke-tests the top-level scripts against a tiny synthetic ImageFolder. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
 
 ```bash
 uv run pytest tests/test_attention.py -q
@@ -575,6 +577,19 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `regnetv_040` | 2,885 img/s | 1,952 img/s | 1.48× |
 | `regnety_040_sgn` | 2,795 img/s | 704 img/s | 3.97× |
 | `regnetz_040` | 1,467 img/s | 773 img/s | 1.90× |
+
+### Startup and compilation
+
+A cold `create_model` is dominated by XLA compilation rather than by the initializers themselves: every unique parameter shape compiles its own RNG-init kernel on first use. On a fresh CPU process:
+
+| Model | cold `create_model` | warm persistent cache | second create, same process |
+| --- | ---: | ---: | ---: |
+| `resnet18` | 1.78 s | 0.24 s | 0.06 s |
+| `convnext_tiny` | 2.54 s | 0.44 s | 0.21 s |
+| `nfnet_f0` | 4.32 s | 0.64 s | 0.33 s |
+| `mobilevit_s` | 6.54 s | 0.74 s | 0.08 s |
+
+The cache is keyed by the compiled program, so it warms per model configuration (`num_classes`, input size, dtype, sharding). Point it at a directory with `--compilation-cache DIR` or `JAX_COMPILATION_CACHE_DIR` and reuse it across runs; the helper also sets `jax_persistent_cache_min_compile_time_secs=0` so even short compilations are stored. Fusing all initializers into a single compiled program was measured 2–2.8× faster for small and medium models but 1.7–8.5× slower for large ones (`sequencer2d_s`, `mobilenetv5_300m`), because XLA compile time grows faster than linearly with the number of operations in one program, so jimm keeps eager initialization and relies on the persistent cache instead.
 
 ### Attention
 

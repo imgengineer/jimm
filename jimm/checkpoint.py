@@ -10,6 +10,9 @@ Features:
 """
 
 import os
+import threading
+import time
+import warnings
 from typing import Any, Callable
 
 import jax.numpy as jnp
@@ -24,6 +27,19 @@ __all__ = [
 ]
 
 _checkpointer: ocp.StandardCheckpointer | None = None
+
+# `CheckpointManagerOptions.enable_background_delete=True` makes checkpoint removals
+# asynchronous: `delete()` and `close()` only hand the step numbers/stop signal to
+# Orbax's daemon deleter thread and return immediately. Callers therefore still see
+# the directory on disk (and can race a concurrent removal) unless jimm waits, which
+# is what these helpers do.
+_DELETION_POLL_INTERVAL = 0.01
+_DELETION_WAIT_TIMEOUT = 300.0
+
+
+def _background_deleter(manager: ocp.CheckpointManager) -> Any:
+    """Return the manager's checkpoint deleter, if this Orbax version exposes one."""
+    return getattr(manager, "_checkpoint_deleter", None)
 
 
 def _get_checkpointer() -> ocp.StandardCheckpointer:
@@ -242,6 +258,7 @@ class CheckpointManager:
             enable_background_delete=True,
         )
         self._manager = ocp.CheckpointManager(self.directory, options=options)
+        self._closed = False
 
     def save(
         self,
@@ -265,11 +282,52 @@ class CheckpointManager:
         step = int(step)
         if force and step in self._manager.all_steps():
             self._manager.delete(step)
+            self._wait_for_step_deletion(step)
         return self._manager.save(
             step,
             args=ocp.args.StandardSave(_item(model, optimizer, step, extra)),
             metrics=metrics,
         )
+
+    def _wait_for_step_deletion(self, step: int) -> None:
+        """Block until a queued background deletion of ``step`` reaches the filesystem.
+
+        With background deletion enabled, ``delete`` only queues the removal, so
+        re-saving the same step right away races the new write against a pending
+        ``rmtree`` of ``<directory>/<step>``: the concurrent removal can fail the save
+        outright, and one that lands late deletes the checkpoint that was just written.
+        Waiting for the directory to disappear first keeps overwrites ordered; only the
+        (rare) ``force`` path pays the wait.
+        """
+        path = os.path.join(self.directory, str(step))
+        deleter = _background_deleter(self._manager)
+        thread = getattr(deleter, "_delete_thread", None)
+        if thread is None:
+            # Deletion is not backgrounded (or Orbax changed its private API), so
+            # there is no queued removal to wait for.
+            if os.path.exists(path):
+                warnings.warn(
+                    f"cannot confirm the background deletion of checkpoint step {step} in"
+                    f" {self.directory}; overwriting it may race a pending deletion",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+            return
+        deadline = time.monotonic() + _DELETION_WAIT_TIMEOUT
+        while os.path.exists(path):
+            if not thread.is_alive():
+                # The deleter died (or never started): nothing will remove the path.
+                return
+            if time.monotonic() > deadline:
+                warnings.warn(
+                    f"timed out waiting for the background deletion of checkpoint step"
+                    f" {step} in {self.directory}; overwriting it may race the pending"
+                    f" deletion",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+                return
+            time.sleep(_DELETION_POLL_INTERVAL)
 
     def restore(self, step: int, model: nnx.Module, optimizer: nnx.Optimizer | None = None) -> int:
         """Restore step ``step`` into live model/optimizer; returns its epoch."""
@@ -301,9 +359,43 @@ class CheckpointManager:
         self._manager.wait_until_finished()
 
     def close(self) -> None:
-        """Wait for pending saves, surface any save errors, and release resources."""
+        """Wait for pending saves and deletions, surface errors, and release resources."""
+        if self._closed:
+            return
+        self._closed = True
         self._manager.check_for_errors()
         self._manager.close()
+        self._wait_for_background_deletions()
+
+    def _wait_for_background_deletions(self) -> None:
+        """Block until Orbax's deleter thread has drained its queue and exited.
+
+        ``CheckpointManager.close()`` only queues the shutdown sentinel on the daemon
+        deleter thread instead of joining it, so it can return while rotated-out
+        checkpoints are still being removed from disk. Anything that touches the output
+        directory right afterwards -- deleting a run directory in a test's teardown,
+        launching another job -- then races the deleter and fails with
+        ``FileNotFoundError``. Deletion failures are likewise only stored on the
+        deleter, where they are lost with the daemon thread, so report them here.
+        """
+        deleter = _background_deleter(self._manager)
+        thread = getattr(deleter, "_delete_thread", None)
+        if thread is not None and thread is not threading.current_thread() and thread.is_alive():
+            thread.join(timeout=_DELETION_WAIT_TIMEOUT)
+            if thread.is_alive():
+                warnings.warn(
+                    f"background checkpoint deletion is still running after"
+                    f" {_DELETION_WAIT_TIMEOUT:.0f}s in {self.directory}",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+        error = getattr(deleter, "_exception", None)
+        if error is not None:
+            warnings.warn(
+                f"background checkpoint deletion failed: {error!r}",
+                RuntimeWarning,
+                stacklevel=3,
+            )
 
     def __enter__(self) -> "CheckpointManager":
         return self

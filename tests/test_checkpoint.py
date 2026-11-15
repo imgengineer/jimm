@@ -1,7 +1,9 @@
 """Unit tests for jimm.checkpoint."""
 
+import os
 import shutil
 import tempfile
+import time
 
 import jax
 import jax.numpy as jnp
@@ -184,6 +186,76 @@ def test_checkpoint_manager_context_manager():
             mgr.save(0, m)
             mgr.wait_until_finished()
             assert mgr.latest_step() == 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _slow_background_deletions(mgr, delay=0.1):
+    """Slow down Orbax's background deleter so queued removals stay observable."""
+    deleter = mgr._manager._checkpoint_deleter
+    original = deleter._standard_deleter.delete
+
+    def slow_delete(step):
+        time.sleep(delay)
+        original(step)
+
+    deleter._standard_deleter.delete = slow_delete
+
+
+def _deleter_thread(mgr):
+    return mgr._manager._checkpoint_deleter._delete_thread
+
+
+def test_checkpoint_manager_overwrite_does_not_race_background_deletion():
+    """Re-saving a step must not race the queued removal of that same step.
+
+    With background deletion the removal of an overwritten step is only queued, so a
+    re-save used to run concurrently with it: the two removals of ``<dir>/<step>`` could
+    fail the save, or the queued removal could land afterwards and discard the fresh
+    checkpoint while Orbax still listed the step.
+    """
+    root = tempfile.mkdtemp()
+    try:
+        mgr = CheckpointManager(f"{root}/run")
+        model, optimizer = _trained_mlp(0)
+        mgr.save(0, model, optimizer)
+        mgr.wait_until_finished()
+        _slow_background_deletions(mgr)
+
+        mgr.save(0, model, optimizer)  # force-overwrite of the existing step 0
+        mgr.wait_until_finished()
+        assert mgr.all_steps() == [0]
+
+        fresh, fresh_opt = _trained_mlp(99)
+        assert mgr.restore(0, fresh, fresh_opt) == 0
+        x = jnp.ones((2, 8))
+        np.testing.assert_allclose(np.asarray(fresh(x)), np.asarray(model(x)), rtol=1e-6)
+
+        mgr.close()  # drains the deletion queue, so the step directory must have survived
+        assert os.path.isdir(f"{root}/run/0")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_checkpoint_manager_close_waits_for_background_deletions():
+    """close() must not return while rotated-out checkpoints are still being deleted."""
+    root = tempfile.mkdtemp()
+    try:
+        mgr = CheckpointManager(f"{root}/run", max_to_keep=1)
+        _slow_background_deletions(mgr)
+        model = _trained_mlp(0)[0]
+        for step in range(3):
+            mgr.save(step, model)
+            mgr.wait_until_finished()
+        thread = _deleter_thread(mgr)
+
+        mgr.close()
+
+        # Every deletion queued before close() has reached the filesystem...
+        assert [s for s in range(3) if os.path.isdir(f"{root}/run/{s}")] == [2]
+        # ...and the deleter is gone, so nothing can mutate the directory afterwards.
+        assert not thread.is_alive()
+        shutil.rmtree(root)  # a live deleter would race this teardown
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

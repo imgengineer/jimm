@@ -15,18 +15,20 @@ MODULES = sorted(list_modules())
 ALL_MODELS = sorted(list_models())
 
 
-def test_all_registered_model_entrypoints_instantiation():
-    """Verify that every registered model entrypoint instantiates cleanly."""
-    for i, name in enumerate(ALL_MODELS):
-        m = nnx.eval_shape(lambda: create_model(name, num_classes=5, rngs=nnx.Rngs(0)))
-        assert isinstance(m, nnx.Module)
-        assert hasattr(m, "num_features")
-        assert getattr(m, "num_features") > 0
-        assert hasattr(m, "default_cfg")
-        assert "input_size" in getattr(m, "default_cfg")
-        del m
-        if (i + 1) % 20 == 0:
-            gc.collect()
+@pytest.mark.parametrize("name", ALL_MODELS)
+def test_all_registered_model_entrypoints_instantiation(name):
+    """Verify that every registered model entrypoint instantiates cleanly.
+
+    Parametrized per model name so that ``pytest -n 8`` can distribute the
+    ~1400 abstract constructions across workers; as one loop it pinned the
+    whole check to a single core and dominated the suite runtime.
+    """
+    m = nnx.eval_shape(lambda: create_model(name, num_classes=5, rngs=nnx.Rngs(0)))
+    assert isinstance(m, nnx.Module)
+    assert hasattr(m, "num_features")
+    assert getattr(m, "num_features") > 0
+    assert hasattr(m, "default_cfg")
+    assert "input_size" in getattr(m, "default_cfg")
 
 
 @pytest.mark.parametrize("module_name", MODULES)

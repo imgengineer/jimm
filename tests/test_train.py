@@ -8,10 +8,12 @@ import cv2  # pyright: ignore[reportMissingImports]
 import jax
 import jax.numpy as jnp
 import numpy as np
+import orbax.checkpoint as ocp
 import pytest
 from flax import nnx
 
 from jimm.augment import MixupCutmix
+from jimm.checkpoint import CheckpointManager
 from jimm.data import create_loader
 from jimm.models.nfnet import ScaledStdConv
 from jimm.registry import create_model
@@ -692,6 +694,102 @@ def test_main_training_cli_resume(temp_dataset, capsys):
         assert os.path.exists(f"{out_dir}/resnet18/2")
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def _restored_run_state(manager_directory: str, step: int) -> tuple[dict, dict]:
+    """Read the raw model/optimizer dictionaries stored at ``step``."""
+    manager = ocp.CheckpointManager(manager_directory)
+    try:
+        item = manager.restore(step, args=ocp.args.StandardRestore())
+    finally:
+        manager.close()
+    return item["model"], item["optimizer"]
+
+
+def _assert_state_identical(actual: dict, expected: dict, label: str) -> None:
+    actual_leaves = jax.tree.leaves(actual)
+    expected_leaves = jax.tree.leaves(expected)
+    assert len(actual_leaves) == len(expected_leaves), label
+    for index, (a, b) in enumerate(zip(actual_leaves, expected_leaves)):
+        a, b = jnp.asarray(a), jnp.asarray(b)
+        if jnp.issubdtype(a.dtype, jax.dtypes.prng_key):
+            a = jax.random.key_data(a)
+        if jnp.issubdtype(b.dtype, jax.dtypes.prng_key):
+            b = jax.random.key_data(b)
+        assert np.array_equal(np.asarray(a), np.asarray(b)), f"{label} (leaf {index})"
+
+
+def test_resume_reproduces_uninterrupted_training(temp_dataset, capsys, monkeypatch):
+    """A crash must only pause training, not change the trajectory it was on.
+
+    The interrupted branch uses the same ``--epochs`` as the uninterrupted one so the
+    cosine schedule matches, and stops right after the epoch-1 checkpoint commits. For
+    epoch 2 to match bitwise, the restore has to bring back AdamW moments, the model's
+    RNG streams (drop path), and the data-stream offset, which ``set_start_step``
+    replays. Mixup and random erasing also run through the per-step RNG.
+    """
+    root = tempfile.mkdtemp()
+    try:
+        common = [
+            "--model",
+            "resnet18",
+            "--data-dir",
+            temp_dataset,
+            "--batch-size",
+            "4",
+            "--img-size",
+            "32",
+            "--num-classes",
+            "2",
+            "--workers",
+            "0",
+            "--log-interval",
+            "1",
+            "--seed",
+            "0",
+            "--drop-path",
+            "0.2",
+            "--mixup",
+            "0.2",
+            "--reprob",
+            "0.3",
+        ]
+        uninterrupted = f"{root}/uninterrupted"
+        interrupted = f"{root}/interrupted"
+
+        main(common + ["--epochs", "3", "--output", uninterrupted])
+        capsys.readouterr()
+
+        # Two epochs of the three-epoch schedule, then "crash" once epoch 1 is safe.
+        original_save = CheckpointManager.save
+
+        def save_then_stop(self, step, *args, **kwargs):
+            saved = original_save(self, step, *args, **kwargs)
+            if int(step) == 1:
+                self.wait_until_finished()
+                raise SystemExit(0)
+            return saved
+
+        monkeypatch.setattr(CheckpointManager, "save", save_then_stop)
+        with pytest.raises(SystemExit):
+            main(common + ["--epochs", "3", "--output", interrupted])
+        monkeypatch.undo()
+
+        # Restart from the crash and finish the run.
+        main(common + ["--epochs", "3", "--output", interrupted, "--resume"])
+        assert "[Resume] Restored checkpoint at epoch 1" in capsys.readouterr().out
+
+        for step in (1, 2):
+            expected_model, expected_optimizer = _restored_run_state(
+                f"{uninterrupted}/resnet18", step
+            )
+            actual_model, actual_optimizer = _restored_run_state(f"{interrupted}/resnet18", step)
+            _assert_state_identical(actual_model, expected_model, f"model at step {step}")
+            _assert_state_identical(
+                actual_optimizer, expected_optimizer, f"optimizer at step {step}"
+            )
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_prefetch_to_device():

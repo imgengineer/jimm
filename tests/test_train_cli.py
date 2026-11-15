@@ -11,18 +11,19 @@ from flax import nnx
 import jimm.train as train_module
 from jimm.checkpoint import CheckpointManager
 from jimm.optim import make_optimizer
-from jimm.train import _parse_args, main
+from jimm.train import main
+from jimm.train_cli import parse_args
 
 
 def test_cli_aliases_and_defaults():
-    args = _parse_args(["dataset"])
+    args = parse_args(["dataset"])
     assert args.data_dir == "dataset"
     assert args.workers == 4 and args.amp is True
     assert args.validation_batch_size == args.batch_size == 128
     assert args.opt == "adamw" and args.sched == "cosine"
-    assert args.attn_autotune is False and _parse_args(["dataset", "--attn-autotune"]).attn_autotune
+    assert args.attn_autotune is False and parse_args(["dataset", "--attn-autotune"]).attn_autotune
 
-    args = _parse_args(
+    args = parse_args(
         [
             "dataset",
             "-b",
@@ -50,7 +51,7 @@ def test_cli_aliases_and_defaults():
     assert (args.mixup_alpha, args.cutmix_alpha, args.max_to_keep) == (0.8, 1.0, 3)
     assert args.global_pool == "avg" and args.amp is False and args.resume is True
 
-    legacy = _parse_args(
+    legacy = parse_args(
         [
             "--data-dir",
             "dataset",
@@ -87,7 +88,7 @@ def test_config_precedence_and_model_kwargs(tmp_path):
             }
         )
     )
-    args = _parse_args(
+    args = parse_args(
         [
             "-c",
             str(config),
@@ -136,16 +137,16 @@ def test_config_rejects_invalid_values(tmp_path, settings):
     config = tmp_path / "invalid.yaml"
     config.write_text(yaml.safe_dump(settings))
     with pytest.raises(SystemExit, match="2"):
-        _parse_args(["dataset", "--config", str(config)])
+        parse_args(["dataset", "--config", str(config)])
 
 
 def test_config_rejects_missing_and_malformed_files(tmp_path):
     config = tmp_path / "invalid.yaml"
     with pytest.raises(SystemExit, match="2"):
-        _parse_args(["dataset", "-c", str(config)])
+        parse_args(["dataset", "-c", str(config)])
     config.write_text("model: [resnet18\n")
     with pytest.raises(SystemExit, match="2"):
-        _parse_args(["dataset", "-c", str(config)])
+        parse_args(["dataset", "-c", str(config)])
 
 
 @pytest.mark.parametrize(
@@ -164,7 +165,7 @@ def test_config_rejects_missing_and_malformed_files(tmp_path):
 )
 def test_cli_rejects_invalid_new_options(options):
     with pytest.raises(SystemExit, match="2"):
-        _parse_args(["dataset", *options])
+        parse_args(["dataset", *options])
 
 
 def test_config_training_and_external_resume(tmp_path, monkeypatch, capsys):
@@ -253,7 +254,7 @@ def test_config_training_and_external_resume(tmp_path, monkeypatch, capsys):
     assert mixups[0].cutmix_minmax == (0.3, 0.7)
     assert mixups[0].switch_prob == 0.25
     saved_args = first / "args.yaml"
-    resolved = _parse_args(["-c", str(saved_args)])
+    resolved = parse_args(["-c", str(saved_args)])
     assert resolved.data_dir == str(tmp_path / "data")
     assert resolved.experiment == "first" and resolved.seed == 23
     assert resolved.global_pool == "avg" and resolved.validation_batch_size == 3

@@ -16,14 +16,11 @@ from jimm.augment import MixupCutmix
 from jimm.checkpoint import CheckpointManager
 from jimm.data import create_loader
 from jimm.models.nfnet import ScaledStdConv
+from jimm.preprocess import ImagePreprocess, mixup_cutmix, normalize_images, random_erasing
 from jimm.registry import create_model
 from jimm.train import (
-    ImagePreprocess,
     StepMetrics,
     _mean_metrics,
-    _mixup_cutmix_jax,
-    _normalize_images,
-    _random_erasing_jax,
     _validate_batch,
     cross_entropy,
     eval_step,
@@ -347,13 +344,13 @@ def test_uint8_loader_with_device_normalization_matches_host_normalization(temp_
         assert len(host_batches) == len(device_batches) == 3
         for expected, actual in zip(host_batches, device_batches):
             assert actual["image"].dtype == np.uint8
-            normalized = jax.jit(_normalize_images, static_argnums=1)(actual["image"], preprocess)
+            normalized = jax.jit(normalize_images, static_argnums=1)(actual["image"], preprocess)
             np.testing.assert_allclose(normalized, expected["image"], rtol=1e-6, atol=1e-6)
     finally:
         host.close()
         device.close()
     with pytest.raises(ValueError, match="uint8"):
-        _normalize_images(jnp.zeros((1, 2, 2, 3)), preprocess)
+        normalize_images(jnp.zeros((1, 2, 2, 3)), preprocess)
     with pytest.raises(ValueError, match="normalize"):
         create_loader(f"{temp_dataset}/val", batch_size=1, normalize=1)
 
@@ -363,7 +360,7 @@ def test_device_random_erasing_matches_timm_box_semantics(mode):
     images = jnp.ones((64, 32, 32, 3))
     preprocess = ImagePreprocess(re_prob=1.0, re_mode=mode)
     erased = np.asarray(
-        jax.jit(_random_erasing_jax, static_argnums=2)(images, jax.random.key(0), preprocess)
+        jax.jit(random_erasing, static_argnums=2)(images, jax.random.key(0), preprocess)
     )
     for sample in erased:
         changed = np.any(sample != 1.0, axis=-1)
@@ -380,11 +377,11 @@ def test_device_random_erasing_matches_timm_box_semantics(mode):
             assert np.ptp(box) > 0
 
     half = ImagePreprocess(re_prob=0.5, re_count=3)
-    erased = np.asarray(_random_erasing_jax(jnp.ones((256, 16, 16, 3)), jax.random.key(1), half))
+    erased = np.asarray(random_erasing(jnp.ones((256, 16, 16, 3)), jax.random.key(1), half))
     fractions = (erased[..., 0] == 0).mean(axis=(1, 2))
     assert 0.35 <= np.mean(fractions > 0) <= 0.65
     assert fractions.max() <= 0.36  # boxes share the area budget
-    unchanged = _random_erasing_jax(images, jax.random.key(0), ImagePreprocess(re_prob=0.0))
+    unchanged = random_erasing(images, jax.random.key(0), ImagePreprocess(re_prob=0.0))
     np.testing.assert_array_equal(unchanged, images)
 
 
@@ -472,9 +469,7 @@ def test_jax_mixup_cutmix_modes():
                 mode=mode,
                 num_classes=4,
             )
-            mixed_images, mixed_labels = _mixup_cutmix_jax(
-                images, labels, jax.random.PRNGKey(0), config
-            )
+            mixed_images, mixed_labels = mixup_cutmix(images, labels, jax.random.PRNGKey(0), config)
             assert mixed_images.shape == images.shape
             assert mixed_labels.shape == (4, 4)
             np.testing.assert_allclose(np.asarray(mixed_labels).sum(axis=1), 1.0)
@@ -493,7 +488,7 @@ def test_jax_mixup_identity_applies_label_smoothing():
     )
     # PRNGKey(0) draws uniform ~0.948 >= prob, so this batch takes the
     # identity (skip-mixing) branch.
-    mixed_images, mixed_labels = _mixup_cutmix_jax(images, labels, jax.random.PRNGKey(0), config)
+    mixed_images, mixed_labels = mixup_cutmix(images, labels, jax.random.PRNGKey(0), config)
     # Batches that skip mixing must still receive smoothed soft targets.
     expected = np.eye(4) * 0.9 + 0.1 / 4
     np.testing.assert_allclose(np.asarray(mixed_labels), expected)

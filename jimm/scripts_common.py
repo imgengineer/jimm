@@ -2,7 +2,6 @@
 
 import argparse
 import ast
-import collections
 import csv
 import json
 import logging
@@ -17,6 +16,7 @@ from .checkpoint import load_checkpoint
 from .compilation import configure_compilation_cache
 from .data import IMAGENET_MEAN, IMAGENET_STD, create_loader
 from .loss import _cross_entropy_losses
+from .prefetch import prefetch_stream
 from .registry import create_model, get_default_cfg
 from .train import _forward_with_precision
 from .weights import load_pretrained
@@ -245,28 +245,11 @@ def _eval_step(model, images, labels, amp=False):
 
 def prefetch_batches(loader, prefetch_size=2):
     """Queue batches on device ahead of compute so H2D transfers overlap evaluation."""
-    iterator = iter(loader)
-    if prefetch_size <= 0:
-        for batch in iterator:
-            yield jax.device_put(batch["image"]), jax.device_put(batch["label"])
-        return
-    queue = collections.deque()
 
     def _put(batch):
         return jax.device_put(batch["image"]), jax.device_put(batch["label"])
 
-    for _ in range(prefetch_size):
-        try:
-            queue.append(_put(next(iterator)))
-        except StopIteration:
-            break
-    while queue:
-        item = queue.popleft()
-        try:
-            queue.append(_put(next(iterator)))
-        except StopIteration:
-            pass
-        yield item
+    yield from prefetch_stream(loader, _put, prefetch_size)
 
 
 def evaluate(model, loader, amp=False, log_freq=10, logger=None, prefetch=2):

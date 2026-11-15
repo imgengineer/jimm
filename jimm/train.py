@@ -48,6 +48,7 @@ from flax import nnx  # pyright: ignore[reportMissingImports]
 
 from .attention import set_attention_autotuning
 from .checkpoint import CheckpointManager
+from .compilation import configure_compilation_cache
 from .data import IMAGENET_MEAN, IMAGENET_STD, MixupCutmix, create_loader
 from .loss import _cross_entropy_losses, cross_entropy
 from .models.nfnet import ScaledStdConv
@@ -915,11 +916,7 @@ def _parse_args(argv=None):
 def main(argv=None):
     args = _parse_args(argv)
 
-    if args.compilation_cache:
-        cache_dir = os.path.abspath(os.path.expanduser(args.compilation_cache))
-        os.makedirs(cache_dir, exist_ok=True)
-        jax.config.update("jax_compilation_cache_dir", cache_dir)
-        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
+    configure_compilation_cache(args.compilation_cache)
 
     # 1. Initialize distributed cluster if needed
     init_distributed(args.dist_coordinator_address, args.dist_num_processes, args.dist_process_id)

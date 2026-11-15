@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from flax import nnx
 
 from .checkpoint import load_checkpoint
+from .compilation import configure_compilation_cache
 from .data import IMAGENET_MEAN, IMAGENET_STD, create_loader
 from .loss import _cross_entropy_losses
 from .registry import create_model, get_default_cfg
@@ -69,18 +70,6 @@ def check_device(device):
             f"--device {device} requested, but JAX is running on {backend}; "
             "set JAX_PLATFORMS=cpu or JAX_PLATFORMS=cuda before launching"
         )
-
-
-def configure_compilation_cache(path):
-    """Enable JAX's persistent compilation cache; must run before the first compile."""
-    if not path:
-        return
-    path = os.path.abspath(os.path.expanduser(path))
-    os.makedirs(path, exist_ok=True)
-    jax.config.update("jax_compilation_cache_dir", path)
-    # Cache every compiled program, including short ones; training/validation
-    # have few jitted functions, so the extra writes are negligible.
-    jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
 
 
 def setup_logging(name, level=logging.INFO):

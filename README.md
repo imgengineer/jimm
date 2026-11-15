@@ -22,6 +22,8 @@
 - Test that a crash only pauses training instead of changing it: `tests/test_train.py` restarts a run from the epoch-1 checkpoint and asserts that the next epoch's parameters and AdamW moments match the uninterrupted run bitwise, which covers optimizer state, the model's drop-path RNG streams, and the data-stream offset replayed by `set_start_step`.
 - Let `load_checkpoint` read `CheckpointManager` step directories, which the evaluation scripts already document as accepted `--checkpoint` values: manager steps keep their metadata at the manager root, so the previous behaviour was a bare `FileNotFoundError` about a missing `_METADATA` file. Passing the manager root now raises a `ValueError` naming the step directory to use instead, and `tests/test_scripts.py` runs `validate.py --checkpoint <manager>/<step>` end to end. `CheckpointManager.save` also documents that Orbax serializes writes — only the commit stage is asynchronous — so there is no growing queue of pending saves to throttle.
 
+- Split `jimm/train.py` (1290 lines) along its responsibilities without changing behaviour: argument parsing now lives in `jimm/train_cli.py`, device-side normalization/random erasing/Mixup-CutMix in `jimm/preprocess.py`, and the double-buffered host-to-device prefetch loop in `jimm/prefetch.py`, which the validation helpers in `jimm/scripts_common.py` now reuse instead of keeping a second copy. `main()` reads as a sequence of named phases (runtime setup, model/loader/sharding construction, resume, per-epoch validation), and `jimm/train.py` re-exports the moved names, so existing `jimm.train` imports keep working.
+
 ### November 14, 2026
 
 - Close the remaining gap to timm 1.0.30: the registry now contains every timm 1.0.30 model name (1351) plus 9 additional jimm-only names. Model module grouping and the default `input_size`, `crop_pct`, `interpolation`, `mean` and `std` metadata now match timm for all 1351 shared names. New families are MobileViTv2 (seven widths), GhostNetV2/V3, the PP-LCNetV2 small/base/large models, MambaOut's re-trained `_rw` variants, EfficientViT-MSRA (M0–M5), EfficientViT-MIT B3 and L1–L3, PNASNet-5-Large, the legacy Cadene SE-ResNet/SE-ResNeXt/SENet-154/Xception registrations, Sapiens2 (B/L/H/g/5B), and the pruned EfficientNet-B1/B2/B3, EfficientNet-ES/EL and ECA-ResNet-50d/101d models. Parameter counts match timm for every new entry.
@@ -269,7 +271,7 @@ finally:
 
 Training loaders repeat across epochs and drop incomplete batches by default. Evaluation loaders run once and keep the remainder. For distributed evaluation outside the training CLI, pass `pad_remainder=True` and exclude samples where `batch["valid"]` is false.
 
-`normalize=False` yields uint8 images and skips normalization and random erasing, reducing worker, inter-process, and host-to-device traffic fourfold. Pass the matching `jimm.train.ImagePreprocess(mean, std, re_prob, re_mode, re_count)` to `make_cached_train_step` or `make_cached_eval_step` to normalize inside the compiled step; training steps then also apply timm random erasing and need an `rng`. The training CLI uses this path.
+`normalize=False` yields uint8 images and skips normalization and random erasing, reducing worker, inter-process, and host-to-device traffic fourfold. Pass the matching `jimm.preprocess.ImagePreprocess(mean, std, re_prob, re_mode, re_count)` to `make_cached_train_step` or `make_cached_eval_step` to normalize inside the compiled step; training steps then also apply timm random erasing and need an `rng`. The training CLI uses this path.
 
 `in_memory=True` enables a shared decoded-image cache under `~/.cache/jimm/image-cache`, configurable with `JIMM_CACHE_DIR`. It preserves source resolution so random crops and other augmentation still run on each read.
 
@@ -611,7 +613,10 @@ jimm/
   features.py       Intermediate feature extraction
   data.py           ImageFolder datasets and Grain loaders
   augment.py        Image augmentation and policies
-  train.py          Optimizer, train/eval steps, and training CLI
+  train.py          Optimizer, train/eval steps, and the training loop
+  train_cli.py      Training command-line parsing and configuration files
+  preprocess.py     Device-side normalization, random erasing, and Mixup/CutMix
+  prefetch.py       Double-buffered host-to-device batch prefetching
   checkpoint.py     Orbax model and optimizer checkpointing
   weights.py        Array state-dict conversion and NPZ loading
   scripts_common.py Shared argument, data, model and metric helpers

@@ -66,6 +66,26 @@ def test_validate_script(dataset, tmp_path):
     assert results.exists()
 
 
+def test_validate_compilation_cache(dataset, tmp_path):
+    cache = tmp_path / "jax-cache"
+    _run(
+        "validate.py",
+        "--data-dir",
+        dataset,
+        "--model",
+        MODEL,
+        "--num-classes",
+        2,
+        "--img-size",
+        64,
+        "-b",
+        2,
+        "--compilation-cache",
+        cache,
+    )
+    assert any(cache.rglob("*"))
+
+
 def test_inference_script(dataset, tmp_path):
     _run(
         "inference.py",

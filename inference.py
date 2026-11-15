@@ -24,6 +24,7 @@ from jimm.scripts_common import (
     add_runtime_args,
     build_eval_loader,
     check_device,
+    configure_compilation_cache,
     create_eval_model,
     prefetch_batches,
     print_result,
@@ -74,6 +75,7 @@ def main(argv=None):
     args = _parse_args(argv)
     logger = setup_logging("inference")
     check_device(args.device)
+    configure_compilation_cache(args.compilation_cache)
     if args.batch_size <= 0 or args.workers < 0:
         raise SystemExit("--batch-size must be positive and --workers non-negative")
     if args.topk <= 0:

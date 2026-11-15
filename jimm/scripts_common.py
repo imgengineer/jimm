@@ -28,6 +28,7 @@ __all__ = [
     "add_runtime_args",
     "build_eval_loader",
     "check_device",
+    "configure_compilation_cache",
     "create_eval_model",
     "evaluate",
     "model_param_count",
@@ -68,6 +69,18 @@ def check_device(device):
             f"--device {device} requested, but JAX is running on {backend}; "
             "set JAX_PLATFORMS=cpu or JAX_PLATFORMS=cuda before launching"
         )
+
+
+def configure_compilation_cache(path):
+    """Enable JAX's persistent compilation cache; must run before the first compile."""
+    if not path:
+        return
+    path = os.path.abspath(os.path.expanduser(path))
+    os.makedirs(path, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", path)
+    # Cache every compiled program, including short ones; training/validation
+    # have few jitted functions, so the extra writes are negligible.
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
 
 
 def setup_logging(name, level=logging.INFO):
@@ -128,6 +141,12 @@ def add_runtime_args(parser, log_freq=10, results=True):
     parser.add_argument("--amp", action="store_true", help="bfloat16 compute")
     parser.add_argument(
         "--prefetch", type=int, default=2, help="batches to queue on device ahead of compute"
+    )
+    parser.add_argument(
+        "--compilation-cache",
+        default="",
+        metavar="DIR",
+        help="JAX persistent compilation cache directory",
     )
     parser.add_argument("--log-freq", type=int, default=log_freq, help="batch logging interval")
     if results:

@@ -13,6 +13,11 @@
 
 ## What's New
 
+### November 15, 2026
+
+- Add an optional JAX persistent compilation cache (`--compilation-cache DIR`, or `JAX_COMPILATION_CACHE_DIR`) to the training, validation, inference and benchmark entry points.
+- Rotate Orbax checkpoints with background deletion so retention cleanup no longer blocks the save path; async checkpointing remains the default.
+
 ### November 14, 2026
 
 - Close the remaining gap to timm 1.0.30: the registry now contains every timm 1.0.30 model name (1351) plus 9 additional jimm-only names. Model module grouping and the default `input_size`, `crop_pct`, `interpolation`, `mean` and `std` metadata now match timm for all 1351 shared names. New families are MobileViTv2 (seven widths), GhostNetV2/V3, the PP-LCNetV2 small/base/large models, MambaOut's re-trained `_rw` variants, EfficientViT-MSRA (M0–M5), EfficientViT-MIT B3 and L1–L3, PNASNet-5-Large, the legacy Cadene SE-ResNet/SE-ResNeXt/SENet-154/Xception registrations, Sapiens2 (B/L/H/g/5B), and the pruned EfficientNet-B1/B2/B3, EfficientNet-ES/EL and ECA-ResNet-50d/101d models. Parameter counts match timm for every new entry.
@@ -125,7 +130,7 @@ Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/pat
 - **Grouped convolutions:** `create_model` routes grouped `nnx.Conv` layers through `jimm.layers.conv_general_dilated`, a drop-in for `jax.lax.conv_general_dilated` that computes two kernel gradients XLA lowers poorly on GPU: depthwise kernels as large as their feature map, and dilated grouped convolutions. Apply it to other models with `jimm.layers.use_fast_grouped_conv_grads(model)`.
 - **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix. Photometric and AutoAugment operations follow timm's PIL semantics with OpenCV lookup tables, blends, and affine warps (OpenCV rounding can differ from Pillow by a few intensity levels); the training CLI normalizes uint8 batches and applies random erasing, Mixup, and CutMix on device.
 - **Training:** AdamW with cosine scheduling and warmup, label smoothing, gradient clipping, optional bfloat16 computation, and JAX SPMD data parallelism or FSDP.
-- **Checkpointing:** asynchronous Orbax model/optimizer checkpoints, retention settings, and epoch resume with restored data position.
+- **Checkpointing:** asynchronous Orbax model/optimizer checkpoints, background deletion of rotated checkpoints, retention settings, and epoch resume with restored data position.
 - **Scripts:** timm-style `train.py`, `validate.py`, `inference.py`, `benchmark.py`, checkpoint averaging/cleanup, per-model bulk runs and a multi-host launcher (see [Scripts](#scripts)).
 
 Images have shape **`(batch, height, width, channels)`**. `default_cfg["input_size"]` keeps timm's metadata convention `(channels, height, width)`; use its size and normalization settings when preparing model inputs.
@@ -305,7 +310,7 @@ uv run python bulk_runner.py --model-list 'resnet*' --results-file bench.csv \
     benchmark.py --amp -b 64
 ```
 
-`--checkpoint` accepts either an Orbax checkpoint directory (including a `CheckpointManager` step) or a local `.npz` file. `validate.py` and `inference.py` accept `--prefetch N` (default 2) to queue batches on device and overlap host-to-device copies with compute; `benchmark.py` dispatches its timing iterations asynchronously and synchronizes once. `--pretrained` is accepted for timm CLI compatibility but raises an error because jimm registers no downloadable weights. `avg_checkpoints.py` ranks steps by `--metric-key` when the training run saved validation metrics, and falls back to the latest steps otherwise. ONNX export and timm/Hugging Face checkpoint conversion scripts are not provided because jimm checkpoints and models are native JAX/Flax.
+`--checkpoint` accepts either an Orbax checkpoint directory (including a `CheckpointManager` step) or a local `.npz` file. `validate.py` and `inference.py` accept `--prefetch N` (default 2) to queue batches on device and overlap host-to-device copies with compute; `benchmark.py` dispatches its timing iterations asynchronously and synchronizes once. `train.py`, `validate.py`, `inference.py` and `benchmark.py` accept `--compilation-cache DIR` to reuse XLA compilation across runs and processes. `--pretrained` is accepted for timm CLI compatibility but raises an error because jimm registers no downloadable weights. `avg_checkpoints.py` ranks steps by `--metric-key` when the training run saved validation metrics, and falls back to the latest steps otherwise. ONNX export and timm/Hugging Face checkpoint conversion scripts are not provided because jimm checkpoints and models are native JAX/Flax.
 
 ### Training and validation
 
@@ -329,7 +334,7 @@ uv run python -m jimm.train \
 
 Set `--num-classes` to your dataset's class count. The dataset root also works as a positional argument. Inputs default to 224×224 with ImageNet normalization; `--input-size 3 H H`, `--img-size`, `--mean`, `--std`, `--crop-pct`, and the training/validation interpolation options configure preprocessing. Inputs must be square RGB images and match the selected architecture's supported resolution. Use `uv run python -m jimm.train --help` for all options.
 
-Each host defaults to **4 Grain workers** and **bfloat16** compute with Tokamax attention; `--attn-autotune` tunes attention kernels for each new shape. Workers send uint8 images; normalization and `--reprob` random erasing run on device. Evaluation resizes the shorter edge to `floor(img_size / crop_pct)` and center crops, as in timm. `--no-amp` selects float32. `--validation-batch-size` sets the validation batch size independently; it otherwise follows `--batch-size`.
+Each host defaults to **4 Grain workers** and **bfloat16** compute with Tokamax attention; `--attn-autotune` tunes attention kernels for each new shape. Pass `--compilation-cache DIR` to reuse compiled programs across runs; on multi-host jobs the directory must be shared, and it should be writable only by you because JAX treats cached code as trusted. Workers send uint8 images; normalization and `--reprob` random erasing run on device. Evaluation resizes the shorter edge to `floor(img_size / crop_pct)` and center crops, as in timm. `--no-amp` selects float32. `--validation-batch-size` sets the validation batch size independently; it otherwise follows `--batch-size`.
 
 | timm-style option | Long-form / legacy equivalent |
 | --- | --- |

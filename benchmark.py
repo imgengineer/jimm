@@ -24,6 +24,7 @@ from jimm.scripts_common import (
     add_preprocess_args,
     add_runtime_args,
     check_device,
+    configure_compilation_cache,
     model_param_count,
     print_result,
     resolve_data_config,
@@ -159,6 +160,7 @@ def main(argv=None):
     args = _parse_args(argv)
     logger = setup_logging("benchmark")
     check_device(args.device)
+    configure_compilation_cache(args.compilation_cache)
     if args.batch_size <= 0 or args.num_bench_iter <= 0 or args.num_warm_iter < 0:
         raise SystemExit("invalid batch size or iteration counts")
     if args.pretrained:

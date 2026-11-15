@@ -237,7 +237,10 @@ class CheckpointManager:
                     ),
                 ]
             )
-        options = ocp.CheckpointManagerOptions(preservation_policy=policy)
+        options = ocp.CheckpointManagerOptions(
+            preservation_policy=policy,
+            enable_background_delete=True,
+        )
         self._manager = ocp.CheckpointManager(self.directory, options=options)
 
     def save(

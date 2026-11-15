@@ -85,18 +85,20 @@ def _ensure_absl_flags_parsed():
 
 
 __all__ = [
+    "IMAGENET_MEAN",
+    "IMAGENET_STD",
+    "AugMixAugment",
     "AugmentOp",
     "AutoAugment",
-    "AugMixAugment",
     "ImageFolder",
     "Loader",
     "Mixup",
     "MixupCutmix",
     "RandAugment",
     "TrivialAugmentWide",
-    "IMAGENET_MEAN",
-    "IMAGENET_STD",
     "_DecodeTransform",
+    "augment_and_mix_transform",
+    "augmix_ops",
     "auto_augment_policy",
     "auto_augment_policy_3a",
     "auto_augment_policy_original",
@@ -104,28 +106,26 @@ __all__ = [
     "auto_augment_policy_v0",
     "auto_augment_policy_v0r",
     "auto_augment_transform",
-    "augmix_ops",
-    "augment_and_mix_transform",
     "build_auto_augment",
     "center_crop_or_pad",
     "color_jitter",
     "create_dataset",
     "create_loader",
     "gaussian_blur",
+    "interp_mode_to_str",
+    "rand_augment_choices",
+    "rand_augment_ops",
+    "rand_augment_transform",
     "random_crop_or_pad",
     "random_erasing",
     "random_flip_left_right",
     "random_flip_up_down",
     "random_grayscale",
     "random_resized_crop",
-    "rand_augment_choices",
-    "rand_augment_ops",
-    "rand_augment_transform",
     "resize_keep_ratio",
     "resolve_interpolation",
     "str_to_interp_mode",
     "str_to_pil_interp",
-    "interp_mode_to_str",
 ]
 
 
@@ -143,12 +143,9 @@ def _decode_image(raw: bytes) -> np.ndarray:
         raise ValueError("unable to decode empty image bytes")
     encoded = np.frombuffer(raw, dtype=np.uint8)
     image = cv2.imdecode(encoded, cv2.IMREAD_COLOR_RGB)
-    if image is None:
-        # Fallback: Truncated JPEG recovery (append missing EOI marker \xff\xd9)
-        if raw.startswith(b"\xff\xd8"):
-            image = cv2.imdecode(
-                np.frombuffer(raw + b"\xff\xd9", dtype=np.uint8), cv2.IMREAD_COLOR_RGB
-            )
+    if image is None and raw.startswith(b"\xff\xd8"):
+        # Fallback: truncated JPEG recovery (append the missing EOI marker).
+        image = cv2.imdecode(np.frombuffer(raw + b"\xff\xd9", dtype=np.uint8), cv2.IMREAD_COLOR_RGB)
     if image is None:
         raise ValueError("unable to decode image bytes")
     return image

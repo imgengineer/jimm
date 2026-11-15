@@ -17,6 +17,8 @@
 
 - Add an optional JAX persistent compilation cache (`--compilation-cache DIR`, or `JAX_COMPILATION_CACHE_DIR`) to the training, validation, inference and benchmark entry points.
 - Rotate Orbax checkpoints with background deletion so retention cleanup no longer blocks the save path; async checkpointing remains the default.
+- Order checkpoint overwrites against that background deletion. Re-saving an existing step (`save(force=True)`, used when a run resumes past its last checkpoint or two runs share an output directory) now waits for the queued removal of the old step, which previously could fail the save or delete the checkpoint it had just written while Orbax still listed the step. `CheckpointManager.close()` also waits for pending deletions and reports deletion failures instead of leaving them on Orbax's daemon thread.
+- Parametrize the per-model instantiation test: it is now one case per registered model instead of a single loop, so `pytest -n 8` spreads the ~1400 abstract constructions over the workers (39 s instead of a 354 s single-core test) and a failure names the offending model.
 
 ### November 14, 2026
 
@@ -422,16 +424,15 @@ The helpers also accept an optimizer for training-state restoration. For asynchr
 
 ## Testing
 
-Run the regression suite and static checks with the locked environment:
+Run the regression suite and static checks with the locked environment. Constructing models dominates the suite, so run it in parallel with `pytest-xdist`, which is part of the dev dependencies:
 
 ```bash
-JAX_PLATFORMS=cpu uv run pytest tests/ --ignore=tests/test_models.py -q
-JAX_PLATFORMS=cpu uv run pytest tests/test_models.py -q
+JAX_PLATFORMS=cpu uv run pytest tests/ -q -n 8
 uv run ruff check .
 uv run ruff format --check .
 ```
 
-`tests/test_models.py` instantiates every registered model and runs a forward and backward pass for one model of each family; it takes about half an hour on CPU. `tests/test_scripts.py` smoke-tests the top-level scripts against a tiny synthetic ImageFolder. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
+Each worker builds real models, so size `-n` by cores *and* memory; eight workers take about 20 minutes on a 14-core CPU, while a serial run takes hours. `tests/test_models.py` instantiates every registered model (one parametrized case per model name, so the check spreads across workers) and runs a forward and backward pass for one model of each family. `tests/test_scripts.py` smoke-tests the top-level scripts against a tiny synthetic ImageFolder. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
 
 ```bash
 uv run pytest tests/test_attention.py -q

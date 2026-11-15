@@ -90,6 +90,34 @@ def test_load_checkpoint_shape_mismatch_raises():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_load_checkpoint_reads_checkpoint_manager_steps():
+    root = tempfile.mkdtemp()
+    try:
+        source, source_opt = _trained_mlp(0)
+        with CheckpointManager(f"{root}/run") as mgr:
+            mgr.save(2, source, source_opt)
+            mgr.wait_until_finished()
+
+        # Manager step directories keep their metadata at the manager root, so
+        # load_checkpoint() used to fail on them with a bare FileNotFoundError even
+        # though the evaluation scripts accept any checkpoint directory.
+        target, target_opt = _trained_mlp(99)
+        assert load_checkpoint(f"{root}/run/2", target, target_opt) == 2
+
+        x = jnp.ones((2, 8))
+        np.testing.assert_allclose(np.asarray(target(x)), np.asarray(source(x)), rtol=1e-6)
+        np.testing.assert_allclose(
+            np.asarray(nnx.to_pure_dict(nnx.state(target_opt))["step"]),
+            np.asarray(nnx.to_pure_dict(nnx.state(source_opt))["step"]),
+        )
+
+        # The manager root itself names no checkpoint, so ask for a step explicitly.
+        with pytest.raises(ValueError, match="step directories"):
+            load_checkpoint(f"{root}/run", Mlp(8, rngs=nnx.Rngs(0)))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_checkpoint_validation_is_atomic_and_requires_optimizer_state():
     root = tempfile.mkdtemp()
     try:

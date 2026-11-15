@@ -92,7 +92,10 @@ def add_model_args(parser, default_model="resnet50"):
         "--pretrained", action="store_true", help="use registered pretrained weights"
     )
     parser.add_argument(
-        "--checkpoint", default="", help="jimm Orbax checkpoint directory or local .npz file"
+        "--checkpoint",
+        default="",
+        help="jimm Orbax checkpoint directory (a CheckpointManager step directory is also"
+        " accepted) or local .npz file",
     )
     parser.add_argument("--num-classes", type=int, default=None, help="classifier width")
     parser.add_argument("--gp", "--global-pool", dest="global_pool", default=None)

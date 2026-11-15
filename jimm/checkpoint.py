@@ -1,7 +1,8 @@
 """Orbax-checkpoint serialization and restoration for Flax NNX models & Optax optimizers.
 
 Features:
-  - Non-blocking asynchronous background checkpoint writes (MaxText/MaxDiffusion pattern).
+  - Background checkpoint writes (MaxText/MaxDiffusion pattern): the array write
+    blocks, then Orbax finalizes the checkpoint asynchronously.
   - Lazy initialization of Orbax Checkpointer (avoids spawning CUDA contexts in Grain workers).
   - Pure Python dictionary serialization compatible with `flax.nnx.to_pure_dict`.
   - Automatic recursive integer key casting for `nnx.List` and `nnx.Sequential` submodules.
@@ -27,6 +28,38 @@ __all__ = [
 ]
 
 _checkpointer: ocp.StandardCheckpointer | None = None
+
+# `CheckpointManager` step directories look like a single-directory checkpoint but
+# keep the metadata of each item in a `default/` subdirectory, so the step directory
+# only has the manager-level `_CHECKPOINT_METADATA` file (no root `_METADATA`).
+_MANAGER_METADATA_FILE = "_CHECKPOINT_METADATA"
+_STEP_METADATA_FILE = "_METADATA"
+
+
+def _manager_step(path: str) -> tuple[str, int] | None:
+    """Return ``(manager directory, step)`` if ``path`` is a manager step directory."""
+    normalized = os.path.normpath(path)
+    step = os.path.basename(normalized)
+    if not step.isdigit() or not os.path.isdir(normalized):
+        return None
+    if os.path.exists(os.path.join(normalized, _STEP_METADATA_FILE)):
+        return None
+    if not os.path.exists(os.path.join(normalized, _MANAGER_METADATA_FILE)):
+        return None
+    return os.path.dirname(normalized), int(step)
+
+
+def _is_manager_directory(path: str) -> bool:
+    """Whether ``path`` is a ``CheckpointManager`` root (numbered step directories)."""
+    if not os.path.isdir(path) or os.path.exists(os.path.join(path, _STEP_METADATA_FILE)):
+        return False
+    if os.path.exists(os.path.join(path, _MANAGER_METADATA_FILE)):
+        return True
+    names = os.listdir(path)
+    return bool(names) and all(
+        name.isdigit() and os.path.isdir(os.path.join(path, name)) for name in names
+    )
+
 
 # `CheckpointManagerOptions.enable_background_delete=True` makes checkpoint removals
 # asynchronous: `delete()` and `close()` only hand the step numbers/stop signal to
@@ -202,11 +235,26 @@ def load_checkpoint(
     Returns:
         Restored epoch integer index.
 
+    Directory checkpoints may be written either by :func:`save_checkpoint` or as a
+    step directory of a :class:`CheckpointManager` run; both layouts are accepted.
+
     Raises:
         ValueError: If the checkpoint is missing model state or its tree
-            structure / shapes do not match the live model.
+            structure / shapes do not match the live model, or if ``path`` is a
+            ``CheckpointManager`` root rather than a single checkpoint.
     """
     path = os.path.abspath(path)
+    selection = _manager_step(path)
+    if selection is not None:
+        manager_directory, step = selection
+        with CheckpointManager(manager_directory) as manager:
+            return manager.restore(step, model, optimizer)
+    if _is_manager_directory(path):
+        raise ValueError(
+            f"{path} is a CheckpointManager directory, not a checkpoint; pass one of its"
+            f" step directories, e.g. {os.path.join(path, '<step>')}, or restore the latest"
+            f" step with CheckpointManager({path}).restore_latest(model, optimizer)"
+        )
     restored = _get_checkpointer().restore(path)
     return _apply_restored(restored, model, optimizer, path)
 
@@ -224,8 +272,9 @@ class CheckpointManager:
         best metric (e.g. lowest validation loss) even after it would have been
         rotated out by ``max_to_keep``.
 
-    Restores go through this manager as well; ``load_checkpoint`` cannot read
-    manager step directories (their metadata lives at the manager root).
+    Restores go through this manager as well; ``load_checkpoint`` also accepts a
+    step directory written here, which is useful for evaluation scripts that take a
+    single checkpoint path.
     """
 
     def __init__(
@@ -269,9 +318,15 @@ class CheckpointManager:
         metrics: dict[str, Any] | None = None,
         force: bool = True,
     ) -> bool:
-        """Save model/optimizer state as step ``step`` (asynchronous).
+        """Save model/optimizer state as step ``step``.
 
         All JAX processes must call this with the same step and metrics.
+
+        Only the commit/finalize stage is asynchronous: Orbax writes the arrays on the
+        calling thread and then finalizes in the background. Successive saves are
+        therefore serialized by Orbax (each ``save`` waits for the previous one before
+        writing), so there is no growing queue of pending writes to throttle here; use
+        :meth:`wait_until_finished` (or :meth:`close`) to observe completion and errors.
 
         Args:
             metrics: Optional metric values (e.g. ``{"val_acc": 0.74}``) used by

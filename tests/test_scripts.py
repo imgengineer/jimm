@@ -66,6 +66,32 @@ def test_validate_script(dataset, tmp_path):
     assert results.exists()
 
 
+def test_validate_script_reads_checkpoint_manager_steps(dataset, tmp_path):
+    # `--checkpoint` documents CheckpointManager step directories as accepted values.
+    checkpoint = tmp_path / "checkpoints"
+    source = jimm.create_model(MODEL, num_classes=2, rngs=nnx.Rngs(0))
+    with CheckpointManager(str(checkpoint)) as manager:
+        manager.save(0, source)
+        manager.wait_until_finished()
+
+    output = _run(
+        "validate.py",
+        "--data-dir",
+        dataset,
+        "--model",
+        MODEL,
+        "--num-classes",
+        2,
+        "--img-size",
+        64,
+        "-b",
+        2,
+        "--checkpoint",
+        checkpoint / "0",
+    ).stdout
+    assert '"samples": 4' in output
+
+
 def test_validate_compilation_cache(dataset, tmp_path):
     cache = tmp_path / "jax-cache"
     _run(

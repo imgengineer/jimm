@@ -142,17 +142,12 @@ def wait_for_checkpoints() -> None:
 
 def _fix_int_keys(d: Any) -> Any:
     """Recursively convert stringified integer keys ('0', '1') to integers for nnx.List/nnx.Sequential."""
-    if isinstance(d, dict):
-        new_d: dict[Any, Any] = {}
-        for k, v in d.items():
-            key = (
-                int(k)
-                if isinstance(k, str) and (k.isdigit() or (k.startswith("-") and k[1:].isdigit()))
-                else k
-            )
-            new_d[key] = _fix_int_keys(v)
-        return new_d
-    return d
+    if not isinstance(d, dict):
+        return d
+    return {
+        int(k) if isinstance(k, str) and k.removeprefix("-").isdigit() else k: _fix_int_keys(v)
+        for k, v in d.items()
+    }
 
 
 def _validate_tree(expected: Any, restored: Any, path: str) -> Any:
@@ -178,10 +173,9 @@ def _validate_tree(expected: Any, restored: Any, path: str) -> Any:
         }
     if hasattr(expected, "shape"):
         value = jnp.asarray(restored)
-        if tuple(value.shape) != tuple(expected.shape):
+        if value.shape != expected.shape:
             raise ValueError(
-                f"{path}: shape mismatch (checkpoint {tuple(value.shape)} "
-                f"vs model {tuple(expected.shape)})"
+                f"{path}: shape mismatch (checkpoint {value.shape} vs model {expected.shape})"
             )
         if value.dtype != expected.dtype:
             value = value.astype(expected.dtype)

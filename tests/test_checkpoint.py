@@ -289,7 +289,13 @@ def test_checkpoint_manager_close_waits_for_background_deletions():
 
 
 def test_checkpoint_invalid_tree_and_corrupt_data():
-    from jimm.checkpoint import _apply_restored, _validate_tree
+    from jimm.checkpoint import _apply_restored, _fix_int_keys, _validate_tree
+
+    assert _fix_int_keys({"0": {"-1": 2, "head": 3}, "layer_1": 4, "--1": 5}) == {
+        0: {-1: 2, "head": 3},
+        "layer_1": 4,
+        "--1": 5,
+    }
 
     with pytest.raises(ValueError, match="expected a dict subtree"):
         _validate_tree({"a": 1}, 123, "root")

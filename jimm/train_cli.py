@@ -10,10 +10,12 @@ import yaml
 
 from .data import IMAGENET_MEAN, IMAGENET_STD
 
-__all__ = ["parse_args"]
+__all__ = ["ParseKwargs", "parse_args"]
 
 
-class _ParseModelKwargs(argparse.Action):
+class ParseKwargs(argparse.Action):
+    """Parse ``KEY=VALUE`` model constructor arguments."""
+
     def __call__(self, parser, namespace, values, option_string=None):
         kwargs = dict(getattr(namespace, self.dest))
         for item in values:
@@ -65,7 +67,7 @@ def parse_args(argv=None):
         "--gp", "--global-pool", dest="global_pool", help="model global pooling override"
     )
     group.add_argument(
-        "--model-kwargs", nargs="*", default={}, action=_ParseModelKwargs, metavar="KEY=VALUE"
+        "--model-kwargs", nargs="*", default={}, action=ParseKwargs, metavar="KEY=VALUE"
     )
     group.add_argument(
         "--initial-checkpoint", default="", help="initial model weights in jimm NPZ format"

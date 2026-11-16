@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import cv2  # pyright: ignore[reportMissingImports]
-import grain.python as grain
+import grain
 import numpy as np
 import pytest
 
@@ -237,7 +237,7 @@ def test_multiworker_eval_batches_match_single_worker(
         pad_remainder=pad_remainder,
         drop_remainder=drop_remainder,
         shuffle=shuffle,
-        shard_options=grain.ShardOptions(
+        shard_options=grain.sharding.ShardOptions(
             shard_index=shard_index, shard_count=shard_count, drop_remainder=False
         ),
     )
@@ -280,7 +280,7 @@ def test_create_loader_pads_eval_without_losing_records(temp_dataset):
             is_training=False,
             num_workers=0,
             pad_remainder=True,
-            shard_options=grain.ShardOptions(
+            shard_options=grain.sharding.ShardOptions(
                 shard_index=shard_index, shard_count=2, drop_remainder=False
             ),
         )
@@ -316,7 +316,7 @@ def test_sharded_loader_keeps_record_remainder(temp_dataset):
             is_training=False,
             num_workers=0,
             drop_remainder=False,
-            shard_options=grain.ShardOptions(
+            shard_options=grain.sharding.ShardOptions(
                 shard_index=shard_index, shard_count=2, drop_remainder=False
             ),
         )
@@ -340,7 +340,9 @@ def test_loader_start_step_restores_training_stream(temp_dataset):
         is_training=True,
         num_workers=0,
         seed=17,
-        shard_options=grain.ShardOptions(shard_index=1, shard_count=2, drop_remainder=True),
+        shard_options=grain.sharding.ShardOptions(
+            shard_index=1, shard_count=2, drop_remainder=True
+        ),
     )
     continuous = create_loader(f"{temp_dataset}/train", **kwargs)
     resumed = create_loader(f"{temp_dataset}/train", **kwargs)
@@ -1066,7 +1068,7 @@ def test_create_dataset_and_loader(temp_dataset):
     assert sum(len(b["label"]) for b in val_batches) == 24
 
     # 4. Multi-host shard options
-    shard_opt = grain.ShardOptions(shard_index=1, shard_count=2, drop_remainder=True)
+    shard_opt = grain.sharding.ShardOptions(shard_index=1, shard_count=2, drop_remainder=True)
     sharded_loader = create_loader(
         f"{temp_dataset}/train",
         batch_size=4,

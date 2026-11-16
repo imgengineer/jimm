@@ -86,7 +86,7 @@ def check_finite_difference():
         model,
         is_leaf=lambda a: isinstance(a, jax.Array),
     )
-    x = jax.device_put(jax.random.normal(jax.random.PRNGKey(1), (1, 224, 224, 3)) * 0.1, cpu)
+    x = jax.device_put(jax.random.normal(jax.random.key(1), (1, 224, 224, 3)) * 0.1, cpu)
     y = jnp.array([1], jnp.int32)
 
     def loss_fn(model):

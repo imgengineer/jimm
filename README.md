@@ -15,6 +15,9 @@
 
 ### November 16, 2026
 
+- Simplify shared code using current JAX ecosystem APIs: use typed `jax.random.key`, `optax.tree.norm`, and Grain's public `sources`/`samplers`/`sharding`/`transforms` namespaces. Training and standalone scripts now share one `ParseKwargs` action, and the benchmark reuses `create_eval_model` for construction and checkpoint loading. Remove the redundant optimizer fallback after validation, use `yield from` for loader iteration, and simplify checkpoint dictionary handling while retaining validation, optimizer state structure, checkpoint layout and data-stream order.
+- Optimize CPU execution with one default implementation: inference caches the NNX model traversal and compiles top-k scoring with the forward pass; the inference benchmark caches the same traversal. Full-map depthwise kernel gradients now reduce shifted input slices in a compiled loop, replacing the large all-pairs tensor without platform or batch-size dispatch. FP32/BF16 gradient tests cover small and large batches, asymmetric padding and VALID padding; prediction tests cover AMP, top-k probabilities/logits and partial batches. See the [CPU measurements](#cpu-measurements) for gains and the large-batch tradeoff.
+- Reduce standalone validation overhead: cache the NNX model traversal across batches while reusing the compiled step across evaluation passes, accumulate loss/top-1/top-5 inside that step, and count samples from the host-side batch shape instead of reading a device scalar every batch. Final throughput timing now waits for all device metrics. With preloaded CPU inputs (batch 2, 64×64, five warmed passes), median evaluation time falls from 384 ms to 308 ms for 40 `resnet18` batches and from 221 ms to 88 ms for 100 `test_mambaout` batches; these measurements exclude image loading and do not establish GPU speedups. Regression tests cover AMP, partial final batches, logging, implicit scalar transfers, and timing pending device work.
 - Normalize the codebase against a stricter lint profile: `pyproject.toml` now enables whitespace (W), modern-syntax (UP), bug-prone-construct (B), simplification (SIM), misc (PIE), return (RET), raise (RSE), string-concatenation (ISC), static-join (FLY) and ruff-specific (RUF) rules on top of the default E/F/I set, with `ruff format` still the single owner of layout. The resulting 62-file diff only touches syntax: `__all__` lists and imports are sorted, `from typing import Callable` moves to `collections.abc`, `getattr`/`setattr` on constant names become attribute access, `[*a, b]` replaces list concatenation, unused unpacked shapes and loop counters become `_`-prefixed (or disappear with their `enumerate`), `int(round(...))` drops the redundant cast, `if`/`else` assignments become expressions, three assigned lambdas become `def`s (removing their `# noqa: E731`), and 21 misplaced `# fmt: skip` comments (no-ops on closing brackets) are removed. `B905` stays ignored because `zip(..., strict=True)` would change the runtime behaviour of the ported model code, and the public `jimm.__all__` keeps its area grouping with a documented `# noqa: RUF022` instead of an alphabetical flat list.
 
 ### November 15, 2026
@@ -137,13 +140,15 @@ Restore trained jimm models with the Orbax checkpoint helpers. `pretrained="/pat
 - **Feature extraction:** unpooled feature maps or tokens, pooled embeddings with `num_classes=0`, and `features_only=True` for supported intermediate stages.
 - **NNX transformations:** models work with `nnx.jit` and `nnx.grad`; pass the model as an explicit argument to transformed functions. Use `model.train()` and `model.eval()` to control dropout and batch normalization.
 - **Attention:** Tokamax fused kernels for GPU bfloat16 self/cross-attention, including relative-position bias, with heuristic kernel configurations or optional per-shape autotuning. Value heads may differ in width from query/key heads. CPU, float32, and float16 use Flax attention; active attention dropout retains its existing implementation.
-- **Grouped convolutions:** `create_model` routes grouped `nnx.Conv` layers through `jimm.layers.conv_general_dilated`, a drop-in for `jax.lax.conv_general_dilated` that computes two kernel gradients XLA lowers poorly on GPU: depthwise kernels as large as their feature map, and dilated grouped convolutions. Apply it to other models with `jimm.layers.use_fast_grouped_conv_grads(model)`.
+- **Grouped convolutions:** `create_model` routes grouped `nnx.Conv` layers through `jimm.layers.conv_general_dilated`, a drop-in for `jax.lax.conv_general_dilated` covering full-map depthwise kernels, dilated grouped convolutions, and two-group convolutions. The full-map depthwise kernel gradient uses one compiled shifted-slice loop; see [CPU measurements](#cpu-measurements) for its performance and memory tradeoff. Apply these helpers to other models with `jimm.layers.use_fast_grouped_conv_grads(model)`.
 - **Data and augmentation:** Grain ImageFolder loading, OpenCV decoding, random crops, color jitter, AutoAugment, RandAugment, AugMix, TrivialAugment, random erasing, Mixup, and CutMix. Photometric and AutoAugment operations follow timm's PIL semantics with OpenCV lookup tables, blends, and affine warps (OpenCV rounding can differ from Pillow by a few intensity levels); the training CLI normalizes uint8 batches and applies random erasing, Mixup, and CutMix on device.
 - **Training:** AdamW with cosine scheduling and warmup, label smoothing, gradient clipping, optional bfloat16 computation, and JAX SPMD data parallelism or FSDP.
 - **Checkpointing:** asynchronous Orbax model/optimizer checkpoints, background deletion of rotated checkpoints, retention settings, and epoch resume with restored data position.
 - **Scripts:** timm-style `train.py`, `validate.py`, `inference.py`, `benchmark.py`, checkpoint averaging/cleanup, per-model bulk runs and a multi-host launcher (see [Scripts](#scripts)).
 
 Images have shape **`(batch, height, width, channels)`**. `default_cfg["input_size"]` keeps timm's metadata convention `(channels, height, width)`; use its size and normalization settings when preparing model inputs.
+
+Shared runtime code follows the official [JAX typed-key conventions](https://docs.jax.dev/en/latest/jax.random.html), [NNX optimizer API](https://flax.readthedocs.io/en/latest/api_reference/flax.nnx/training/optimizer.html), [NNX graph-caching guidance](https://flax.readthedocs.io/en/latest/guides/performance.html), [Optax tree utilities](https://optax.readthedocs.io/en/latest/api/utilities.html), and [Orbax checkpoint argument API](https://orbax.readthedocs.io/en/latest/api_reference/checkpoint.checkpoint_manager.html). Grain keeps its high-level `DataLoader` for the flat ImageFolder pipeline, as recommended in its [API choice guide](https://google-grain.readthedocs.io/en/latest/api_choice.html); using public namespaces does not change the sampler or augmentation RNGs.
 
 ## Getting Started
 
@@ -442,6 +447,18 @@ uv run ruff format --check .
 
 `ruff format` owns layout and `ruff check` owns everything else: the lint profile in `pyproject.toml` adds the W/UP/B/SIM/PIE/RET/RSE/ISC/FLY/RUF rule families to ruff's default E/F/I set, and `ruff check --fix` applies the safe fixes for all of them. The configured exceptions are deliberate and documented there: B905 is off because `zip(..., strict=True)` would change the runtime behaviour of the ported model code, and `jimm/__init__.py` keeps its area-grouped `__all__` behind a `# noqa: RUF022` instead of an alphabetical flat list. The model modules also keep timm's per-family duplication instead of sharing layer helpers.
 
+The November 16 CPU/runtime changes passed **205 focused tests**, including mixed precision, multiworker data loading, checkpoint validation, bitwise training resume, and two-process CPU DDP/FSDP checkpoint restoration:
+
+```bash
+JAX_PLATFORMS=cpu uv run pytest -q -n 4 \
+    tests/test_data.py tests/test_train_cli.py tests/test_optim.py \
+    tests/test_checkpoint.py tests/test_train.py tests/test_scripts.py \
+    tests/test_scripts_common.py tests/test_inference.py tests/test_layers.py \
+    tests/test_distributed.py
+```
+
+Ruff lint, formatting and whitespace checks also passed. This focused run does not replace the full architecture suite or GPU attention tests. On macOS, the parallel run emitted 22 Python `multiprocessing.resource_tracker` cleanup warnings; the affected data-loader case and checkpoint validation passed separately without warnings.
+
 Each worker builds real models, so size `-n` by cores *and* memory; on a 14-core CPU eight workers need about 25 minutes, while a serial run takes hours. Eight workers already saturate such a machine: the suite spends roughly eight CPU-seconds per wall-clock second, raising `-n` to 12 shortens the heaviest subset (`-k architecture_family_forward_and_backward`, 6.5 minutes at `-n 8`) by only 3%, and `OMP_NUM_THREADS=1` changes nothing. A shared JAX compilation cache does not help either: JAX caches only programs that take more than a second to compile, and the per-test programs stay below that. `tests/test_models.py` instantiates every registered model (one parametrized case per model name, so the check spreads across workers) and runs a forward and backward pass for one model of each family; those per-family passes are the long poles, since each compiles separate training, gradient, evaluation and feature programs. `tests/test_scripts.py` smoke-tests the top-level scripts against a tiny synthetic ImageFolder. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
 
 ```bash
@@ -459,7 +476,7 @@ uv run python scripts/test_backprop.py
 
 ### Training throughput
 
-The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorch 2.10 on an RTX 5090: batch size 64, bfloat16 autocast, AdamW, and label smoothing, at 224×224 unless noted. PyTorch uses channels-last tensors, fused AdamW, and cuDNN benchmarking without `torch.compile`; jimm uses its defaults. Throughput is the median over 20 steps after warmup.
+The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorch 2.10 on an RTX 5090: batch size 64, bfloat16 autocast, AdamW, and label smoothing, at 224×224 unless noted. PyTorch uses channels-last tensors, fused AdamW, and cuDNN benchmarking without `torch.compile`; jimm uses its defaults. Throughput is the median over 20 steps after warmup. These GPU measurements predate the CPU gradient changes below and have not been rerun.
 
 | Model | jimm | timm (eager) | Ratio |
 | --- | ---: | ---: | ---: |
@@ -585,6 +602,31 @@ The table compares compiled jimm training steps with timm 1.0.29 in eager PyTorc
 | `regnetv_040` | 2,885 img/s | 1,952 img/s | 1.48× |
 | `regnety_040_sgn` | 2,795 img/s | 704 img/s | 3.97× |
 | `regnetz_040` | 1,467 img/s | 773 img/s | 1.90× |
+
+### CPU measurements
+
+Measured on a 14-core Apple M4 Pro with JAX 0.12.0.1 and Flax 0.12.12, using FP32 and resident inputs. Timings include completed device work and exclude model creation, initial compilation, image loading and result export. Prediction/kernel results are medians of five warmed runs; the full training step uses three warmed runs.
+
+| Workload | Before | After |
+| --- | ---: | ---: |
+| `test_mambaout` top-5 prediction, batch 2, 64×64, 1000 classes | 2.22 ms | 0.96 ms |
+| `resnet18` top-5 prediction, batch 2, 64×64, 1000 classes | 8.22 ms | 8.00 ms |
+| `vit_tiny_patch16_224` top-5 prediction, batch 2, 224×224, 1000 classes | 12.26 ms | 12.28 ms |
+| `convnext_atto` AdamW training step, batch 2, 224×224, 10 classes | 42.06 ms | 40.24 ms |
+| 7×7 depthwise forward/backward, batch 4, 256 channels | 2.28 ms | 1.40 ms |
+| Same depthwise case: compiled temporary allocation | 16.96 MB | 1.14 MB |
+| 7×7 depthwise forward/backward, batch 64, 768 channels | 31.78 ms | 38.11 ms |
+| Same large-batch case: compiled temporary allocation | 68.30 MB | 52.65 MB |
+
+One shifted-slice gradient implementation serves every batch and backend. It improves small-batch CPU time and reduces temporary allocations, with a measured 20% slowdown in the large-batch kernel case. ResNet and ViT prediction times remain essentially unchanged because compute dominates their dispatch overhead. The ConvNeXt loss and parameters after one optimizer update match the previous implementation within FP32 rounding tolerances. GPU performance of the new gradient has not been measured.
+
+To measure complete compiled model steps on another CPU with the existing benchmark:
+
+```bash
+JAX_PLATFORMS=cpu uv run python benchmark.py \
+    --model convnext_atto --img-size 224 --num-classes 10 -b 2 \
+    --bench both --num-warm-iter 5 --num-bench-iter 30
+```
 
 ### Startup and compilation
 

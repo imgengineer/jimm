@@ -36,9 +36,11 @@ from jimm.scripts_common import (
 from jimm.train import _forward_with_precision
 
 
-@nnx.jit(static_argnames=("amp",))
-def _logits(model, images, amp=False):
-    return _forward_with_precision(model, images, amp)
+@nnx.jit(static_argnames=("amp", "topk", "output_type"), graph=True, graph_updates=True)
+def _predict(model, images, amp=False, topk=1, output_type="prob"):
+    logits = _forward_with_precision(model, images, amp)
+    scores = jax.nn.softmax(logits, axis=-1) if output_type == "prob" else logits
+    return jax.lax.top_k(scores, topk)
 
 
 def _parse_args(argv=None):
@@ -93,10 +95,9 @@ def main(argv=None):
     class_names = {index: name for name, index in dataset.class_to_idx.items()}
     batch_scores, batch_indices = [], []
     try:
+        predict = nnx.cached_partial(_predict, model, graph=True, graph_updates=True)
         for batch_index, (images, _) in enumerate(prefetch_batches(loader, args.prefetch)):
-            logits = _logits(model, images, args.amp)
-            scores = jax.nn.softmax(logits, axis=-1) if args.output_type == "prob" else logits
-            scores, indices = jax.lax.top_k(scores, topk)
+            scores, indices = predict(images, amp=args.amp, topk=topk, output_type=args.output_type)
             batch_scores.append(scores)
             batch_indices.append(indices)
             if args.log_freq > 0 and (batch_index + 1) % args.log_freq == 0:

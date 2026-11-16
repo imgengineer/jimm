@@ -66,7 +66,7 @@ def drop_path(
         return x
     keep_prob = 1.0 - rate
     if rng is None:
-        rng = jax.random.PRNGKey(0)
+        rng = jax.random.key(0)
     shape = (x.shape[0],) + (1,) * (x.ndim - 1)
     random_tensor = keep_prob + jax.random.uniform(rng, shape, dtype=x.dtype)
     binary_tensor = jnp.floor(random_tensor)
@@ -209,14 +209,18 @@ def _full_map_depthwise_bwd(padding, precision, preferred_element_type, residual
     (dx,) = input_vjp(grad)
     kh, kw = kernel.shape[:2]
     xp = jnp.pad(x, ((0, 0), *padding, (0, 0)))
-    (hp, wp), (ho, wo) = xp.shape[1:3], grad.shape[1:3]
-    # Products of every padded-input and output position, summed over the batch.
+    ho, wo = grad.shape[1:3]
     acc = jnp.promote_types(jnp.result_type(xp, grad), jnp.float32)
-    pairs = jnp.einsum("bpqc,bhwc->cpqhw", xp, grad, preferred_element_type=acc)
-    # Kernel tap (i, j) pairs output (h, w) with padded input (h + i, w + j).
-    rows = jnp.arange(hp)[None, :, None] == jnp.arange(kh)[:, None, None] + jnp.arange(ho)
-    cols = jnp.arange(wp)[None, :, None] == jnp.arange(kw)[:, None, None] + jnp.arange(wo)
-    dk = jnp.einsum("cpqhw,iph,jqw->ijc", pairs, rows.astype(pairs.dtype), cols.astype(pairs.dtype))
+    xp, grad = xp.astype(acc), grad.astype(acc)
+
+    def kernel_grad(tap):
+        patch = jax.lax.dynamic_slice(
+            xp, (0, tap // kw, tap % kw, 0), (x.shape[0], ho, wo, x.shape[-1])
+        )
+        return (patch * grad).sum(axis=(0, 1, 2))
+
+    # A loop keeps one shifted slice live instead of materializing every position pair.
+    dk = jax.lax.map(kernel_grad, jnp.arange(kh * kw)).reshape(kh, kw, x.shape[-1])
     return dx, dk[:, :, None, :].astype(kernel.dtype)
 
 
@@ -270,7 +274,7 @@ def conv_general_dilated(
     slower than the forward pass at batch 64. Three NHWC cases are rerouted:
 
     - depthwise kernels as large as their input map (a 7x7 kernel on the 7x7 last
-      stage of ConvNeXt at 224 px) compute the kernel gradient as a batched matmul;
+      stage of ConvNeXt at 224 px) compute kernel gradients from shifted input slices;
     - dilated grouped convolutions with stride 1 or equal to the dilation (SK-ResNeXt)
       run as undilated convolutions over the input's dilation phases;
     - two-group convolutions (CPUBone) run as two half-width convolutions.

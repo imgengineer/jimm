@@ -16,15 +16,15 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from jimm.checkpoint import load_checkpoint
 from jimm.optim import make_optimizer
-from jimm.registry import create_model, list_models
+from jimm.registry import list_models
 from jimm.scripts_common import (
     add_model_args,
     add_preprocess_args,
     add_runtime_args,
     check_device,
     configure_compilation_cache,
+    create_eval_model,
     model_param_count,
     print_result,
     resolve_data_config,
@@ -32,10 +32,9 @@ from jimm.scripts_common import (
     write_results_file,
 )
 from jimm.train import _forward_with_precision, make_cached_train_step
-from jimm.weights import load_pretrained
 
 
-@nnx.jit(static_argnames=("amp",))
+@nnx.jit(static_argnames=("amp",), graph=True, graph_updates=True)
 def _infer(model, images, amp=False):
     return _forward_with_precision(model, images, amp)
 
@@ -74,24 +73,6 @@ def _resolve_models(args):
     return names
 
 
-def _make_model(name, args, data_config):
-    kwargs = dict(args.model_kwargs)
-    if args.global_pool is not None:
-        kwargs["global_pool"] = args.global_pool
-    model = create_model(
-        name,
-        num_classes=data_config["num_classes"],
-        rngs=nnx.Rngs(args.seed),
-        **kwargs,
-    )
-    if args.checkpoint:
-        if os.path.isdir(args.checkpoint):
-            load_checkpoint(args.checkpoint, model)
-        else:
-            load_pretrained(model, args.checkpoint)
-    return model
-
-
 def _samples_per_sec(iterations, batch_size, elapsed):
     return iterations * batch_size / max(elapsed, 1e-9)
 
@@ -103,13 +84,14 @@ def _block(result):
 
 def _bench_infer(model, images, args):
     model.eval()
+    infer = nnx.cached_partial(_infer, model, graph=True, graph_updates=True)
     result = None
     for _ in range(args.num_warm_iter):
-        result = _infer(model, images, args.amp)
+        result = infer(images, amp=args.amp)
     _block(result)
     start = time.perf_counter()
     for _ in range(args.num_bench_iter):
-        result = _infer(model, images, args.amp)
+        result = infer(images, amp=args.amp)
     _block(result)
     elapsed = time.perf_counter() - start
     return _samples_per_sec(args.num_bench_iter, images.shape[0], elapsed)
@@ -135,12 +117,12 @@ def _bench_one(name, args):
     args.model = name
     data_config = resolve_data_config(args)
     size = data_config["img_size"]
-    model = _make_model(name, args, data_config)
+    model = create_eval_model(args, data_config)
     images = jax.random.normal(
-        jax.random.PRNGKey(args.seed), (args.batch_size, size, size, 3), jnp.float32
+        jax.random.key(args.seed), (args.batch_size, size, size, 3), jnp.float32
     )
     labels = jax.random.randint(
-        jax.random.PRNGKey(args.seed + 1), (args.batch_size,), 0, data_config["num_classes"]
+        jax.random.key(args.seed + 1), (args.batch_size,), 0, data_config["num_classes"]
     ).astype(jnp.int32)
     result = {
         "model": name,

@@ -181,11 +181,9 @@ def _mean_metrics(losses, accuracies, counts=None):
     if not np.all(np.isfinite(values)):
         raise FloatingPointError("non-finite epoch metrics")
     try:
-        val0 = float(values[0])
-        val1 = float(values[1])
+        return float(values[0]), float(values[1])
     except (TypeError, ValueError) as exc:
         raise FloatingPointError("non-finite epoch metrics") from exc
-    return val0, val1
 
 
 def _forward_with_precision(model, images, amp):
@@ -269,12 +267,7 @@ def train_step_with_metrics(
     loss, _, grads, acc = _train_step_impl(
         model, optimizer, images, labels, smoothing, amp, mixup, rng, preprocess
     )
-    grad_norm = (
-        optax.tree.norm(grads)
-        if hasattr(optax, "tree") and hasattr(optax.tree, "norm")
-        else optax.global_norm(grads)
-    )
-    return StepMetrics(loss=loss, accuracy=acc, grad_norm=grad_norm)
+    return StepMetrics(loss=loss, accuracy=acc, grad_norm=optax.tree.norm(grads))
 
 
 @nnx.jit(static_argnames=("amp", "preprocess"))
@@ -589,7 +582,7 @@ def main(argv=None):
             model, optimizer, amp=args.amp, mixup=mixup, preprocess=preprocess
         )
         train_rng = (
-            jax.random.fold_in(jax.random.PRNGKey(args.seed), rank)
+            jax.random.fold_in(jax.random.key(args.seed), rank)
             if mixup is not None or preprocess.re_prob > 0
             else None
         )

@@ -256,9 +256,11 @@ def _depthwise_loss(conv, padding, groups):
 @pytest.mark.parametrize(
     "size,padding", [(7, ((3, 3), (3, 3))), (5, "SAME"), (6, ((2, 3), (1, 4))), (3, "VALID")]
 )
-def test_full_map_depthwise_conv_matches_lax(size, padding):
-    x = jax.random.normal(jax.random.key(0), (3, size, size, 4))
-    w = jax.random.normal(jax.random.key(1), (size, size, 1, 4))
+@pytest.mark.parametrize("batch", [3, 64])
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+def test_full_map_depthwise_conv_matches_lax(size, padding, batch, dtype):
+    x = jax.random.normal(jax.random.key(0), (batch, size, size, 4), dtype)
+    w = jax.random.normal(jax.random.key(1), (size, size, 1, 4), dtype)
     with jax.default_matmul_precision("float32"):
         expected = jax.value_and_grad(
             _depthwise_loss(jax.lax.conv_general_dilated, padding, 4), argnums=(0, 1)
@@ -267,7 +269,13 @@ def test_full_map_depthwise_conv_matches_lax(size, padding):
             _depthwise_loss(conv_general_dilated, padding, 4), argnums=(0, 1)
         )(x, w)
     for a, e in zip(jax.tree.leaves(actual), jax.tree.leaves(expected)):
-        np.testing.assert_allclose(a, e, rtol=1e-5, atol=1e-5)
+        assert a.dtype == e.dtype == dtype
+        tol = 1e-2 if dtype == jnp.bfloat16 else 1e-5
+        # Large batches sum thousands of products in a different order from lax.
+        atol = max(tol, 1e-4) if batch == 64 else tol
+        np.testing.assert_allclose(
+            a.astype(jnp.float32), e.astype(jnp.float32), rtol=tol, atol=atol
+        )
 
 
 def test_conv_general_dilated_reroutes_only_full_map_depthwise():

@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 import cv2  # pyright: ignore[reportMissingImports]
-import grain.python as grain  # pyright: ignore[reportMissingImports]
+import grain  # pyright: ignore[reportMissingImports]
 import jax  # pyright: ignore[reportMissingImports]
 import numpy as np
 from absl import flags  # pyright: ignore[reportMissingImports]
@@ -305,7 +305,7 @@ def _build_memmap_cache(root: Path, samples):
                     path.unlink(missing_ok=True)
 
 
-class ImageFolder(grain.RandomAccessDataSource):
+class ImageFolder(grain.sources.RandomAccessDataSource):
     """Folder dataset: ``root/class_name/image`` -> image bytes and label."""
 
     def __init__(self, root, in_memory=False, img_size=None):
@@ -361,7 +361,7 @@ class ImageFolder(grain.RandomAccessDataSource):
         return {"image": content, "label": label}
 
 
-class _DecodeTransform(grain.RandomMapTransform):
+class _DecodeTransform(grain.transforms.RandomMap):
     """Decode one sample, apply timm-style augmentation, normalize to NHWC."""
 
     def __init__(
@@ -562,7 +562,7 @@ def create_dataset(root, in_memory=False, **kwargs):
     return source, _DecodeTransform(**kwargs)
 
 
-class _PaddedDataSource(grain.RandomAccessDataSource):
+class _PaddedDataSource(grain.sources.RandomAccessDataSource):
     """Pad a source to a batch-and-shard multiple and mark duplicate records."""
 
     def __init__(self, source, multiple):
@@ -653,9 +653,7 @@ class Loader:
         if self._prefetched_iterator is not None or self._active_iterator is not None:
             return
         iterator = iter(self._loader)
-        start = getattr(iterator, "start_prefetch", None)
-        if start is not None:
-            start()
+        iterator.start_prefetch()
         self._prefetched_iterator = iterator
 
     def set_start_step(self, step):
@@ -675,10 +673,7 @@ class Loader:
             iterator = iter(self._loader)
         self._active_iterator = iterator
         try:
-            while True:
-                yield next(iterator)
-        except StopIteration:
-            return
+            yield from iterator
         finally:
             if self._active_iterator is iterator:
                 self._active_iterator = None
@@ -773,7 +768,7 @@ def create_loader(
     drop = is_training if drop_remainder is None else drop_remainder
     shuffle = is_training if shuffle is None else shuffle
     if shard_options is None:
-        shard_options = grain.ShardOptions(
+        shard_options = grain.sharding.ShardOptions(
             shard_index=jax.process_index(),
             shard_count=jax.process_count(),
             drop_remainder=drop,
@@ -812,7 +807,7 @@ def create_loader(
     local_records, record_remainder = divmod(records, shard_count)
     if not shard_options.drop_remainder and shard_options.shard_index < record_remainder:
         local_records += 1
-    sampler = grain.IndexSampler(
+    sampler = grain.samplers.IndexSampler(
         num_records=records,
         shard_options=shard_options,
         shuffle=shuffle,
@@ -826,7 +821,7 @@ def create_loader(
     offset_sampler = _OffsetSampler(sampler) if is_training else None
     loader_sampler = offset_sampler if offset_sampler is not None else sampler
     batch_drop = drop or pad_remainder
-    operations = [transform, grain.Batch(batch_size, drop_remainder=batch_drop)]
+    operations = [transform, grain.transforms.Batch(batch_size, drop_remainder=batch_drop)]
     loader_shards = shard_options
     if (
         not is_training
@@ -846,8 +841,8 @@ def create_loader(
         source = dataset.random_map(transform, seed=seed).batch(
             batch_size, drop_remainder=batch_drop
         )
-        loader_shards = grain.NoSharding()  # Host sharding was applied before batching.
-        loader_sampler = grain.IndexSampler(
+        loader_shards = grain.sharding.NoSharding()  # Host sharding was applied before batching.
+        loader_sampler = grain.samplers.IndexSampler(
             num_records=len(source),
             shard_options=loader_shards,
             num_epochs=1,

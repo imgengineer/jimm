@@ -1,8 +1,5 @@
 """Shared helpers for the timm-style top-level train/validate/inference/benchmark scripts."""
 
-import argparse
-import ast
-import contextlib
 import csv
 import json
 import logging
@@ -20,6 +17,7 @@ from .loss import _cross_entropy_losses
 from .prefetch import prefetch_stream
 from .registry import create_model, get_default_cfg
 from .train import _forward_with_precision
+from .train_cli import ParseKwargs
 from .weights import load_pretrained
 
 __all__ = [
@@ -41,21 +39,6 @@ __all__ = [
     "setup_logging",
     "write_results_file",
 ]
-
-
-class ParseKwargs(argparse.Action):
-    """Parse ``KEY=VALUE`` model constructor arguments."""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        kwargs = dict(getattr(namespace, self.dest))
-        for item in values:
-            key, separator, value = item.partition("=")
-            if not separator or not key:
-                raise argparse.ArgumentError(self, "model kwargs must use KEY=VALUE")
-            with contextlib.suppress(ValueError, SyntaxError):
-                value = ast.literal_eval(value)
-            kwargs[key] = value
-        setattr(namespace, self.dest, kwargs)
 
 
 def check_device(device):
@@ -231,15 +214,15 @@ def model_param_count(model):
     return sum(leaf.size for leaf in jax.tree.leaves(nnx.state(model, nnx.Param)))
 
 
-@nnx.jit(static_argnames=("amp",))
-def _eval_step(model, images, labels, amp=False):
+@nnx.jit(static_argnames=("amp",), graph=True, graph_updates=True)
+def _eval_step(model, images, labels, totals, amp=False):
     logits = _forward_with_precision(model, images, amp)
     losses = _cross_entropy_losses(logits, labels)
     topk = min(5, logits.shape[-1])
     _, predictions = jax.lax.top_k(logits, topk)
     correct = jnp.cumsum(predictions == labels[:, None], axis=1)
-    top5 = correct[:, topk - 1].sum() if topk >= 5 else correct[:, 0].sum()
-    return losses.sum(), correct[:, 0].sum(), top5, images.shape[0]
+    correct5 = correct[:, topk - 1].sum() if topk >= 5 else correct[:, 0].sum()
+    return totals[0] + losses.sum(), totals[1] + correct[:, 0].sum(), totals[2] + correct5
 
 
 def prefetch_batches(loader, prefetch_size=2):
@@ -253,17 +236,15 @@ def prefetch_batches(loader, prefetch_size=2):
 
 def evaluate(model, loader, amp=False, log_freq=10, logger=None, prefetch=2):
     """Run top-1/top-5 evaluation; device metrics sync only for logs and the return."""
+    eval_step = nnx.cached_partial(_eval_step, model, graph=True, graph_updates=True)
     total_loss = jnp.zeros((), jnp.float32)
     top1 = jnp.zeros((), jnp.int32)
     top5 = jnp.zeros((), jnp.int32)
     samples = 0
     start = time.perf_counter()
     for batch_index, (images, labels) in enumerate(prefetch_batches(loader, prefetch)):
-        loss_sum, correct1, correct5, count = _eval_step(model, images, labels, amp)
-        total_loss = total_loss + loss_sum
-        top1 = top1 + correct1
-        top5 = top5 + correct5
-        samples += int(count)
+        total_loss, top1, top5 = eval_step(images, labels, (total_loss, top1, top5), amp=amp)
+        samples += images.shape[0]
         if logger is not None and log_freq > 0 and (batch_index + 1) % log_freq == 0:
             done_loss, done_top1 = jax.device_get((total_loss, top1))
             elapsed = max(time.perf_counter() - start, 1e-6)
@@ -275,10 +256,10 @@ def evaluate(model, loader, amp=False, log_freq=10, logger=None, prefetch=2):
                 float(done_top1) / samples,
                 samples / elapsed,
             )
-    elapsed = max(time.perf_counter() - start, 1e-6)
     if samples == 0:
         raise ValueError("evaluation loader produced no samples")
     loss, correct1, correct5 = jax.device_get((total_loss, top1, top5))
+    elapsed = max(time.perf_counter() - start, 1e-6)
     return dict(
         loss=float(loss) / samples,
         top1=float(correct1) / samples,

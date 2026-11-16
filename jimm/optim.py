@@ -54,10 +54,7 @@ def make_optimizer(
     if total == 1:
         schedule = optax.constant_schedule(lr)
     else:
-        try:
-            warmup_calc = max(int(total * warmup_ratio), 1)
-        except (TypeError, ValueError):
-            warmup_calc = 1
+        warmup_calc = max(int(total * warmup_ratio), 1)
         warmup_steps = min(total - 1, 5 * steps_per_epoch, 10000, warmup_calc)
         if warmup_epochs is not None:
             warmup_steps = min(total - 1, warmup_epochs * steps_per_epoch)

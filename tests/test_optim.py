@@ -1,5 +1,7 @@
 """Tests for jimm.optim."""
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -38,7 +40,10 @@ def test_adamw_options_and_schedule_match_numeric_updates():
         )
         optimizer.update(
             model,
-            jax.tree.map(lambda value: jnp.full_like(value, gradient), nnx.state(model, nnx.Param)),
+            jax.tree.map(
+                functools.partial(jnp.full_like, fill_value=gradient),
+                nnx.state(model, nnx.Param),
+            ),
         )
         np.testing.assert_allclose(model.weight[...], [[expected]], rtol=1e-6)
 

@@ -221,7 +221,7 @@ class NaFlexVit(ClassifierMixin, nnx.Module):
                     dpr[i],
                     0.02 / math.sqrt(2.0 * (i + 1)),
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for i in range(depth)
             ]
         )
@@ -303,7 +303,7 @@ _CFGS = {
         mlp_ratio=3.7362,
         act_layer="gelu_tanh",
         global_pool="map",
-    ),  # fmt: skip
+    ),
 }
 
 

@@ -147,7 +147,7 @@ def _trained_mlp(seed):
     o = nnx.Optimizer(m, optax.adamw(1e-3), wrt=nnx.Param)
     x = jnp.ones((2, 8))
     for _ in range(3):
-        loss, grads = nnx.value_and_grad(lambda model: jnp.mean(model(x) ** 2))(m)
+        _loss, grads = nnx.value_and_grad(lambda model: jnp.mean(model(x) ** 2))(m)
         o.update(m, grads)
     return m, o
 

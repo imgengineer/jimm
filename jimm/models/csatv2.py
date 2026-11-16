@@ -67,7 +67,7 @@ def _align_corners_matrix(src, dst):
     m = np.zeros((dst, src), np.float32)
     for i in range(dst):
         pos = i * (src - 1) / (dst - 1) if dst > 1 else 0.0
-        lo = min(int(math.floor(pos)), src - 1)
+        lo = min(math.floor(pos), src - 1)
         hi = min(lo + 1, src - 1)
         frac = pos - lo
         m[i, lo] += 1 - frac

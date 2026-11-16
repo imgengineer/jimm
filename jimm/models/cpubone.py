@@ -28,10 +28,9 @@ class ConvLayer(nnx.Module):
         self, in_chs, out_chs, kernel=3, stride=1, groups=1, use_bias=False, norm=True, act=None,
         *, rngs,
     ):  # fmt: skip
+        pad = (kernel // 2, kernel // 2)
         if kernel == 2:
             pad = (0, 0) if stride == 2 else (1, 0)
-        else:
-            pad = (kernel // 2, kernel // 2)
         self.conv = nnx.Conv(
             in_chs,
             out_chs,
@@ -105,7 +104,7 @@ class ConvAttention(nnx.Module):
         self.upsampling = nnx.Conv(inner, dim, (1, 1), rngs=rngs)
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         s = self.att_stride
         if s > 1 and (H % s or W % s):
             x = jnp.pad(x, ((0, 0), (0, -H % s), (0, -W % s), (0, 0)))

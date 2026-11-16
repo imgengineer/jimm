@@ -106,12 +106,12 @@ def test_model_entrypoint_and_is_model():
 def test_create_model():
     m = create_model("resnet18", num_classes=10)
     assert isinstance(m, nnx.Module)
-    assert getattr(m, "num_classes") == 10
-    assert "input_size" in getattr(m, "default_cfg")
+    assert m.num_classes == 10
+    assert "input_size" in m.default_cfg
 
     # create with explicit rngs
     m2 = create_model("resnet18", num_classes=5, rngs=nnx.Rngs(42))
-    assert getattr(m2, "num_classes") == 5
+    assert m2.num_classes == 5
 
     # unknown model error
     with pytest.raises(ValueError, match="Unknown model"):
@@ -157,7 +157,7 @@ def test_pretrained_url_uses_registered_cfg(tmp_path):
 
         return Model()
 
-    with pytest.raises(FileNotFoundError, match="missing.npz"):
+    with pytest.raises(FileNotFoundError, match=r"missing\.npz"):
         create_model("dummy_url_model", pretrained=True)
 
 
@@ -173,7 +173,7 @@ def test_custom_register_model():
 
     assert is_model("dummy_custom_model")
     m = create_model("dummy_custom_model", num_classes=3)
-    assert getattr(m, "num_classes") == 3
+    assert m.num_classes == 3
     assert get_default_cfg("dummy_custom_model") == {"input_size": (3, 64, 64)}
 
 
@@ -188,6 +188,6 @@ def test_models_submodule_registry_exports():
     assert hasattr(jimm.models, "register_model")
 
     m = jimm.models.create_model("resnet18", num_classes=5)
-    assert getattr(m, "num_classes") == 5
+    assert m.num_classes == 5
     assert jimm.models.is_model("resnet18")
     assert "resnet18" in jimm.models.list_models("resnet18*")

@@ -241,7 +241,7 @@ class CrossViT(ClassifierMixin, nnx.Module):
         for i, embed in enumerate(self.patch_embed):
             s = self.img_sizes[i]
             xi = x
-            if (H, W) != (s, s):
+            if (s, s) != (H, W):
                 mh = jnp.asarray(_bicubic_matrix(H, s), x.dtype)
                 mw = jnp.asarray(_bicubic_matrix(W, s), x.dtype)
                 xi = jnp.einsum("ih,jw,bhwc->bijc", mh, mw, x)

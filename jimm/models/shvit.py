@@ -77,7 +77,7 @@ class SHSA(nnx.Module):
         self.proj = _conv_norm(dim, dim, bn_weight_init=0.0, rngs=rngs)
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         x1, x2 = x[..., : self.pdim], x[..., self.pdim :]
         qkv = self.qkv(self.pre_norm(x1)).reshape(B, H * W, 1, -1)
         q, k, v = jnp.split(qkv, [self.qk_dim, 2 * self.qk_dim], axis=-1)

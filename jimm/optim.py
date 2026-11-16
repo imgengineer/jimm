@@ -5,7 +5,7 @@ import numpy as np
 import optax  # pyright: ignore[reportMissingImports]
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
-__all__ = ["make_optimizer", "create_optimizer"]
+__all__ = ["create_optimizer", "make_optimizer"]
 
 
 def make_optimizer(
@@ -69,7 +69,10 @@ def make_optimizer(
             end_value=lr * min_lr_ratio if min_lr is None else min_lr,
         )
     tx = optax.clip_by_global_norm(clip_grad) if clip_grad > 0 else optax.identity()
-    decay_mask = lambda params: jax.tree.map(lambda p: p.ndim >= 2, params)  # noqa: E731
+
+    def decay_mask(params):
+        return jax.tree.map(lambda p: p.ndim >= 2, params)
+
     adamw = optax.adamw(
         schedule, weight_decay=weight_decay, mask=decay_mask, eps=eps, b1=betas[0], b2=betas[1]
     )

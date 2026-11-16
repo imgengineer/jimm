@@ -75,7 +75,7 @@ def blockify(x, block_size):
 
 def deblockify(x, block_size):
     B, T, _, C = x.shape
-    grid = int(round(T**0.5))
+    grid = round(T**0.5)
     x = x.reshape(B, grid, grid, block_size, block_size, C).transpose(0, 1, 3, 2, 4, 5)
     return x.reshape(B, grid * block_size, grid * block_size, C)
 
@@ -147,7 +147,7 @@ class Nest(ClassifierMixin, nnx.Module):
         self.num_classes, self.global_pool = num_classes, global_pool
         grid = img_size // patch_size
         num_blocks = [4 ** (num_levels - 1 - i) for i in range(num_levels)]
-        self.block_size = grid // int(round(num_blocks[0] ** 0.5))
+        self.block_size = grid // round(num_blocks[0] ** 0.5)
         seq_length = grid * grid // num_blocks[0]
         self.patch_embed = nnx.Conv(
             in_chans,

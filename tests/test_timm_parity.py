@@ -1356,9 +1356,9 @@ def test_parameter_count_matches_timm(name):
 def _strided_paddings(jaxpr):
     for eqn in jaxpr.eqns:
         name = eqn.primitive.name
-        if name == "conv_general_dilated" or name.startswith("reduce_window"):
-            if any(s > 1 for s in eqn.params["window_strides"]):
-                yield name, tuple(eqn.params["padding"])
+        is_windowed = name == "conv_general_dilated" or name.startswith("reduce_window")
+        if is_windowed and any(s > 1 for s in eqn.params["window_strides"]):
+            yield name, tuple(eqn.params["padding"])
         for param in eqn.params.values():
             sub = getattr(param, "jaxpr", param)
             if hasattr(sub, "eqns"):

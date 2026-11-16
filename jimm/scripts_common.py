@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import contextlib
 import csv
 import json
 import logging
@@ -51,10 +52,8 @@ class ParseKwargs(argparse.Action):
             key, separator, value = item.partition("=")
             if not separator or not key:
                 raise argparse.ArgumentError(self, "model kwargs must use KEY=VALUE")
-            try:
+            with contextlib.suppress(ValueError, SyntaxError):
                 value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                pass
             kwargs[key] = value
         setattr(namespace, self.dest, kwargs)
 

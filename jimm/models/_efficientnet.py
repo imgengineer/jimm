@@ -70,7 +70,7 @@ class MixedConv(nnx.Module):
                     feature_group_count=i if depthwise else 1,
                     use_bias=False,
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for k, i, o in zip(kernels, ins, outs)
             ]
         )

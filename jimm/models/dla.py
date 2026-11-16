@@ -61,7 +61,7 @@ class DlaBottle2neck(nnx.Module):
                     feature_group_count=cardinality,
                     use_bias=False,
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for _ in range(max(1, scale - 1))
             ]
         )
@@ -139,7 +139,7 @@ class DlaTree(nnx.Module):
             children.append(bottom)
         x1 = self.tree1(x, shortcut)
         if self.root is not None:
-            return self.root([self.tree2(x1), x1] + children)
+            return self.root([self.tree2(x1), x1, *children])
         children.append(x1)
         return self.tree2(x1, None, children)
 

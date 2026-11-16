@@ -53,7 +53,7 @@ class GhostModuleV2(nnx.Module):
         x1 = self.primary(x)
         x2 = self.cheap(x1)
         out = jnp.concatenate([x1, x2], axis=-1)[..., : self.out_chs]
-        gate = jax.image.resize(jax.nn.sigmoid(res), out.shape[:3] + (self.out_chs,), "nearest")
+        gate = jax.image.resize(jax.nn.sigmoid(res), (*out.shape[:3], self.out_chs), "nearest")
         return out * gate
 
 
@@ -98,7 +98,7 @@ class GhostModuleV3(nnx.Module):
         if self.mode != "shortcut":
             return out
         res = self.short_conv(nnx.avg_pool(x, (2, 2), strides=(2, 2), padding="VALID"))
-        gate = jax.image.resize(jax.nn.sigmoid(res), out.shape[:3] + (self.out_chs,), "nearest")
+        gate = jax.image.resize(jax.nn.sigmoid(res), (*out.shape[:3], self.out_chs), "nearest")
         return out[..., : self.out_chs] * gate
 
 

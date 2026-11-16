@@ -139,7 +139,7 @@ class ResNeSt(ClassifierMixin, nnx.Module):
                         base_width,
                         avd_first,
                         rngs=rngs,
-                    )  # fmt: skip
+                    )
                 )
                 chs, k = out_chs, k + 1
             stages.append(nnx.List(blocks))

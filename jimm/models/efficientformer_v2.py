@@ -77,7 +77,7 @@ class Attention2d(nnx.Module):
         return layer(attn.transpose(0, 2, 3, 1)).transpose(0, 3, 1, 2)
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         if self.stride_conv is not None:
             x = self.stride_conv(x)
         q = _heads_first(self.q(x), self.num_heads)

@@ -1,5 +1,7 @@
 """Attention dispatch, numerical parity, and gradient regressions."""
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -7,6 +9,10 @@ import pytest
 from flax import nnx
 
 from jimm import attention
+
+
+def _squared_sum(fn, operands):
+    return jnp.square(fn(*operands)).sum()
 
 
 def _inputs(query_length, key_length, heads, head_dim, dtype, with_bias):
@@ -30,8 +36,7 @@ def test_fp32_attention_preserves_flax_outputs_and_gradients(query_length, key_l
     actual = jax.jit(attention.dot_product_attention)(*args)
     np.testing.assert_array_equal(actual, expected)
     for fn in (nnx.dot_product_attention, attention.dot_product_attention):
-        loss = lambda operands: jnp.square(fn(*operands)).sum()  # noqa: E731
-        grads = jax.jit(jax.grad(loss))(args)
+        grads = jax.jit(jax.grad(functools.partial(_squared_sum, fn)))(args)
         if fn is nnx.dot_product_attention:
             expected_grads = grads
         else:

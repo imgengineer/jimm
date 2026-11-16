@@ -166,7 +166,7 @@ class TNT(ClassifierMixin, nnx.Module):
                     dpr[i],
                     legacy,
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for i in range(depth)
             ]
         )

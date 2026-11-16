@@ -13,6 +13,10 @@
 
 ## What's New
 
+### November 16, 2026
+
+- Normalize the codebase against a stricter lint profile: `pyproject.toml` now enables whitespace (W), modern-syntax (UP), bug-prone-construct (B), simplification (SIM), misc (PIE), return (RET), raise (RSE), string-concatenation (ISC), static-join (FLY) and ruff-specific (RUF) rules on top of the default E/F/I set, with `ruff format` still the single owner of layout. The resulting 62-file diff only touches syntax: `__all__` lists and imports are sorted, `from typing import Callable` moves to `collections.abc`, `getattr`/`setattr` on constant names become attribute access, `[*a, b]` replaces list concatenation, unused unpacked shapes and loop counters become `_`-prefixed (or disappear with their `enumerate`), `int(round(...))` drops the redundant cast, `if`/`else` assignments become expressions, three assigned lambdas become `def`s (removing their `# noqa: E731`), and 21 misplaced `# fmt: skip` comments (no-ops on closing brackets) are removed. `B905` stays ignored because `zip(..., strict=True)` would change the runtime behaviour of the ported model code, and the public `jimm.__all__` keeps its area grouping with a documented `# noqa: RUF022` instead of an alphabetical flat list.
+
 ### November 15, 2026
 
 - Add an optional JAX persistent compilation cache (`--compilation-cache DIR`, or `JAX_COMPILATION_CACHE_DIR`) to the training, validation, inference and benchmark entry points.
@@ -435,6 +439,8 @@ JAX_PLATFORMS=cpu uv run pytest tests/ -q -n 8
 uv run ruff check .
 uv run ruff format --check .
 ```
+
+`ruff format` owns layout and `ruff check` owns everything else: the lint profile in `pyproject.toml` adds the W/UP/B/SIM/PIE/RET/RSE/ISC/FLY/RUF rule families to ruff's default E/F/I set, and `ruff check --fix` applies the safe fixes for all of them. The configured exceptions are deliberate and documented there: B905 is off because `zip(..., strict=True)` would change the runtime behaviour of the ported model code, and `jimm/__init__.py` keeps its area-grouped `__all__` behind a `# noqa: RUF022` instead of an alphabetical flat list. The model modules also keep timm's per-family duplication instead of sharing layer helpers.
 
 Each worker builds real models, so size `-n` by cores *and* memory; on a 14-core CPU eight workers need about 25 minutes, while a serial run takes hours. Eight workers already saturate such a machine: the suite spends roughly eight CPU-seconds per wall-clock second, raising `-n` to 12 shortens the heaviest subset (`-k architecture_family_forward_and_backward`, 6.5 minutes at `-n 8`) by only 3%, and `OMP_NUM_THREADS=1` changes nothing. A shared JAX compilation cache does not help either: JAX caches only programs that take more than a second to compile, and the per-test programs stay below that. `tests/test_models.py` instantiates every registered model (one parametrized case per model name, so the check spreads across workers) and runs a forward and backward pass for one model of each family; those per-family passes are the long poles, since each compiles separate training, gradient, evaluation and feature programs. `tests/test_scripts.py` smoke-tests the top-level scripts against a tiny synthetic ImageFolder. `tests/test_attention.py` covers the Tokamax attention path and requires a GPU:
 

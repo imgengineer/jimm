@@ -62,18 +62,18 @@ from .train_cli import parse_args
 __all__ = [
     "ImagePreprocess",
     "StepMetrics",
-    "init_distributed",
-    "fsdp_shard_model",
-    "prefetch_to_device",
-    "cross_entropy",
-    "make_optimizer",
     "create_optimizer",
+    "cross_entropy",
+    "eval_step",
+    "fsdp_shard_model",
+    "init_distributed",
+    "main",
+    "make_cached_eval_step",
+    "make_cached_train_step",
+    "make_optimizer",
+    "prefetch_to_device",
     "train_step",
     "train_step_with_metrics",
-    "eval_step",
-    "make_cached_train_step",
-    "make_cached_eval_step",
-    "main",
 ]
 
 
@@ -105,7 +105,7 @@ def fsdp_shard_model(model_or_opt, mesh, mesh_axis="data"):
     """Shards parameters and optimizer states across the mesh axis (ZeRO-3 / FSDP)."""
     num_devices = len(mesh.devices)
     P = jax.sharding.PartitionSpec
-    for path, node in nnx.graph.iter_graph(model_or_opt):
+    for _path, node in nnx.graph.iter_graph(model_or_opt):
         if isinstance(node, nnx.Variable):
             val = node.get_value()
             if isinstance(val, (jax.Array, np.ndarray)) and val.ndim >= 1:

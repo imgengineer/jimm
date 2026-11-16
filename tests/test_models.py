@@ -26,9 +26,9 @@ def test_all_registered_model_entrypoints_instantiation(name):
     m = nnx.eval_shape(lambda: create_model(name, num_classes=5, rngs=nnx.Rngs(0)))
     assert isinstance(m, nnx.Module)
     assert hasattr(m, "num_features")
-    assert getattr(m, "num_features") > 0
+    assert m.num_features > 0
     assert hasattr(m, "default_cfg")
-    assert "input_size" in getattr(m, "default_cfg")
+    assert "input_size" in m.default_cfg
 
 
 @pytest.mark.parametrize("module_name", MODULES)

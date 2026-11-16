@@ -14,17 +14,18 @@ import os
 import threading
 import time
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
 from flax import nnx
 
 __all__ = [
-    "save_checkpoint",
-    "load_checkpoint",
-    "wait_for_checkpoints",
     "CheckpointManager",
+    "load_checkpoint",
+    "save_checkpoint",
+    "wait_for_checkpoints",
 ]
 
 _checkpointer: ocp.StandardCheckpointer | None = None

@@ -68,7 +68,7 @@ def _command(args, model):
         if args.module:
             command.append("-m")
         command.append(args.script)
-    return command + [*args.script_args, "--model", model]
+    return [*command, *args.script_args, "--model", model]
 
 
 def _parse_result(output):

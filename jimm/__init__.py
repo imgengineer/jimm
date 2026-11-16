@@ -22,7 +22,7 @@ except (AttributeError, ValueError, KeyError):
         exc_info=True,
     )
 
-from . import (  # noqa: F401
+from . import (
     augment,
     checkpoint,
     data,
@@ -78,7 +78,8 @@ from .registry import (
 
 __version__ = "0.1.0"
 
-__all__ = [
+# Grouped by area, not alphabetically, so the public API reads top-down.
+__all__ = [  # noqa: RUF022
     "__version__",
     # Registry & Creation
     "create_model",

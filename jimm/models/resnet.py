@@ -443,12 +443,12 @@ _ARCHS = {
         _BN,
         _L101,
         dict(_D, groups=32, base_width=8, aa="avg", attn="se"),
-    ),  # fmt: skip
+    ),
     "seresnextaa201d_32x8d": (
         _BN,
         (3, 24, 36, 4),
         dict(_D, stem_width=64, groups=32, base_width=8, aa="avg", attn="se"),
-    ),  # fmt: skip
+    ),
     "resnetrs50": (_BN, _L50, _RS),
     "resnetrs101": (_BN, _L101, _RS),
     "resnetrs152": (_BN, _L152, _RS),
@@ -460,7 +460,7 @@ _ARCHS = {
         (_B, _B, _BN, _B),
         (1, 1, 1, 1),
         dict(stem_width=16, stem_type="deep", avg_down=True, channels=(32, 48, 48, 96)),
-    ),  # fmt: skip
+    ),
 }
 
 

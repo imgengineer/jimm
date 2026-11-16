@@ -10,7 +10,7 @@ from ..registry import _cfg, register_model
 
 def _adaptive_avg_pool(x, out):
     """PyTorch ``AdaptiveAvgPool2d(out)`` on NHWC maps (bins floor(i*n/out)..ceil((i+1)*n/out))."""
-    B, H, W, C = x.shape
+    _B, H, W, _C = x.shape
 
     def bins(n):
         return [(i * n // out, -(-(i + 1) * n // out)) for i in range(out)]
@@ -152,7 +152,7 @@ class PyramidVisionTransformerV2(ClassifierMixin, nnx.Module):
                 )
             )
             blocks = []
-            for j in range(depths[i]):
+            for _ in range(depths[i]):
                 blocks.append(
                     PVTBlock(
                         embed_dims[i],

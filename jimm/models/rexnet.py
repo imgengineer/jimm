@@ -63,7 +63,8 @@ class LinearBottleneck(nnx.Module):
 
 def _block_cfg(width_mult, depth_mult, initial_chs=16, final_chs=180, se_ratio=1 / 12, ch_div=1):
     layers = [math.ceil(n * depth_mult) for n in (1, 2, 2, 3, 3, 5)]
-    strides = sum([[s] + [1] * (n - 1) for s, n in zip((1, 2, 2, 2, 1, 2), layers)], [])
+    # Each stage starts with its own stride and keeps unit strides for the remaining blocks.
+    strides = [s if i == 0 else 1 for s, n in zip((1, 2, 2, 2, 1, 2), layers) for i in range(n)]
     exp_ratios = [1] * layers[0] + [6] * sum(layers[1:])
     se_ratios = [0.0] * (layers[0] + layers[1]) + [se_ratio] * sum(layers[2:])
     num_blocks = sum(layers)

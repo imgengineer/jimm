@@ -11,9 +11,9 @@ import optax  # pyright: ignore[reportMissingImports]
 from flax import nnx  # pyright: ignore[reportMissingImports]
 
 __all__ = [
-    "cross_entropy",
     "LabelSmoothingCrossEntropy",
     "SoftTargetCrossEntropy",
+    "cross_entropy",
 ]
 
 

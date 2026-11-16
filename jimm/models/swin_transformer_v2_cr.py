@@ -126,7 +126,7 @@ class SwinTransformerV2CrBlock(nnx.Module):
         self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
 
     def _attn(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         if self.shift > 0:
             x = jnp.roll(x, (-self.shift, -self.shift), axis=(1, 2))
         mask = self.attn_mask[...] if self.attn_mask is not None else None

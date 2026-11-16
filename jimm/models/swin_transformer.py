@@ -118,7 +118,7 @@ class SwinBlock(nnx.Module):
         self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         sc = x
         x = self.norm1(x)
         if self.shift > 0:
@@ -139,7 +139,6 @@ class PatchMerging(nnx.Module):
         self.reduction = nnx.Linear(4 * dim, 2 * dim, use_bias=False, rngs=rngs)
 
     def __call__(self, x):
-        B, H, W, C = x.shape
         x0, x1 = x[:, 0::2, 0::2, :], x[:, 1::2, 0::2, :]
         x2, x3 = x[:, 0::2, 1::2, :], x[:, 1::2, 1::2, :]
         x = jnp.concatenate([x0, x1, x2, x3], axis=-1)

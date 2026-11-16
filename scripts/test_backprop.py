@@ -64,7 +64,7 @@ def check_layer_grad_flow():
         flat = jax.tree_util.tree_flatten_with_path(pure)[0]
         groups = {"first": 0.0, "middle": 0.0, "last": 0.0}
         n = len(flat)
-        for i, (path, val) in enumerate(flat):
+        for i, (_path, val) in enumerate(flat):
             g = float(jnp.linalg.norm(getattr(val, "value", val)))
             grp = "first" if i < n / 3 else ("middle" if i < 2 * n / 3 else "last")
             groups[grp] += g

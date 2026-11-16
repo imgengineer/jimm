@@ -14,13 +14,13 @@ from flax import nnx
 from .layers import use_fast_grouped_conv_grads
 
 __all__ = [
-    "register_model",
     "create_model",
+    "get_default_cfg",
+    "is_model",
     "list_models",
     "list_modules",
     "model_entrypoint",
-    "get_default_cfg",
-    "is_model",
+    "register_model",
 ]
 
 _model_entrypoints: dict[str, Callable[..., nnx.Module]] = {}
@@ -51,7 +51,7 @@ def register_model(
     if default_cfg is not None:
         _model_default_cfgs[name] = default_cfg
     elif hasattr(fn, "default_cfg"):
-        _model_default_cfgs[name] = getattr(fn, "default_cfg")
+        _model_default_cfgs[name] = fn.default_cfg
     return fn
 
 
@@ -174,7 +174,7 @@ def create_model(
     # Instance configurations may reflect constructor overrides, so they are
     # not cached as the model's default.
     if not getattr(model, "default_cfg", None):
-        setattr(model, "default_cfg", dict(_model_default_cfgs.get(name) or _cfg()))
+        model.default_cfg = dict(_model_default_cfgs.get(name) or _cfg())
 
     # Load pretrained weights if requested
     if pretrained:

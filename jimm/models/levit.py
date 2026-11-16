@@ -5,7 +5,7 @@ attention adds learned relative-position biases, and stages downsample with
 attention over a subsampled query grid. Models average two distilled heads.
 """
 
-from functools import lru_cache
+from functools import cache
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,7 +18,7 @@ from ..registry import _cfg, register_model
 from ._conv import ConvNormAct
 
 
-@lru_cache(maxsize=None)
+@cache
 def _bias_index(resolution, stride=1):
     """Index ``(query, key)`` pairs by ``|dy| * width + |dx|`` on the token grid."""
     rows, cols = resolution

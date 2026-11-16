@@ -111,7 +111,7 @@ class UniversalInvertedResidual(nnx.Module):
                 False,
                 same=same,
                 rngs=rngs,
-            )  # fmt: skip
+            )
             if start_k
             else None
         )
@@ -245,7 +245,7 @@ class MultiScaleFusionAdapter(nnx.Module):
             resized.append(img)
         x = self.ffn(jnp.concatenate(resized, axis=-1))
         oh = ow = self.output_resolution
-        if (H, W) != (oh, ow):
+        if (oh, ow) != (H, W):
             if H % oh or W % ow:
                 x = jax.image.resize(x, (B, oh, ow, x.shape[-1]), "bilinear", antialias=False)
             else:

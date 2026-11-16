@@ -111,8 +111,8 @@ def _run_worker():
     if fsdp == "1":
         common.append("--fsdp")
     try:
-        main(common + ["--epochs", "1"])
-        main(common + ["--epochs", "2", "--resume"])
+        main([*common, "--epochs", "1"])
+        main([*common, "--epochs", "2", "--resume"])
         with CheckpointManager(f"{root}/output/distributed_tiny") as manager:
             assert manager.latest_step() == 1
         print("RESUME_OK", flush=True)

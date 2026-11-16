@@ -123,10 +123,8 @@ def _rotate_half(x):
 
 def _apply_rope(x, emb, half):
     """x: (B, N, H, D); emb: (N, 2D) or (H, N, 2D)."""
-    if emb.ndim == 3:
-        emb = jnp.transpose(emb, (1, 0, 2))[None]  # (1, N, H, 2D)
-    else:
-        emb = emb[None, :, None, :]
+    # (N, 2D) rotates per token, (H, N, 2D) per head; both end up (1, N, H, 2D).
+    emb = jnp.transpose(emb, (1, 0, 2))[None] if emb.ndim == 3 else emb[None, :, None, :]
     sin, cos = jnp.split(emb.astype(x.dtype), 2, axis=-1)
     return x * cos + (_rotate_half(x) if half else _rot(x)) * sin
 
@@ -416,7 +414,7 @@ class Eva(ClassifierMixin, nnx.Module):
                 cfg["attn_pool_mlp_ratio"] or cfg["mlp_ratio"],
                 eps,
                 rngs=rngs,
-            )  # fmt: skip
+            )
             if global_pool == "map"
             else None
         )
@@ -447,9 +445,9 @@ class Eva(ClassifierMixin, nnx.Module):
         if self.no_embed_class:
             if self.pos_embed is not None:
                 x = x + self.pos_embed[...]
-            x = jnp.concatenate(prefix + [x], axis=1) if prefix else x
+            x = jnp.concatenate([*prefix, x], axis=1) if prefix else x
         else:
-            x = jnp.concatenate(prefix + [x], axis=1) if prefix else x
+            x = jnp.concatenate([*prefix, x], axis=1) if prefix else x
             if self.pos_embed is not None:
                 x = x + self.pos_embed[...]
         if self.norm_pre is not None:

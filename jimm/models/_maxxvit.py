@@ -8,7 +8,7 @@ relative position bias. Convolutions use PyTorch symmetric padding, or
 TensorFlow "SAME" padding for the tf ports.
 """
 
-from functools import lru_cache
+from functools import cache
 
 import jax
 import jax.numpy as jnp
@@ -29,8 +29,7 @@ _ACTS = {
 
 
 def conv_cfg(**overrides):
-    cfg = {**CONV_DEFAULTS, **overrides}
-    return cfg
+    return {**CONV_DEFAULTS, **overrides}
 
 
 def transformer_cfg(**overrides):
@@ -96,7 +95,7 @@ class Downsample2d(nnx.Module):
 # ----------------------------------------------------------------------------- relative position
 
 
-@lru_cache(maxsize=None)
+@cache
 def _relative_position_index(window):
     rows, cols = window
     coords = np.stack(np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")).reshape(2, -1)

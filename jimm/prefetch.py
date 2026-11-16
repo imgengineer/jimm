@@ -1,6 +1,7 @@
 """Host-to-device batch prefetching shared by the training and evaluation loops."""
 
 import collections
+import contextlib
 
 __all__ = ["prefetch_stream"]
 
@@ -25,8 +26,6 @@ def prefetch_stream(source, put, prefetch_size=2):
             break
     while queue:
         item = queue.popleft()
-        try:
+        with contextlib.suppress(StopIteration):
             queue.append(put(next(iterator)))
-        except StopIteration:
-            pass
         yield item

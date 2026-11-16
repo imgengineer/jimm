@@ -112,7 +112,7 @@ class DiffAttention(nnx.Module):
         self.proj = nnx.Linear(dim, dim, use_bias=proj_bias, rngs=rngs)
 
     def __call__(self, x):
-        B, N, C = x.shape
+        B, N, _C = x.shape
         q, k, v = jnp.split(self.qkv(x), 3, axis=-1)
         q = q.reshape(B, N, 2 * self.num_heads, self.head_dim)
         k = k.reshape(B, N, 2 * self.num_heads, self.head_dim)
@@ -449,7 +449,7 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
                     act=act,
                     rngs=rngs,
                     **opts,
-                )  # fmt: skip
+                )
                 for i in range(depth)
             ]
         )
@@ -498,11 +498,11 @@ class VisionTransformer(ClassifierMixin, nnx.Module):
             if t is not None
         ]
         if self.pos_embed is None:
-            return jnp.concatenate(prefix + [x], axis=1)
+            return jnp.concatenate([*prefix, x], axis=1)
         if self.no_embed_class:
-            x = jnp.concatenate(prefix + [x + self.pos_embed[...]], axis=1)
+            x = jnp.concatenate([*prefix, x + self.pos_embed[...]], axis=1)
         else:
-            x = jnp.concatenate(prefix + [x], axis=1) + self.pos_embed[...]
+            x = jnp.concatenate([*prefix, x], axis=1) + self.pos_embed[...]
         return self.pos_drop(x)
 
     def forward_intermediates(self, x, out_indices=None):

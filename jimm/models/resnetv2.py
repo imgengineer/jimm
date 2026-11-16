@@ -103,7 +103,7 @@ class NormAct(nnx.Module):
 
 def _avg_pool_ceil(x, s):
     """``AvgPool2d(2, s, ceil_mode=True, count_include_pad=False)``."""
-    B, H, W, C = x.shape
+    _B, H, W, _C = x.shape
     oh, ow = -(-(H - 2) // s) + 1, -(-(W - 2) // s) + 1
     ph, pw = max((oh - 1) * s + 2 - H, 0), max((ow - 1) * s + 2 - W, 0)
     pad = ((0, 0), (0, ph), (0, pw), (0, 0))
@@ -181,7 +181,7 @@ class ResNetStage(nnx.Module):
                     std,
                     dprs[i],
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for i in range(depth)
             ]
         )
@@ -262,7 +262,7 @@ class ResNetV2(ClassifierMixin, nnx.Module):
                     std_conv,
                     dpr[k : k + d],
                     rngs=rngs,
-                )  # fmt: skip
+                )
             )
             prev, k = out, k + d
         self.stages = nnx.List(stages)

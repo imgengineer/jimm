@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-__all__ = ["load_state_dict", "load_pretrained"]
+__all__ = ["load_pretrained", "load_state_dict"]
 
 
 def _convert_key(k: str) -> list[str]:

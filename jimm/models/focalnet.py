@@ -112,10 +112,7 @@ class FocalNetBlock(nnx.Module):
 
     def __call__(self, x):
         # Pre-norm blocks normalize inputs; post-norm blocks normalize branch outputs instead.
-        if self.use_post_norm:
-            y = self.norm1(self.modulation(x))
-        else:
-            y = self.modulation(self.norm1(x))
+        y = self.norm1(self.modulation(x)) if self.use_post_norm else self.modulation(self.norm1(x))
         if self.ls1 is not None:
             y = self.ls1[...] * y
         x = x + self.drop_path(y)

@@ -37,7 +37,30 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+# On top of the default correctness rules (E/F) and import sorting (I), keep the
+# syntax modern (UP) and catch likely bugs and needless verbosity (B, SIM, PIE,
+# RET, RSE, ISC, FLY, RUF). Reformatting is owned by `ruff format`, which is the
+# single source of truth for layout: line length is not re-checked by a lint
+# rule, and zip() strictness (B905) is ignored because it would change the
+# runtime behaviour of the ported model code.
+select = [
+  "E4",   # import placement
+  "E7",   # statement-level style
+  "E9",   # runtime errors
+  "F",    # pyflakes
+  "I",    # import sorting
+  "W",    # whitespace
+  "UP",   # modern Python syntax
+  "B",    # likely bugs
+  "SIM",  # simplifications
+  "PIE",  # misc lint
+  "RET",  # return statements
+  "RSE",  # raise style
+  "ISC",  # implicit string concatenation
+  "FLY",  # static join
+  "RUF",  # ruff-specific
+]
+ignore = ["B905"]
 
 [tool.ruff.lint.per-file-ignores]
 "jimm/models/__init__.py" = ["I001"]

@@ -81,7 +81,7 @@ def _shortcut(kind, in_chs, out_chs, stride, norm, preact, *, rngs):
 def _se(chs, in_chs, se_ratio, act, *, rngs):
     if not se_ratio:
         return None
-    return SqueezeExcite(chs, rd_channels=int(round(in_chs * se_ratio)), act=act, rngs=rngs)
+    return SqueezeExcite(chs, rd_channels=round(in_chs * se_ratio), act=act, rngs=rngs)
 
 
 class RegNetBlock(nnx.Module):
@@ -89,7 +89,7 @@ class RegNetBlock(nnx.Module):
 
     def __init__(self, in_chs, out_chs, stride, group_size, cfg, drop_path=0.0, *, rngs):
         act, norm = getattr(nnx, cfg["act"]), cfg["norm"]
-        mid = int(round(out_chs * cfg["bottle_ratio"]))
+        mid = round(out_chs * cfg["bottle_ratio"])
         self.act = act
         self.conv1 = _conv(in_chs, mid, 1, rngs=rngs)
         self.bn1 = _norm(norm, mid, rngs=rngs)
@@ -120,7 +120,7 @@ class RegNetPreBlock(nnx.Module):
 
     def __init__(self, in_chs, out_chs, stride, group_size, cfg, drop_path=0.0, *, rngs):
         act, norm = getattr(nnx, cfg["act"]), cfg["norm"]
-        mid = int(round(out_chs * cfg["bottle_ratio"]))
+        mid = round(out_chs * cfg["bottle_ratio"])
         self.act = act
         self.norm1 = _norm(norm, in_chs, rngs=rngs)
         self.conv1 = _conv(in_chs, mid, 1, rngs=rngs)

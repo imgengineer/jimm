@@ -84,8 +84,7 @@ def _bias_index(resolution):
     r = resolution
     rows = np.arange(r * r) // r
     cols = np.arange(r * r) % r
-    idx = np.abs(rows[:, None] - rows[None, :]) * r + np.abs(cols[:, None] - cols[None, :])
-    return idx
+    return np.abs(rows[:, None] - rows[None, :]) * r + np.abs(cols[:, None] - cols[None, :])
 
 
 class CascadedGroupAttention(nnx.Module):
@@ -176,7 +175,7 @@ class LocalWindowAttention(nnx.Module):
         B, H, W, C = x.shape
         assert H == W == resolution, f"expected {(resolution, resolution)}, got {(H, W)}"
         ws = self.window_resolution
-        if H <= ws and W <= ws:
+        if ws >= H and ws >= W:
             return self.attn(x)
         pad_b = (ws - H % ws) % ws
         pad_r = (ws - W % ws) % ws
@@ -329,8 +328,8 @@ class EfficientVitMsra(ClassifierMixin, nnx.Module):
         resolution = img_size // self.patch_embed.patch_size
         attn_ratio = [embed_dim[i] / (key_dim[i] * num_heads[i]) for i in range(len(embed_dim))]
         stages, pre_ed = [], embed_dim[0]
-        for i, (ed, kd, dpth, nh, ar, wd, do) in enumerate(
-            zip(embed_dim, key_dim, depth, num_heads, attn_ratio, window_size, down_ops)
+        for ed, kd, dpth, nh, ar, wd, do in zip(
+            embed_dim, key_dim, depth, num_heads, attn_ratio, window_size, down_ops
         ):
             stage = EfficientVitStage(
                 pre_ed,

@@ -57,7 +57,7 @@ class GPSA(nnx.Module):
         qk = self.qk(x).reshape(B, N, 2, h, C // h)
         q, k = qk[:, :, 0], qk[:, :, 1]
         patch = jnp.einsum("bqhd,bkhd->bhqk", q, k).astype(jnp.float32) * self.scale
-        grid = int(round(N**0.5))
+        grid = round(N**0.5)
         pos = self.pos_proj(jnp.asarray(_rel_indices(grid), x.dtype)).transpose(2, 0, 1)
         gate = jax.nn.sigmoid(self.gating_param[...].astype(jnp.float32))[None, :, None, None]
         attn = (1.0 - gate) * jax.nn.softmax(patch, axis=-1) + gate * jax.nn.softmax(

@@ -38,7 +38,7 @@ def _conv(in_chs, out_chs, kernel, stride=1, dilation=1, groups=1, bias=False, *
 
 def _avg2(x, stride=2, ceil=False):
     """AvgPool2d(2, stride[, ceil_mode=True, count_include_pad=False])."""
-    B, H, W, C = x.shape
+    _B, H, W, _C = x.shape
     window, strides = (1, 2, 2, 1), (1, stride, stride, 1)
     if not ceil:
         return jax.lax.reduce_window(x, 0.0, jax.lax.add, window, strides, "VALID") / 4.0
@@ -254,7 +254,7 @@ class BottleneckAttn(nnx.Module):
         self.stride = stride
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         h, dqk, dv = self.num_heads, self.dqk, self.dv
         qkv = self.qkv(x).reshape(B, H * W, -1)
         q = qkv[..., : h * dqk].reshape(B, H * W, h, dqk)
@@ -296,7 +296,7 @@ class HaloAttn(nnx.Module):
         self.pos_embed = _PosEmbedRel(self.win, self.win, self.dqk, rngs=rngs)
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         h, dqk, dv, bs, bsd, win = (
             self.num_heads,
             self.dqk,
@@ -357,7 +357,7 @@ class LambdaLayer(nnx.Module):
             self.rel_idx = nnx.Variable(jnp.asarray(np.stack([rel[0] + fh - 1, rel[1] + fw - 1])))
 
     def __call__(self, x):
-        B, H, W, C = x.shape
+        B, H, W, _C = x.shape
         h, dqk, dv, M = self.num_heads, self.dqk, self.dv, H * W
         qkv = self.qkv(x)
         q = self.norm_q(qkv[..., : h * dqk]).reshape(B, M, h, dqk)
@@ -520,7 +520,7 @@ class RepBlock(nnx.Module):
                         cin, cout, k, s, groups=g, apply_act=False, layers=layers, rngs=rngs
                     )
                     for _ in range(n)
-                ]  # fmt: skip
+                ]
             )
             self.conv_scale = (
                 ConvNormAct(cin, cout, 1, s, groups=g, apply_act=False, layers=layers, rngs=rngs)
@@ -677,7 +677,7 @@ class ByobNet(ClassifierMixin, nnx.Module):
         for st in stages:
             blocks = []
             for b, n in st:
-                for j in range(n):
+                for _ in range(n):
                     blocks.append(_block(b, layers, rates[k], rngs))
                     k += 1
             blocks_all.append(nnx.List(blocks))
@@ -685,7 +685,7 @@ class ByobNet(ClassifierMixin, nnx.Module):
         prev = {**BLOCK_DEFAULTS, **stages[-1][-1][0]}["out_chs"]
         nf = model["num_features"]
         if nf:
-            self.num_features = int(round(model["width_factor"] * nf))
+            self.num_features = round(model["width_factor"] * nf)
             self.final_conv = ConvNormAct(prev, self.num_features, 1, layers=layers, rngs=rngs)
         else:
             self.num_features, self.final_conv = prev, None

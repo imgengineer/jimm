@@ -15,21 +15,21 @@ from flax import nnx
 
 __all__ = [
     "BatchNorm",
-    "DropPath",
-    "drop_path",
-    "create_act_layer",
-    "conv_general_dilated",
-    "use_fast_grouped_conv_grads",
-    "PatchEmbed",
-    "Mlp",
-    "SqueezeExcite",
-    "make_divisible",
-    "ConvBNAct",
     "ClassifierMixin",
-    "global_pool_nhwc",
+    "ConvBNAct",
+    "DropPath",
+    "Mlp",
+    "PatchEmbed",
+    "SqueezeExcite",
+    "conv_general_dilated",
+    "create_act_layer",
+    "drop_path",
     "gelu",
+    "global_pool_nhwc",
     "hswish",
+    "make_divisible",
     "relu6",
+    "use_fast_grouped_conv_grads",
 ]
 
 

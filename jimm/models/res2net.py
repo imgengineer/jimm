@@ -25,7 +25,7 @@ class Res2NetBottleneck(nnx.Module):
         avg_down=False, rngs, **_,
     ):  # fmt: skip
         out_chs = chs * self.expansion
-        width = int(math.floor(chs * base_width / 64)) * groups
+        width = math.floor(chs * base_width / 64) * groups
         mid = width * self.scale
         self.stride = stride
         # timm "is_first": strided or projecting blocks skip the cascade and pool the last chunk.
@@ -43,7 +43,7 @@ class Res2NetBottleneck(nnx.Module):
                     feature_group_count=groups,
                     use_bias=False,
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for _ in range(self.scale - 1)
             ]
         )

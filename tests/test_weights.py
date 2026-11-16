@@ -93,7 +93,7 @@ def test_load_state_dict_resnet():
         "fc.weight": np.ones((1000, 512), dtype=np.float32) * 0.1,
         "fc.bias": np.ones((1000,), dtype=np.float32) * 0.05,
     }
-    loaded, missing = load_state_dict(m, state_dict)
+    loaded, _missing = load_state_dict(m, state_dict)
     assert "conv1.weight" in loaded
     assert "bn1.weight" in loaded
     assert "fc.weight" in loaded

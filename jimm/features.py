@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-__all__ = ["FeatureInfo", "FeatureExtractor", "create_feature_extractor"]
+__all__ = ["FeatureExtractor", "FeatureInfo", "create_feature_extractor"]
 
 
 def _select_features(feats, out_indices):

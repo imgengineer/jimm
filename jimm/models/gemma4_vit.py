@@ -201,7 +201,7 @@ class Gemma4VitEncoder(ClassifierMixin, nnx.Module):
                     norm_eps,
                     dpr[i],
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for i in range(depth)
             ]
         )
@@ -304,7 +304,7 @@ _ARCHS = {
         head_dim=64,
         intermediate_size=3072,
         use_clipped_linears=True,
-    ),  # fmt: skip
+    ),
     "570m": dict(
         embed_dim=1152,
         depth=27,
@@ -312,7 +312,7 @@ _ARCHS = {
         head_dim=72,
         intermediate_size=4304,
         standardize=True,
-    ),  # fmt: skip
+    ),
 }
 
 

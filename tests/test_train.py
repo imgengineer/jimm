@@ -676,7 +676,7 @@ def test_main_training_cli_resume(temp_dataset, capsys):
             "--output",
             out_dir,
         ]
-        main(common + ["--epochs", "2", "--max-to-keep", "1"])
+        main([*common, "--epochs", "2", "--max-to-keep", "1"])
         assert os.path.exists(f"{out_dir}/resnet18/1")
         output = capsys.readouterr().out
         assert "epoch   0 [   2/2]" in output
@@ -684,7 +684,7 @@ def test_main_training_cli_resume(temp_dataset, capsys):
         assert "epoch   1 [   2/2]" in output
 
         # Resume continues from the latest checkpoint instead of restarting.
-        main(common + ["--epochs", "3", "--resume"])
+        main([*common, "--epochs", "3", "--resume"])
         assert "[Resume] Restored checkpoint at epoch 1" in capsys.readouterr().out
         assert os.path.exists(f"{out_dir}/resnet18/2")
     finally:
@@ -752,7 +752,7 @@ def test_resume_reproduces_uninterrupted_training(temp_dataset, capsys, monkeypa
         uninterrupted = f"{root}/uninterrupted"
         interrupted = f"{root}/interrupted"
 
-        main(common + ["--epochs", "3", "--output", uninterrupted])
+        main([*common, "--epochs", "3", "--output", uninterrupted])
         capsys.readouterr()
 
         # Two epochs of the three-epoch schedule, then "crash" once epoch 1 is safe.
@@ -767,11 +767,11 @@ def test_resume_reproduces_uninterrupted_training(temp_dataset, capsys, monkeypa
 
         monkeypatch.setattr(CheckpointManager, "save", save_then_stop)
         with pytest.raises(SystemExit):
-            main(common + ["--epochs", "3", "--output", interrupted])
+            main([*common, "--epochs", "3", "--output", interrupted])
         monkeypatch.undo()
 
         # Restart from the crash and finish the run.
-        main(common + ["--epochs", "3", "--output", interrupted, "--resume"])
+        main([*common, "--epochs", "3", "--output", interrupted, "--resume"])
         assert "[Resume] Restored checkpoint at epoch 1" in capsys.readouterr().out
 
         for step in (1, 2):

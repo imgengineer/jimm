@@ -61,13 +61,15 @@ def _as_float(value):
 
 
 __all__ = [
+    "AugMixAugment",
     "AugmentOp",
     "AutoAugment",
-    "AugMixAugment",
     "Mixup",
     "MixupCutmix",
     "RandAugment",
     "TrivialAugmentWide",
+    "augment_and_mix_transform",
+    "augmix_ops",
     "auto_augment_policy",
     "auto_augment_policy_3a",
     "auto_augment_policy_original",
@@ -75,26 +77,24 @@ __all__ = [
     "auto_augment_policy_v0",
     "auto_augment_policy_v0r",
     "auto_augment_transform",
-    "augmix_ops",
-    "augment_and_mix_transform",
     "build_auto_augment",
     "center_crop_or_pad",
     "color_jitter",
     "gaussian_blur",
+    "interp_mode_to_str",
+    "rand_augment_choices",
+    "rand_augment_ops",
+    "rand_augment_transform",
     "random_crop_or_pad",
     "random_erasing",
     "random_flip_left_right",
     "random_flip_up_down",
     "random_grayscale",
     "random_resized_crop",
-    "rand_augment_choices",
-    "rand_augment_ops",
-    "rand_augment_transform",
     "resize_keep_ratio",
     "resolve_interpolation",
     "str_to_interp_mode",
     "str_to_pil_interp",
-    "interp_mode_to_str",
 ]
 
 
@@ -352,11 +352,11 @@ def _equalize(image):
 
 def _solarize(image, threshold):
     """PIL ``ImageOps.solarize``: invert values at or above ``threshold``."""
-    return _lut(image, np.where(_IDENTITY_LUT < threshold, _IDENTITY_LUT, 255 - _IDENTITY_LUT))
+    return _lut(image, np.where(threshold > _IDENTITY_LUT, _IDENTITY_LUT, 255 - _IDENTITY_LUT))
 
 
 def _solarize_add(image, add, threshold=128):
-    return _lut(image, np.where(_IDENTITY_LUT < threshold, _IDENTITY_LUT + add, _IDENTITY_LUT))
+    return _lut(image, np.where(threshold > _IDENTITY_LUT, _IDENTITY_LUT + add, _IDENTITY_LUT))
 
 
 def _posterize(image, bits):
@@ -1015,7 +1015,7 @@ def build_auto_augment(config, hparams=None):
         return rand_augment_transform(config, hparams)
     if config.startswith("augmix"):
         return augment_and_mix_transform(config, hparams)
-    if config.startswith("ta") or config.startswith("trivial"):
+    if config.startswith(("ta", "trivial")):
         return TrivialAugmentWide(hparams)
     return auto_augment_transform(config, hparams)
 

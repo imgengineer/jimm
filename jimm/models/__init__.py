@@ -116,10 +116,10 @@ __all__ = [
     "ResNet",
     "VisionTransformer",
     "create_model",
+    "get_default_cfg",
+    "is_model",
     "list_models",
     "list_modules",
-    "is_model",
     "model_entrypoint",
-    "get_default_cfg",
     "register_model",
 ]

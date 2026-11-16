@@ -152,7 +152,7 @@ class VisionTransformerSAM(ClassifierMixin, nnx.Module):
                     0 if i in global_attn_indexes else window_size,
                     grid,
                     rngs=rngs,
-                )  # fmt: skip
+                )
                 for i in range(depth)
             ]
         )
@@ -168,7 +168,7 @@ class VisionTransformerSAM(ClassifierMixin, nnx.Module):
                         padding=((1, 1), (1, 1)),
                         use_bias=False,
                         rngs=rngs,
-                    ),  # fmt: skip
+                    ),
                     _ln2d(neck_chans, rngs=rngs),
                 ]
             )

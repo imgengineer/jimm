@@ -100,11 +100,7 @@ class RepDepthwiseSeparable(nnx.Module):
             x = self.dw_act(x)
         if self.se is not None:
             x = self.se(x)
-        if self.pw is not None:
-            x = self.pw(x)
-        else:
-            x = self.pw2(self.pw1(x))
-        return x
+        return self.pw(x) if self.pw is not None else self.pw2(self.pw1(x))
 
 
 # in_chs, dw_kernel_size, split_pw, use_rep, use_se, use_shortcut

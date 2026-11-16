@@ -74,7 +74,7 @@ def _cna(in_chs, out_chs, kernel=1, stride=1, groups=1, act=None, bn_weight_init
 
 class BottleneckBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, bottle_ratio, groups, act, attn, drop_path, *, rngs):
-        mid = int(round(out_chs * bottle_ratio))
+        mid = round(out_chs * bottle_ratio)
         self.act = act
         self.conv1 = _cna(in_chs, mid, act=act, rngs=rngs)
         self.conv2 = _cna(mid, mid, 3, groups=groups, act=act, rngs=rngs)
@@ -91,7 +91,7 @@ class BottleneckBlock(nnx.Module):
 
 class DarkBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, bottle_ratio, groups, act, attn, drop_path, *, rngs):
-        mid = int(round(out_chs * bottle_ratio))
+        mid = round(out_chs * bottle_ratio)
         self.conv1 = _cna(in_chs, mid, act=act, rngs=rngs)
         self.attn = SEModule(mid, attn, act, rngs=rngs) if attn else None
         self.conv2 = _cna(mid, out_chs, 3, groups=groups, act=act, bn_weight_init=0.0, rngs=rngs)
@@ -106,7 +106,7 @@ class DarkBlock(nnx.Module):
 
 class EdgeBlock(nnx.Module):
     def __init__(self, in_chs, out_chs, bottle_ratio, groups, act, attn, drop_path, *, rngs):
-        mid = int(round(out_chs * bottle_ratio))
+        mid = round(out_chs * bottle_ratio)
         self.conv1 = _cna(in_chs, mid, 3, groups=groups, act=act, rngs=rngs)
         self.attn = SEModule(mid, attn, act, rngs=rngs) if attn else None
         self.conv2 = _cna(mid, out_chs, act=act, bn_weight_init=0.0, rngs=rngs)
@@ -143,7 +143,7 @@ class CspStage(nnx.Module):
         out_chs, stride = cfg.out_chs[i], cfg.per_stage("stride", i)
         groups = cfg.per_stage("groups", i)
         block = _BLOCKS[cfg.block_type]
-        block_out = int(round(out_chs * cfg.per_stage("block_ratio", i)))
+        block_out = round(out_chs * cfg.per_stage("block_ratio", i))
         down_chs = out_chs if cfg.down_growth or stage_type == "dark" else in_chs
         if stage_type == "dark" or stride != 1:
             if cfg.avg_down:
@@ -155,7 +155,7 @@ class CspStage(nnx.Module):
             self.conv_down = None
             prev = in_chs
         if stage_type != "dark":
-            self.expand_chs = exp = int(round(out_chs * cfg.per_stage("expand_ratio", i)))
+            self.expand_chs = exp = round(out_chs * cfg.per_stage("expand_ratio", i))
             self.conv_exp = _cna(prev, exp, act=None if cfg.cross_linear else act, rngs=rngs)
             prev = exp // 2
         blocks = []
@@ -263,7 +263,9 @@ class CspNet(ClassifierMixin, nnx.Module):
 
 
 def _cs3(width=1.0, depth=1.0, focus=False, se=None, bottle_ratio=1.0, block="dark"):
-    w = lambda c: make_divisible(c * width)  # noqa: E731
+    def w(chs):
+        return make_divisible(chs * width)
+
     stem = (
         dict(stem_chs=(w(64),), stem_kernel=6, stem_pad=2)
         if focus

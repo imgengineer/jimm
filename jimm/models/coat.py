@@ -75,7 +75,7 @@ class ConvRelPosEnc(nnx.Module):
         self.conv_list = nnx.List(convs)
 
     def __call__(self, q, v, size):
-        B, N, h, Ch = q.shape  # tokens-first layout: [B, N, h, Ch]
+        B, _N, h, Ch = q.shape  # tokens-first layout: [B, N, h, Ch]
         H, W = size
         v_img = v[:, 1:].reshape(B, H, W, h * Ch)
         splits, start = [], 0

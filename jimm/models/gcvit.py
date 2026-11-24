@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
+from ..attention import dot_product_attention
 from ..layers import ClassifierMixin, DropPath, Mlp, gelu, global_pool_nhwc, make_divisible
 from ..registry import _cfg, register_model
 
@@ -128,10 +129,9 @@ class WindowAttentionGlobal(nnx.Module):
         else:
             qkv = self.qkv(x).reshape(B, N, 3, h, d)
             q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-        attn = jnp.einsum("bqhd,bkhd->bhqk", q * d**-0.5, k)
         bias = self.relative_position_bias_table[...][_relative_position_index(self.window_size)]
-        attn = nnx.softmax(attn + bias.transpose(2, 0, 1)[None], axis=-1)
-        return self.proj(jnp.einsum("bhqk,bkhd->bqhd", attn, v).reshape(B, N, C))
+        x = dot_product_attention(q, k, v, bias=bias.transpose(2, 0, 1)[None])
+        return self.proj(x.reshape(B, N, C))
 
 
 class GlobalContextVitBlock(nnx.Module):

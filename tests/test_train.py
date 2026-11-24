@@ -852,3 +852,87 @@ def test_train_step_with_metrics():
     assert float(metrics.loss) > 0.0
     assert 0.0 <= float(metrics.accuracy) <= 1.0
     assert float(metrics.grad_norm) >= 0.0
+
+
+def test_mean_metrics_accepts_device_counts():
+    losses = [jnp.array(1.0), jnp.array(3.0)]
+    accs = [jnp.array(0.2), jnp.array(0.6)]
+    counts = [jnp.array(3, dtype=jnp.int32), jnp.array(1, dtype=jnp.int32)]
+    assert _mean_metrics(losses, accs, counts) == pytest.approx((1.5, 0.3))
+    with pytest.raises(ValueError, match="one positive"):
+        _mean_metrics([jnp.array(1.0)], [jnp.array(0.5)], [jnp.array(0, dtype=jnp.int32)])
+
+
+def test_batchnorm_amp_eval_preserves_fp32_variance_precision():
+    from jimm.layers import BatchNorm
+    from jimm.train import _forward_with_precision
+
+    class Net(nnx.Module):
+        def __init__(self):
+            self.bn = BatchNorm(4, epsilon=1e-5, rngs=nnx.Rngs(0))
+
+        def __call__(self, x):
+            return self.bn(x)
+
+    net = Net()
+    # Small variances where quantizing var to bfloat16 before rsqrt(var + eps) loses precision.
+    net.bn.mean.set_value(jnp.array([0.5, -0.5, 1.0, -1.0], jnp.float32))
+    net.bn.var.set_value(jnp.array([1.23e-5, 2.34e-5, 3.45e-5, 4.56e-5], jnp.float32))
+    net.eval()
+
+    x = jax.random.normal(jax.random.key(0), (2, 4, 4, 4), jnp.float32)
+    actual = _forward_with_precision(net, x, amp=True)
+    inv = jax.lax.rsqrt(net.bn.var[...] + 1e-5) * net.bn.scale[...]
+    expected = (
+        (x.astype(jnp.bfloat16) - net.bn.mean[...].astype(jnp.bfloat16)) * inv.astype(jnp.bfloat16)
+        + net.bn.bias[...].astype(jnp.bfloat16)
+    ).astype(jnp.float32)
+    np.testing.assert_array_equal(actual, expected)
+    assert net.bn.dtype is None
+
+
+@pytest.mark.parametrize(
+    "name,sz,kwargs",
+    [
+        ("resnetv2_50x1_bit", 64, {}),
+        ("vit_base_patch16_xp_224", 224, {"depth": 1}),
+        ("gemma4_vit_167m", 96, {"depth": 1}),
+        ("gcvit_xxtiny", 224, {"depths": (1, 1, 1, 1)}),
+        ("mvitv2_tiny", 224, {"depths": (1, 1, 1, 1)}),
+        ("levit_128s", 224, {}),
+        ("shvit_s1", 224, {}),
+        ("efficientvit_m0", 224, {}),
+        (
+            "iformer_t",
+            64,
+            {"dims": (8, 16, 24, 32), "depths": (1, 1, 3, 3), "attn_groups": (0, 0, 1, 1)},
+        ),
+        (
+            "efficientvim_m1",
+            64,
+            {"embed_dim": (16, 24, 32), "depths": (1, 1, 1), "state_dim": (4, 3, 2)},
+        ),
+        ("halonet26t", 256, {}),
+    ],
+)
+def test_amp_has_no_fp32_conv_or_dot_leaks(name, sz, kwargs):
+    import warnings
+
+    from jimm.train import _forward_with_precision
+
+    model = nnx.eval_shape(lambda: create_model(name, num_classes=5, rngs=nnx.Rngs(0), **kwargs))
+    model.eval()
+    graphdef, state = nnx.split(model)
+    x = jax.ShapeDtypeStruct((2, sz, sz, 3), jnp.float32)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", FutureWarning)
+        jaxpr = jax.make_jaxpr(
+            lambda st, img: _forward_with_precision(nnx.merge(graphdef, st), img, amp=True)
+        )(state, x)
+    assert not caught, f"{name} emitted FutureWarning under AMP: {[str(w.message) for w in caught]}"
+    for eqn in jaxpr.jaxpr.eqns:
+        if eqn.primitive.name in ("conv_general_dilated", "dot_general"):
+            assert eqn.invars[0].aval.dtype == jnp.bfloat16, (
+                f"{name}: {eqn.primitive.name} leaked {eqn.invars[0].aval.dtype} under AMP"
+            )

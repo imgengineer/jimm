@@ -53,6 +53,27 @@ class BatchNorm(nnx.BatchNorm):
     def __init__(self, num_features: int, *, momentum: float = 0.9, **kwargs):
         super().__init__(num_features, momentum=momentum, **kwargs)
 
+    def __call__(self, x, use_running_average=None, *, mask=None):
+        dtype = self.dtype
+        running = self.use_running_average if use_running_average is None else use_running_average
+        if running and dtype is not None and jnp.dtype(dtype).itemsize < 4:
+            # Invert running variance in FP32 so small variances do not quantize before rsqrt,
+            # then apply the affine transform in AMP dtype (also avoids an XLA:CPU fusion bug).
+            acc = jnp.promote_types(dtype, jnp.float32)
+            feature_axes = (self.axis,) if isinstance(self.axis, int) else tuple(self.axis)
+            feature_axes = tuple(ax % x.ndim for ax in feature_axes)
+            shape = [x.shape[i] if i in feature_axes else 1 for i in range(x.ndim)]
+            inv = jax.lax.rsqrt(self.var[...].astype(acc) + self.epsilon)
+            if self.scale is not None:
+                inv = inv * self.scale[...].astype(acc)
+            y = (jnp.asarray(x, dtype) - self.mean[...].astype(dtype).reshape(shape)) * inv.astype(
+                dtype
+            ).reshape(shape)
+            if self.bias is not None:
+                y = y + self.bias[...].astype(dtype).reshape(shape)
+            return y
+        return super().__call__(x, use_running_average=use_running_average, mask=mask)
+
 
 def drop_path(
     x: jax.Array,
@@ -210,17 +231,29 @@ def _full_map_depthwise_bwd(padding, precision, preferred_element_type, residual
     kh, kw = kernel.shape[:2]
     xp = jnp.pad(x, ((0, 0), *padding, (0, 0)))
     ho, wo = grad.shape[1:3]
-    acc = jnp.promote_types(jnp.result_type(xp, grad), jnp.float32)
-    xp, grad = xp.astype(acc), grad.astype(acc)
+    in_dtype = jnp.result_type(xp, grad)
+    acc = jnp.promote_types(in_dtype, jnp.float32)
+    # Transpose once outside the row loop so each row contracts (ho, B) per channel in one GEMM.
+    xp_t = xp.astype(in_dtype).transpose(3, 1, 0, 2)  # (C, hp, B, wp)
+    g_t = grad.astype(in_dtype).transpose(3, 1, 0, 2)  # (C, ho, B, wo)
+    dw_idx = jnp.arange(kw)[:, None] + jnp.arange(wo)[None, :]
+    w_idx = jnp.arange(wo)[None, :]
 
-    def kernel_grad(tap):
-        patch = jax.lax.dynamic_slice(
-            xp, (0, tap // kw, tap % kw, 0), (x.shape[0], ho, wo, x.shape[-1])
+    def row_grad(dh):
+        x_row = jax.lax.dynamic_slice(
+            xp_t, (0, dh, 0, 0), (x.shape[-1], ho, x.shape[0], xp.shape[2])
         )
-        return (patch * grad).sum(axis=(0, 1, 2))
+        cross = jax.lax.dot_general(
+            x_row,
+            g_t,
+            (((1, 2), (1, 2)), ((0,), (0,))),
+            precision=precision,
+            preferred_element_type=acc,
+        )
+        return cross[:, dw_idx, w_idx].sum(axis=-1).T
 
-    # A loop keeps one shifted slice live instead of materializing every position pair.
-    dk = jax.lax.map(kernel_grad, jnp.arange(kh * kw)).reshape(kh, kw, x.shape[-1])
+    # One row at a time keeps temporary allocations small while avoiding 49 tiny kernel launches.
+    dk = jax.lax.map(row_grad, jnp.arange(kh))
     return dx, dk[:, :, None, :].astype(kernel.dtype)
 
 

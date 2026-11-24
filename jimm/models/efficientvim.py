@@ -42,10 +42,12 @@ class HSMSSD(nnx.Module):
         tokens = x.reshape(batch, height * width, dim)
         bcdt = self.BCdt_proj(tokens).reshape(batch, height, width, 3 * self.state_dim)
         b, c, dt = jnp.split(self.dw(bcdt).reshape(batch, height * width, -1), 3, axis=-1)
-        a = nnx.softmax(dt + self.A[...], axis=1)
+        a = nnx.softmax(
+            dt.astype(jnp.promote_types(dt.dtype, jnp.float32)) + self.A[...], axis=1
+        ).astype(dt.dtype)
         hidden = (a * b).swapaxes(1, 2) @ tokens
         h, z = jnp.split(self.hz_proj(hidden), 2, axis=-1)
-        hidden = self.out_proj(h * nnx.silu(z) + h * self.D[...])
+        hidden = self.out_proj(h * nnx.silu(z) + h * self.D[...].astype(h.dtype))
         y = c @ hidden
         return y.reshape(batch, height, width, dim), hidden
 

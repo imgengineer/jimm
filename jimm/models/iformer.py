@@ -37,7 +37,8 @@ class SHMA(nnx.Module):
         b, h, w, _ = x.shape
         v, gate = jnp.split(nnx.sigmoid(self.v_gate(x)), 2, axis=-1)
         q, k = self.q(x).reshape(b, h * w, -1), self.k(x).reshape(b, h * w, -1)
-        attn = nnx.softmax((q * self.scale) @ k.swapaxes(-1, -2), axis=-1)
+        logits = jnp.einsum("bqd,bkd->bqk", q, k, preferred_element_type=jnp.float32) * self.scale
+        attn = nnx.softmax(logits, axis=-1).astype(v.dtype)
         y = (attn @ v.reshape(b, h * w, -1)).reshape(v.shape)
         y = self.proj(y * gate)
         if ws:

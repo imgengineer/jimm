@@ -133,12 +133,13 @@ class CascadedGroupAttention(nnx.Module):
             y = qkv(feat)
             q, k, v = jnp.split(y, [self.key_dim, self.key_dim * 2], axis=-1)
             q = dw(q).reshape(B, H * W, self.key_dim)
-            q = q * self.scale
             k = k.reshape(B, H * W, self.key_dim)
             v = v.reshape(B, H * W, self.val_dim)
-            attn = jnp.einsum("bid,bjd->bij", q, k)
+            logits = (
+                jnp.einsum("bid,bjd->bij", q, k, preferred_element_type=jnp.float32) * self.scale
+            )
             bias = jnp.take(self.attention_biases[...][i], self.attention_bias_idxs)
-            attn = jax.nn.softmax(attn + bias[None], axis=-1)
+            attn = jax.nn.softmax(logits + bias[None], axis=-1).astype(v.dtype)
             feat = jnp.einsum("bij,bjc->bic", attn, v).reshape(B, H, W, self.val_dim)
             feats_out.append(feat)
         return self.proj(jnp.concatenate(feats_out, axis=-1))

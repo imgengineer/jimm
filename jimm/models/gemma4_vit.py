@@ -51,10 +51,14 @@ class ClippableLinear(nnx.Module):
 
     def __call__(self, x):
         if self.use_clipped:
-            x = jnp.clip(x, self.input_min[...], self.input_max[...])
+            x = jnp.clip(
+                x, self.input_min[...].astype(x.dtype), self.input_max[...].astype(x.dtype)
+            )
         x = self.linear(x)
         if self.use_clipped:
-            x = jnp.clip(x, self.output_min[...], self.output_max[...])
+            x = jnp.clip(
+                x, self.output_min[...].astype(x.dtype), self.output_max[...].astype(x.dtype)
+            )
         return x
 
 
@@ -105,7 +109,7 @@ class Gemma4PatchEmbed(nnx.Module):
         x = self.input_proj(2 * (x - 0.5))
         rows, cols = jnp.meshgrid(jnp.arange(gh), jnp.arange(gw), indexing="ij")
         position_ids = jnp.stack([cols.ravel(), rows.ravel()], axis=-1)  # (x, y) per patch
-        table = self.position_embedding_table[...]
+        table = self.position_embedding_table[...].astype(x.dtype)
         x = x + table[0][position_ids[:, 0]] + table[1][position_ids[:, 1]]
         return x, jnp.broadcast_to(position_ids, (B, gh * gw, 2)), (gh, gw)
 
@@ -230,7 +234,7 @@ class Gemma4VitEncoder(ClassifierMixin, nnx.Module):
         pooled = x.astype(acc).reshape(B, gh // k, k, gw // k, k, D).mean(axis=(2, 4))
         x = pooled.reshape(B, -1, D).astype(x.dtype) * jnp.asarray(D**0.5, x.dtype)
         if self.std_bias is not None:
-            x = (x - self.std_bias[...]) * self.std_scale[...]
+            x = (x - self.std_bias[...].astype(x.dtype)) * self.std_scale[...].astype(x.dtype)
         return x
 
     def forward_head(self, x):

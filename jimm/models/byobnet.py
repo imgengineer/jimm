@@ -229,7 +229,7 @@ def _rel_logits_1d(q, rel_k):
     win = (rel_k.shape[0] + 1) // 2
     W = q.shape[-2]
     idx = np.arange(win)[None, :] - np.arange(W)[:, None] + win - 1  # (W, win)
-    return jnp.einsum("...wd,wud->...wu", q, rel_k[idx])
+    return jnp.einsum("...wd,wud->...wu", q, rel_k[idx].astype(q.dtype))
 
 
 def _rel_pos_bias(q, height_rel, width_rel, h, w):
@@ -319,8 +319,12 @@ class HaloAttn(nnx.Module):
         bias = self.pos_embed(q.reshape(-1, bsd * bsd, dqk), bsd, bsd).reshape(
             B * h, nh * nw, bsd * bsd, win * win
         )
-        logits = jnp.einsum("bnqd,bnkd->bnqk", q, k) * dqk**-0.5 + bias
-        out = jnp.einsum("bnqk,bnkd->bnqd", jax.nn.softmax(logits, axis=-1), v)  # (Bh, nb, q, dv)
+        logits = (
+            jnp.einsum("bnqd,bnkd->bnqk", q, k, preferred_element_type=jnp.float32) * dqk**-0.5
+            + bias
+        )
+        weights = jax.nn.softmax(logits, axis=-1).astype(v.dtype)
+        out = jnp.einsum("bnqk,bnkd->bnqd", weights, v)  # (Bh, nb, q, dv)
         out = out.reshape(B, h, nh, nw, bsd, bsd, dv)
         out = jnp.transpose(out, (0, 2, 4, 3, 5, 1, 6)).reshape(B, nh * bsd, nw * bsd, h * dv)
         return _avg2(out) if self.use_pool else out

@@ -95,19 +95,26 @@ class MultiScaleAttention(nnx.Module):
         q, q_size = self._pool(qkv[0], feat_size, self.pool_q, self.norm_q)
         k, k_size = self._pool(qkv[1], feat_size, self.pool_k, self.norm_k)
         v, _ = self._pool(qkv[2], feat_size, self.pool_v, self.norm_v)
-        attn = (q * self.head_dim**-0.5) @ k.swapaxes(-2, -1)
+        attn = (
+            jnp.einsum("bhqd,bhkd->bhqk", q, k, preferred_element_type=jnp.float32)
+            * self.head_dim**-0.5
+        )
         # Decomposed spatial relative positions, added to the patch-to-patch scores.
         sp = 1 if self.has_cls_token else 0
         (qh, qw), (kh, kw) = q_size, k_size
-        rel_h = self.rel_pos_h[...][_rel_index(qh, kh)]
-        rel_w = self.rel_pos_w[...][_rel_index(qw, kw)]
+        rel_h = self.rel_pos_h[...][_rel_index(qh, kh)].astype(q.dtype)
+        rel_w = self.rel_pos_w[...][_rel_index(qw, kw)].astype(q.dtype)
         r_q = q[:, :, sp:].reshape(B, self.num_heads, qh, qw, self.head_dim)
         rel = (
-            jnp.einsum("byhwc,hkc->byhwk", r_q, rel_h)[..., :, None]
-            + jnp.einsum("byhwc,wkc->byhwk", r_q, rel_w)[..., None, :]
+            jnp.einsum("byhwc,hkc->byhwk", r_q, rel_h, preferred_element_type=jnp.float32)[
+                ..., :, None
+            ]
+            + jnp.einsum("byhwc,wkc->byhwk", r_q, rel_w, preferred_element_type=jnp.float32)[
+                ..., None, :
+            ]
         ).reshape(B, self.num_heads, qh * qw, kh * kw)
         attn = attn.at[:, :, sp:, sp:].add(rel)
-        x = nnx.softmax(attn, axis=-1) @ v
+        x = nnx.softmax(attn, axis=-1).astype(v.dtype) @ v
         if self.residual_pooling:
             x = x + q
         x = x.swapaxes(1, 2).reshape(B, -1, self.dim_out)

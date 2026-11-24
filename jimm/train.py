@@ -53,6 +53,8 @@ from .compilation import configure_compilation_cache
 from .data import MixupCutmix, create_loader
 from .loss import _cross_entropy_losses, cross_entropy
 from .models.nfnet import ScaledStdConv
+from .models.resnetv2 import StdConv2d
+from .models.vision_transformer_hybrid import StdConv2dSame
 from .optim import create_optimizer, make_optimizer
 from .prefetch import prefetch_stream
 from .preprocess import ImagePreprocess, mixup_cutmix, preprocess_images
@@ -166,7 +168,17 @@ def _mean_metrics(losses, accuracies, counts=None):
         raise ValueError("losses and accuracies must be non-empty and have equal length")
     metrics = jnp.stack((jnp.stack(losses), jnp.stack(accuracies)))
     if counts is None:
-        means = metrics.mean(axis=1)
+        values = np.asarray(jax.device_get(metrics.mean(axis=1)))
+    elif any(isinstance(count, jax.Array) for count in counts):
+        if len(counts) != len(losses) or any(jnp.ndim(count) != 0 for count in counts):
+            raise ValueError("counts must contain one positive finite value per batch")
+        device_weights = jnp.stack([jnp.asarray(c, dtype=jnp.float32) for c in counts])
+        valid_counts = jnp.all(jnp.isfinite(device_weights)) & jnp.all(device_weights > 0)
+        means = (metrics * device_weights).sum(axis=1) / device_weights.sum()
+        values, counts_ok = jax.device_get((means, valid_counts))
+        if not bool(counts_ok):
+            raise ValueError("counts must contain one positive finite value per batch")
+        values = np.asarray(values)
     else:
         weights = np.asarray(counts, dtype=np.float32)
         if (
@@ -177,13 +189,28 @@ def _mean_metrics(losses, accuracies, counts=None):
             raise ValueError("counts must contain one positive finite value per batch")
         device_weights = jnp.asarray(weights)
         means = (metrics * device_weights).sum(axis=1) / device_weights.sum()
-    values = np.asarray(jax.device_get(means))
+        values = np.asarray(jax.device_get(means))
     if not np.all(np.isfinite(values)):
         raise FloatingPointError("non-finite epoch metrics")
     try:
         return float(values[0]), float(values[1])
     except (TypeError, ValueError) as exc:
         raise FloatingPointError("non-finite epoch metrics") from exc
+
+
+_AMP_LAYERS = (
+    nnx.Conv,
+    nnx.ConvTranspose,
+    nnx.Linear,
+    nnx.Einsum,
+    ScaledStdConv,
+    StdConv2d,
+    StdConv2dSame,
+    nnx.BatchNorm,
+    nnx.LayerNorm,
+    nnx.RMSNorm,
+    nnx.GroupNorm,
+)
 
 
 def _forward_with_precision(model, images, amp):
@@ -194,7 +221,7 @@ def _forward_with_precision(model, images, amp):
     layers = [
         (node, node.dtype)
         for _, node in nnx.graph.iter_graph(model)
-        if isinstance(node, (nnx.Conv, nnx.ConvTranspose, nnx.Linear, nnx.Einsum, ScaledStdConv))
+        if isinstance(node, _AMP_LAYERS)
     ]
     try:
         for layer, _ in layers:

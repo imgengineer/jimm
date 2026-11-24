@@ -85,10 +85,16 @@ class Attention2d(nnx.Module):
         v = self.v(x)
         v_local = self.v_local(v)
         v = _heads_first(v, self.num_heads)
-        attn = (q @ k.swapaxes(-2, -1)) * self.key_dim**-0.5
+        attn = (
+            jnp.einsum("bhqd,bhkd->bhqk", q, k, preferred_element_type=jnp.float32)
+            * self.key_dim**-0.5
+        )
         attn = attn + self.attention_biases[...][:, _bias_index(self.resolution)]
         attn = self._talk(self.talking_head1, attn)
-        attn = self._talk(self.talking_head2, jax.nn.softmax(attn, axis=-1))
+        attn = self._talk(
+            self.talking_head2,
+            jax.nn.softmax(attn.astype(jnp.promote_types(attn.dtype, jnp.float32)), axis=-1),
+        )
         h, w = self.resolution
         x = (attn @ v).transpose(0, 2, 1, 3).reshape(B, h, w, self.dh) + v_local
         if self.stride is not None:
@@ -137,10 +143,14 @@ class Attention2dDownsample(nnx.Module):
         v = self.v(x)
         v_local = self.v_local(v)
         v = _heads_first(v, self.num_heads)
-        attn = (q @ k.swapaxes(-2, -1)) * self.key_dim**-0.5
-        attn = attn + self.attention_biases[...][:, _bias_index(self.resolution, 2)]
+        logits = (
+            jnp.einsum("bhqd,bhkd->bhqk", q, k, preferred_element_type=jnp.float32)
+            * self.key_dim**-0.5
+        )
+        logits = logits + self.attention_biases[...][:, _bias_index(self.resolution, 2)]
         h, w = self.resolution2
-        x = (jax.nn.softmax(attn, axis=-1) @ v).transpose(0, 2, 1, 3).reshape(B, h, w, self.dh)
+        weights = jax.nn.softmax(logits, axis=-1).astype(v.dtype)
+        x = (weights @ v).transpose(0, 2, 1, 3).reshape(B, h, w, self.dh)
         return self.proj(gelu(x + v_local))
 
 

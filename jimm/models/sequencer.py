@@ -26,7 +26,8 @@ def _bilstm(input_size, hidden_size, *, rngs):
     """Bidirectional single-layer LSTM from NNX cells, with PyTorch's gate order (i, f, g, o).
 
     PyTorch adds separate input and recurrent biases; giving ``dense_i`` a bias keeps
-    timm's parameters. Both directions unroll eight steps per loop iteration.
+    timm's parameters. ``LSTM2d`` executes the cells via a fused input projection and
+    batched ``jax.lax.scan``.
     """
     init = _uniform(1.0 / math.sqrt(hidden_size))
 
@@ -42,7 +43,7 @@ def _bilstm(input_size, hidden_size, *, rngs):
         cell.dense_i = nnx.Linear(
             input_size, 4 * hidden_size, kernel_init=init, bias_init=init, rngs=rngs
         )
-        return nnx.RNN(cell, unroll=8, rngs=rngs)
+        return nnx.RNN(cell, unroll=4, rngs=rngs)
 
     return nnx.Bidirectional(rnn(), rnn(), rngs=rngs)
 
@@ -56,11 +57,59 @@ class LSTM2d(nnx.Module):
         )
 
     def __call__(self, x):
-        B, H, W, C = x.shape
-        v = self.rnn_v(x.transpose(0, 2, 1, 3).reshape(B * W, H, C))
-        v = v.reshape(B, W, H, -1).transpose(0, 2, 1, 3)
-        h = self.rnn_h(x.reshape(B * H, W, C)).reshape(B, H, W, -1)
-        return self.fc(jnp.concatenate([v, h], axis=-1))
+        B, H, W, _C = x.shape
+        cells = (
+            self.rnn_v.forward_rnn.cell,
+            self.rnn_v.backward_rnn.cell,
+            self.rnn_h.forward_rnn.cell,
+            self.rnn_h.backward_rnn.cell,
+        )
+        dtype = cells[0].dense_i.dtype or jnp.result_type(x, cells[0].dense_i.kernel[...])
+        x_in = x.astype(dtype)
+        # All four LSTM directions share the same input tensor: fuse their input projections
+        # and both gate biases into one GEMM outside the recurrent scan.
+        w_i = jnp.concatenate([c.dense_i.kernel[...].astype(dtype) for c in cells], axis=-1)
+        b_all = jnp.concatenate(
+            [(c.dense_i.bias[...] + c.dense_h.bias[...]).astype(dtype) for c in cells], axis=-1
+        )
+        gates = jnp.dot(x_in, w_i) + b_all
+        g4 = gates.shape[-1] // 4
+        hidden = g4 // 4
+        gv_f, gv_b, gh_f, gh_b = jnp.split(gates, 4, axis=-1)
+        w_h = jnp.stack([c.dense_h.kernel[...].astype(dtype) for c in cells], axis=0)
+
+        def run_scan(seq, wh):
+            # seq: (T, dirs, N, 4 * hidden), wh: (dirs, hidden, 4 * hidden)
+            zero = jnp.zeros((seq.shape[1], seq.shape[2], hidden), dtype=dtype)
+
+            def step(carry, x_t):
+                c_prev, h_prev = carry
+                h_proj = jax.lax.dot_general(h_prev, wh, (((2,), (1,)), ((0,), (0,))))
+                i, f, g, o = jnp.split(x_t + h_proj, 4, axis=-1)
+                c_new = jax.nn.sigmoid(f) * c_prev + jax.nn.sigmoid(i) * jnp.tanh(g)
+                h_new = jax.nn.sigmoid(o) * jnp.tanh(c_new)
+                return (c_new, h_new), h_new
+
+            _, ys = jax.lax.scan(step, (zero, zero), seq, unroll=4)
+            return ys
+
+        vf = gv_f.transpose(1, 0, 2, 3).reshape(H, B * W, g4)
+        vb = gv_b[:, ::-1].transpose(1, 0, 2, 3).reshape(H, B * W, g4)
+        hf = gh_f.transpose(2, 0, 1, 3).reshape(W, B * H, g4)
+        hb = gh_b[:, :, ::-1].transpose(2, 0, 1, 3).reshape(W, B * H, g4)
+        if H == W:
+            # Square maps share sequence length and batch count across all four directions.
+            ys = run_scan(jnp.stack([vf, vb, hf, hb], axis=1), w_h)
+            v_f, v_b, h_f, h_b = ys[:, 0], ys[::-1, 1], ys[:, 2], ys[::-1, 3]
+        else:
+            yv = run_scan(jnp.stack([vf, vb], axis=1), w_h[:2])
+            yh = run_scan(jnp.stack([hf, hb], axis=1), w_h[2:])
+            v_f, v_b, h_f, h_b = yv[:, 0], yv[::-1, 1], yh[:, 0], yh[::-1, 1]
+        v_f = v_f.reshape(H, B, W, hidden).transpose(1, 0, 2, 3)
+        v_b = v_b.reshape(H, B, W, hidden).transpose(1, 0, 2, 3)
+        h_f = h_f.reshape(W, B, H, hidden).transpose(1, 2, 0, 3)
+        h_b = h_b.reshape(W, B, H, hidden).transpose(1, 2, 0, 3)
+        return self.fc(jnp.concatenate([v_f, v_b, h_f, h_b], axis=-1))
 
 
 class Mlp(nnx.Module):

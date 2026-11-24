@@ -143,7 +143,9 @@ class NaFlexEmbeds(nnx.Module):
         elif self.pos_embed_type == "factorized":
             x = x + self._factorized(gh, gw).astype(x.dtype)
         if self.reg_token is not None:
-            reg = jnp.broadcast_to(self.reg_token[...], (B, *self.reg_token.shape[1:]))
+            reg = jnp.broadcast_to(
+                self.reg_token[...].astype(x.dtype), (B, *self.reg_token.shape[1:])
+            )
             x = jnp.concatenate([reg, x], axis=1)
         return x
 
@@ -163,7 +165,9 @@ class AttentionPoolLatent(nnx.Module):
     def __call__(self, x):
         B, N, C = x.shape
         h = self.num_heads
-        q = self.q(jnp.broadcast_to(self.latent[...], (B, 1, C))).reshape(B, 1, h, C // h)
+        q = self.q(jnp.broadcast_to(self.latent[...].astype(x.dtype), (B, 1, C))).reshape(
+            B, 1, h, C // h
+        )
         kv = self.kv(x).reshape(B, N, 2, h, C // h)
         x = self.proj(dot_product_attention(q, kv[:, :, 0], kv[:, :, 1]).reshape(B, 1, C))
         x = x + self.mlp(self.norm(x))

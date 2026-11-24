@@ -239,7 +239,7 @@ class HieraDet(ClassifierMixin, nnx.Module):
         pos = jnp.einsum("oh,bhwc,pw->bopc", rows, pos, cols)
         win = self.pos_embed_window[...]
         pos = pos + jnp.tile(win, (1, h // win.shape[1], w // win.shape[2], 1))
-        return x + pos
+        return x + pos.astype(x.dtype)
 
     def forward_features(self, x):
         x = self._pos_embed(self.patch_embed(x))

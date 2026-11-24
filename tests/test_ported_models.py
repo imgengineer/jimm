@@ -1,12 +1,16 @@
 """Index and partition helpers shared by the timm ports."""
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
+from flax import nnx
 
 from jimm.models import _maxxvit
 from jimm.models.hiera import _unroll
 from jimm.models.hieradet_sam2 import _bicubic_matrix
 from jimm.models.levit import _bias_index
+from jimm.models.sequencer import LSTM2d
 from jimm.models.tresnet import blur_pool, space_to_depth
 
 
@@ -80,3 +84,28 @@ def test_hieradet_bicubic_matrix_matches_pytorch():
     down[3] = down[0, ::-1]
     np.testing.assert_allclose(_bicubic_matrix(7, 4), down, atol=1e-7)
     np.testing.assert_array_equal(_bicubic_matrix(7, 7), np.eye(7))
+
+
+@pytest.mark.parametrize("shape", [(2, 6, 6, 8), (2, 5, 7, 8)])
+def test_sequencer_lstm2d_matches_reference_bilstm(shape):
+    layer = LSTM2d(shape[-1], hidden_size=4, rngs=nnx.Rngs(0))
+    x = jax.random.normal(jax.random.key(1), shape, jnp.float32)
+
+    def ref_call(mod, inp):
+        B, H, W, C = inp.shape
+        v = mod.rnn_v(inp.transpose(0, 2, 1, 3).reshape(B * W, H, C))
+        v = v.reshape(B, W, H, -1).transpose(0, 2, 1, 3)
+        h = mod.rnn_h(inp.reshape(B * H, W, C)).reshape(B, H, W, -1)
+        return mod.fc(jnp.concatenate([v, h], axis=-1))
+
+    with jax.default_matmul_precision("float32"):
+        expected = ref_call(layer, x)
+        actual = layer(x)
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+        expected_grads = nnx.grad(lambda m: jnp.square(ref_call(m, x)).sum())(layer)
+        actual_grads = nnx.grad(lambda m: jnp.square(m(x)).sum())(layer)
+    for actual_leaf, expected_leaf in zip(
+        jax.tree.leaves(nnx.state(actual_grads)), jax.tree.leaves(nnx.state(expected_grads))
+    ):
+        np.testing.assert_allclose(actual_leaf, expected_leaf, rtol=1e-5, atol=1e-5)

@@ -28,14 +28,20 @@ class StdConv2dSame(nnx.Module):
         init = nnx.initializers.lecun_normal()
         self.kernel = nnx.Param(init(rngs.params(), (kernel, kernel, in_chs, out_chs)))
         self.stride = stride
+        self.dtype = None
 
     def __call__(self, x):
         w = self.kernel[...]
         mean = w.mean(axis=(0, 1, 2), keepdims=True)
         var = w.var(axis=(0, 1, 2), keepdims=True)
-        w = ((w - mean) * jax.lax.rsqrt(var + 1e-8)).astype(x.dtype)
+        w = (w - mean) * jax.lax.rsqrt(var + 1e-8)
+        dtype = self.dtype or jnp.result_type(x, w)
         return jax.lax.conv_general_dilated(
-            x, w, (self.stride, self.stride), "SAME", dimension_numbers=("NHWC", "HWIO", "NHWC")
+            x.astype(dtype),
+            w.astype(dtype),
+            (self.stride, self.stride),
+            "SAME",
+            dimension_numbers=("NHWC", "HWIO", "NHWC"),
         )
 
 
